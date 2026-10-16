@@ -6,6 +6,8 @@ import { StageBuilderTab } from '@/components/admin/StageBuilderTab';
 import { ParticipantImportTab } from '@/components/admin/ParticipantImportTab';
 import { BrevoStudioTab } from '@/components/admin/BrevoStudioTab';
 import { TelemetryRadarTab } from '@/components/admin/TelemetryRadarTab';
+import { ContestLifecycleBar } from '@/components/admin/ContestLifecycleBar';
+import { ContestLifecycleTab } from '@/components/admin/ContestLifecycleTab';
 import {
   ShieldCheck,
   Layers,
@@ -16,14 +18,15 @@ import {
   Lock,
   Loader2,
   ExternalLink,
+  Trophy,
 } from 'lucide-react';
 
-type AdminTab = 'stages' | 'participants' | 'brevo' | 'telemetry';
+type AdminTab = 'lifecycle' | 'stages' | 'participants' | 'brevo' | 'telemetry';
 
 export default function AdminPage() {
   const router = useRouter();
   const [adminSecret, setAdminSecret] = useState<string>('');
-  const [activeTab, setActiveTab] = useState<AdminTab>('stages');
+  const [activeTab, setActiveTab] = useState<AdminTab>('lifecycle');
   const [checkingAuth, setCheckingAuth] = useState(true);
   const [authError, setAuthError] = useState<string | null>(null);
 
@@ -184,8 +187,23 @@ export default function AdminPage() {
         </div>
       </header>
 
+      {/* Contest Lifecycle Bar */}
+      <ContestLifecycleBar adminSecret={adminSecret} />
+
       {/* Admin Tab Switcher */}
       <nav className="px-6 py-2 bg-slate-900/40 border-b border-slate-800 flex items-center gap-2 overflow-x-auto">
+        <button
+          onClick={() => setActiveTab('lifecycle')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+            activeTab === 'lifecycle'
+              ? 'bg-amber-500/15 text-amber-300 border border-amber-500/40 shadow-sm'
+              : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+          }`}
+        >
+          <Trophy className="w-4 h-4 text-amber-400" />
+          <span>Tournament Ops & Broadcasts</span>
+        </button>
+
         <button
           onClick={() => setActiveTab('stages')}
           className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
@@ -237,6 +255,7 @@ export default function AdminPage() {
 
       {/* Main Tab Content */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-6">
+        {activeTab === 'lifecycle' && <ContestLifecycleTab adminSecret={adminSecret} />}
         {activeTab === 'stages' && <StageBuilderTab adminSecret={adminSecret} />}
         {activeTab === 'participants' && <ParticipantImportTab adminSecret={adminSecret} />}
         {activeTab === 'brevo' && <BrevoStudioTab adminSecret={adminSecret} />}

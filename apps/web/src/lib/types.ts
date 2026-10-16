@@ -2,7 +2,7 @@
 // CORE DATA TYPES & INTERFACES - EVENTPLATFORM AI CLUB
 // ==============================================================================
 
-export type UserRole = 'admin' | 'participant';
+export type UserRole = 'admin' | 'participant' | 'disqualified';
 
 export interface User {
   id: string;
@@ -13,8 +13,47 @@ export interface User {
   total_score: number;
   current_stage: number;
   is_flagged: boolean;
+  is_disqualified?: boolean;
+  disqualified_at?: string | null;
+  disqualification_reason?: string | null;
   created_at: string;
   updated_at: string;
+}
+
+// ------------------------------------------------------------------------------
+// Contest Lifecycle & Tournament Control Types
+// ------------------------------------------------------------------------------
+export type ContestStatus = 'DRAFT' | 'LIVE' | 'FROZEN' | 'CONCLUDED';
+
+export interface ContestSettings {
+  id: string;
+  status: ContestStatus;
+  title: string;
+  start_time: string | null;
+  end_time: string | null;
+  freeze_time: string | null;
+  updated_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export type AnnouncementUrgency = 'info' | 'warning' | 'critical';
+
+export interface Announcement {
+  id: string;
+  message: string;
+  urgency: AnnouncementUrgency;
+  created_by: string;
+  created_at: string;
+}
+
+export interface PreflightValidationResult {
+  valid: boolean;
+  isEncrypted: boolean;
+  fileCount: number;
+  filenames: string[];
+  message: string;
+  error?: string;
 }
 
 export interface QuizQuestion {
@@ -71,9 +110,11 @@ export interface StageTelemetry {
   user?: {
     name: string;
     email: string;
+    role?: UserRole;
     total_score: number;
     current_stage: number;
     is_flagged: boolean;
+    is_disqualified?: boolean;
   };
 }
 

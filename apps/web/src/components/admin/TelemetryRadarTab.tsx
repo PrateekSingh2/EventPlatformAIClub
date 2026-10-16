@@ -15,6 +15,10 @@ import {
   Loader2,
   Search,
   Filter,
+  Download,
+  Ban,
+  ShieldCheck,
+  RotateCcw,
 } from 'lucide-react';
 
 interface TelemetryRadarTabProps {
@@ -26,6 +30,142 @@ export function TelemetryRadarTab({ adminSecret }: TelemetryRadarTabProps) {
   const [loading, setLoading] = useState(true);
   const [filterOnlyFlagged, setFilterOnlyFlagged] = useState(false);
   const [search, setSearch] = useState('');
+
+  // CSV Export State
+  const [exportingCsv, setExportingCsv] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
+
+  // Disqualification Modal State
+  const [disqualifyCandidate, setDisqualifyCandidate] = useState<{
+    userId: string;
+    userName: string;
+    userEmail: string;
+  } | null>(null);
+  const [disqualifyReason, setDisqualifyReason] = useState('Confirmed anti-cheat violations and speed-run threshold anomalies.');
+  const [disqualifying, setDisqualifying] = useState(false);
+  const [disqualifyError, setDisqualifyError] = useState<string | null>(null);
+
+  const handleExportCsv = async () => {
+    try {
+      setExportingCsv(true);
+      setExportError(null);
+      const res = await fetch('/api/admin/telemetry-export', {
+        headers: { 'x-admin-secret': adminSecret },
+      });
+
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.error || 'Failed to export CSV report');
+      }
+
+      const blob = await res.blob();
+      const contentDisposition = res.headers.get('content-disposition');
+      let filename = `anti-cheat-report-${new Date().toISOString().split('T')[0]}.csv`;
+      if (contentDisposition) {
+        const match = contentDisposition.match(/filename="?([^"]+)"?/);
+        if (match && match[1]) filename = match[1];
+      }
+
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err: any) {
+      setExportError(err.message || 'CSV export failed');
+    } finally {
+      setExportingCsv(false);
+    }
+  };
+
+  const handleDisqualifyParticipant = async () => {
+    if (!disqualifyCandidate) return;
+
+    setDisqualifying(true);
+    setDisqualifyError(null);
+
+    try {
+      const res = await fetch('/api/admin/disqualify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: disqualifyCandidate.userId,
+          reason: disqualifyReason,
+          adminSecret,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Failed to disqualify participant');
+      }
+
+      // Mark user in local telemetry records
+      setTelemetryRecords((prev) =>
+        prev.map((rec) => {
+          if (rec.user_id === disqualifyCandidate.userId) {
+            return {
+              ...rec,
+              flagged_too_fast: true,
+              flag_reason: `DISQUALIFIED: ${disqualifyReason}`,
+              user: rec.user
+                ? {
+                    ...rec.user,
+                    role: 'disqualified',
+                    is_disqualified: true,
+                    is_flagged: true,
+                  } as any
+                : rec.user,
+            };
+          }
+          return rec;
+        })
+      );
+
+      setDisqualifyCandidate(null);
+      fetchTelemetry();
+    } catch (err: any) {
+      setDisqualifyError(err.message || 'Failed to disqualify participant');
+    } finally {
+      setDisqualifying(false);
+    }
+  };
+
+  const handleReinstate = async (userId: string) => {
+    try {
+      const res = await fetch('/api/admin/disqualify', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId, adminSecret }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to reinstate');
+
+      setTelemetryRecords((prev) =>
+        prev.map((rec) => {
+          if (rec.user_id === userId) {
+            return {
+              ...rec,
+              user: rec.user
+                ? ({
+                    ...rec.user,
+                    role: 'participant',
+                    is_disqualified: false,
+                  } as any)
+                : rec.user,
+            };
+          }
+          return rec;
+        })
+      );
+      fetchTelemetry();
+    } catch (err: any) {
+      alert(err.message || 'Failed to reinstate participant');
+    }
+  };
 
   const fetchTelemetry = async () => {
     try {
@@ -71,6 +211,27 @@ export function TelemetryRadarTab({ adminSecret }: TelemetryRadarTabProps) {
     }
 
     setTelemetryRecords([
+      {
+        id: 't-0',
+        user_id: '00000000-0000-0000-0000-000000000001',
+        stage_number: 1,
+        started_at: new Date(Date.now() - 180000).toISOString(),
+        completed_at: new Date(Date.now() - 40000).toISOString(),
+        duration_seconds: 22,
+        tab_switches: 3,
+        fullscreen_exits: 2,
+        flagged_too_fast: true,
+        flag_reason: 'Suspicious Telemetry: Multiple tab switches during active stage',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        user: {
+          name: 'Alex Mercer (Contestant)',
+          email: 'alex.mercer@aiclub.org',
+          total_score: 150,
+          current_stage: 1,
+          is_flagged: true,
+        },
+      },
       {
         id: 't-1',
         user_id: 'u-1',
@@ -264,6 +425,31 @@ export function TelemetryRadarTab({ adminSecret }: TelemetryRadarTabProps) {
           </div>
 
           <div className="flex items-center gap-3">
+            {exportError && (
+              <span className="text-xs text-rose-400 font-mono flex items-center gap-1">
+                <AlertTriangle className="w-3 h-3" />
+                {exportError}
+              </span>
+            )}
+
+            <button
+              onClick={handleExportCsv}
+              disabled={exportingCsv}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg bg-emerald-950/80 hover:bg-emerald-900/80 text-emerald-300 border border-emerald-500/40 shadow-sm transition-all cursor-pointer disabled:opacity-50"
+            >
+              {exportingCsv ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <span>Generating CSV...</span>
+                </>
+              ) : (
+                <>
+                  <Download className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Export Anti-Cheat Report</span>
+                </>
+              )}
+            </button>
+
             <button
               onClick={() => setFilterOnlyFlagged(!filterOnlyFlagged)}
               className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer border ${
@@ -324,18 +510,29 @@ export function TelemetryRadarTab({ adminSecret }: TelemetryRadarTabProps) {
                     rec.tab_switches > 2 ||
                     rec.fullscreen_exits > 1;
 
+                  const isDisqualified =
+                    rec.user?.role === 'disqualified' ||
+                    (rec.user as any)?.is_disqualified === true;
+
                   return (
                     <tr
                       key={rec.id}
                       className={`transition-colors ${
-                        isRedFlag
+                        isDisqualified
+                          ? 'bg-rose-950/40 border-l-2 border-l-rose-500'
+                          : isRedFlag
                           ? 'bg-rose-950/20 hover:bg-rose-950/30'
                           : 'hover:bg-slate-900/40'
                       }`}
                     >
                       <td className="px-4 py-3 font-sans">
-                        <div className="font-semibold text-white">
+                        <div className="font-semibold text-white flex items-center gap-1.5">
                           {rec.user?.name || 'Unknown User'}
+                          {isDisqualified && (
+                            <span className="text-[9px] font-mono px-1.5 py-0.2 rounded bg-rose-950 border border-rose-600 text-rose-400 font-bold">
+                              SUSPENDED
+                            </span>
+                          )}
                         </div>
                         <div className="text-[11px] text-slate-400 font-mono">
                           {rec.user?.email}
@@ -381,7 +578,17 @@ export function TelemetryRadarTab({ adminSecret }: TelemetryRadarTabProps) {
                       </td>
 
                       <td className="px-4 py-3">
-                        {isRedFlag ? (
+                        {isDisqualified ? (
+                          <div className="flex flex-col gap-0.5">
+                            <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 bg-rose-950 text-rose-300 border border-rose-500 rounded-full w-fit">
+                              <Ban className="w-3 h-3 text-rose-400" />
+                              DISQUALIFIED
+                            </span>
+                            <span className="text-[10px] text-rose-400 font-sans max-w-[200px] truncate" title={rec.flag_reason || 'Disqualified'}>
+                              {rec.flag_reason || 'Fair-play violation sanction'}
+                            </span>
+                          </div>
+                        ) : isRedFlag ? (
                           <div className="flex flex-col gap-0.5">
                             <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 bg-rose-500/20 text-rose-300 border border-rose-500/40 rounded-full w-fit">
                               <ShieldAlert className="w-3 h-3" />
@@ -402,13 +609,45 @@ export function TelemetryRadarTab({ adminSecret }: TelemetryRadarTabProps) {
                       </td>
 
                       <td className="px-4 py-3 text-right">
-                        {isRedFlag && (
-                          <button
-                            onClick={() => handleClearFlag(rec.id, rec.user_id)}
-                            className="px-2.5 py-1 text-[10px] font-semibold text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 rounded border border-slate-700 transition-colors cursor-pointer"
-                          >
-                            Clear Flag
-                          </button>
+                        {isDisqualified ? (
+                          <div className="flex items-center justify-end gap-1.5">
+                            <span className="text-[10px] text-rose-400 font-mono italic mr-1">
+                              Suspended
+                            </span>
+                            <button
+                              onClick={() => handleReinstate(rec.user_id)}
+                              className="px-2 py-1 text-[10px] font-bold text-emerald-300 hover:text-white bg-emerald-950/60 hover:bg-emerald-900 rounded border border-emerald-800/60 transition-colors cursor-pointer flex items-center gap-1"
+                              title="Reinstate participant credentials"
+                            >
+                              <RotateCcw className="w-3 h-3 text-emerald-400" />
+                              <span>Reinstate</span>
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center justify-end gap-1.5">
+                            {isRedFlag && (
+                              <button
+                                onClick={() => handleClearFlag(rec.id, rec.user_id)}
+                                className="px-2 py-1 text-[10px] font-semibold text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 rounded border border-slate-700 transition-colors cursor-pointer"
+                              >
+                                Clear
+                              </button>
+                            )}
+                            <button
+                              onClick={() =>
+                                setDisqualifyCandidate({
+                                  userId: rec.user_id,
+                                  userName: rec.user?.name || 'Unknown User',
+                                  userEmail: rec.user?.email || 'N/A',
+                                })
+                              }
+                              className="px-2 py-1 text-[10px] font-bold text-rose-300 hover:text-white bg-rose-950/60 hover:bg-rose-900 rounded border border-rose-800/60 transition-colors cursor-pointer flex items-center gap-1"
+                              title="Disqualify participant from tournament"
+                            >
+                              <Ban className="w-3 h-3 text-rose-400" />
+                              <span>Disqualify</span>
+                            </button>
+                          </div>
                         )}
                       </td>
                     </tr>
@@ -419,6 +658,78 @@ export function TelemetryRadarTab({ adminSecret }: TelemetryRadarTabProps) {
           </table>
         </div>
       </div>
+
+      {/* Disqualification Confirmation Modal */}
+      {disqualifyCandidate && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-150">
+          <div className="w-full max-w-md p-6 glass-panel rounded-2xl border border-rose-500/60 shadow-2xl space-y-4 text-left bg-slate-950">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400">
+                <Ban className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-white">Confirm Participant Disqualification</h3>
+                <p className="text-xs text-rose-400">Irreversible tournament sanction</p>
+              </div>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800 space-y-1">
+              <div className="text-xs font-bold text-white">{disqualifyCandidate.userName}</div>
+              <div className="text-[11px] font-mono text-slate-400">{disqualifyCandidate.userEmail}</div>
+              <div className="text-[10px] font-mono text-slate-500">ID: {disqualifyCandidate.userId}</div>
+            </div>
+
+            <p className="text-xs text-slate-300 leading-relaxed">
+              Disqualifying this participant will immediately lock their arena session, revoke stage decryption permissions, prevent any further submissions, and broadcast a real-time suspension notice to their browser.
+            </p>
+
+            <div>
+              <label className="block text-[11px] font-semibold text-slate-300 mb-1">
+                Disqualification Reason (Displayed to Participant):
+              </label>
+              <textarea
+                value={disqualifyReason}
+                onChange={(e) => setDisqualifyReason(e.target.value)}
+                rows={2}
+                className="w-full px-3 py-2 text-xs text-white bg-slate-900 border border-slate-700 rounded-xl focus:border-rose-400 focus:outline-none resize-none font-mono"
+              />
+            </div>
+
+            {disqualifyError && (
+              <p className="text-xs text-rose-400 font-medium">{disqualifyError}</p>
+            )}
+
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setDisqualifyCandidate(null)}
+                disabled={disqualifying}
+                className="px-4 py-2 text-xs font-semibold text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-xl transition-all cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleDisqualifyParticipant}
+                disabled={disqualifying}
+                className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-rose-600 hover:bg-rose-500 rounded-xl shadow-neon-rose transition-all cursor-pointer disabled:opacity-50"
+              >
+                {disqualifying ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Disqualifying...</span>
+                  </>
+                ) : (
+                  <>
+                    <Ban className="w-3.5 h-3.5" />
+                    <span>Enforce Disqualification</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

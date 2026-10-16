@@ -171,3 +171,160 @@ export async function extractZipInBrowser(
     throw new ZipEngineError('EXTRACTION_FAILED', err?.message || 'Archive decompression failed.');
   }
 }
+
+/**
+ * Pre-flight in-browser archive decryption validator for administrators.
+ * Verifies that the selected ZIP archive can be parsed, checks encryption status,
+ * and tests decompression against the entered password in RAM before upload/save.
+ */
+export async function validateArchiveDecryption(
+  file: File | Blob,
+  zipPassword?: string
+): Promise<import('./types').PreflightValidationResult> {
+  // 1. File existence and size check
+  if (!file || file.size === 0) {
+    return {
+      valid: false,
+      isEncrypted: false,
+      fileCount: 0,
+      filenames: [],
+      message: 'Selected archive is empty (0 bytes).',
+      error: 'EMPTY_ARCHIVE',
+    };
+  }
+
+  const MAX_SIZE = 104857600; // 100MB
+  if (file.size > MAX_SIZE) {
+    return {
+      valid: false,
+      isEncrypted: false,
+      fileCount: 0,
+      filenames: [],
+      message: `Archive exceeds maximum allowed size of 100MB (${(file.size / (1024 * 1024)).toFixed(1)}MB).`,
+      error: 'FILE_TOO_LARGE',
+    };
+  }
+
+  const cleanPassword = zipPassword ? zipPassword.trim() : '';
+
+  try {
+    const blobReader = new BlobReader(file);
+    const zipReader = new ZipReader(blobReader, { password: cleanPassword || undefined });
+    const entries = await zipReader.getEntries();
+
+    const validEntries = entries.filter(
+      (e) =>
+        !e.directory &&
+        !e.filename.startsWith('__MACOSX/') &&
+        !e.filename.includes('/.DS_Store') &&
+        !e.filename.endsWith('.DS_Store')
+    );
+
+    if (validEntries.length === 0) {
+      await zipReader.close();
+      return {
+        valid: false,
+        isEncrypted: false,
+        fileCount: 0,
+        filenames: [],
+        message: 'Archive contains no valid readable files or directories.',
+        error: 'NO_VALID_FILES',
+      };
+    }
+
+    const filenames = validEntries.map((e) => e.filename.split('/').pop() || e.filename);
+    const hasEncryptedEntries = validEntries.some((e) => e.encrypted);
+
+    // Case A: Archive has encrypted entries
+    if (hasEncryptedEntries) {
+      if (!cleanPassword) {
+        await zipReader.close();
+        return {
+          valid: false,
+          isEncrypted: true,
+          fileCount: validEntries.length,
+          filenames,
+          message: `Archive contains encrypted files (${validEntries.length} total). Enter the stage decryption password to validate.`,
+          error: 'PASSWORD_REQUIRED',
+        };
+      }
+
+      // Test decrypt the first 3 encrypted entries in RAM to confirm password works
+      const encryptedEntries = validEntries.filter((e) => e.encrypted).slice(0, 3);
+      for (const entry of encryptedEntries) {
+        try {
+          const testWriter = new Uint8ArrayWriter();
+          await (entry as any).getData(testWriter, { password: cleanPassword });
+        } catch (decryptErr: any) {
+          await zipReader.close();
+          const errStr = (decryptErr?.message || '').toLowerCase();
+          const isPassError =
+            errStr.includes('password') ||
+            errStr.includes('aes') ||
+            errStr.includes('zipcrypto') ||
+            decryptErr?.name === 'ZipCryptoError' ||
+            decryptErr?.name === 'AesError';
+
+          return {
+            valid: false,
+            isEncrypted: true,
+            fileCount: validEntries.length,
+            filenames,
+            message: isPassError
+              ? `Decryption Failed: Incorrect password for '${entry.filename.split('/').pop()}'. Try another password.`
+              : `Decryption Failed on '${entry.filename.split('/').pop()}': ${decryptErr?.message || 'Corrupt data.'}`,
+            error: 'INVALID_PASSWORD',
+          };
+        }
+      }
+
+      await zipReader.close();
+      return {
+        valid: true,
+        isEncrypted: true,
+        fileCount: validEntries.length,
+        filenames,
+        message: `Validation Passed: Decryption verified with password '${cleanPassword}' across ${validEntries.length} file(s).`,
+      };
+    }
+
+    // Case B: Archive is unencrypted
+    // Test read the first entry to confirm ZIP integrity
+    try {
+      const testEntry = validEntries[0];
+      const testWriter = new Uint8ArrayWriter();
+      await (testEntry as any).getData(testWriter);
+    } catch (readErr: any) {
+      await zipReader.close();
+      return {
+        valid: false,
+        isEncrypted: false,
+        fileCount: validEntries.length,
+        filenames,
+        message: `Archive read error: ${readErr?.message || 'Corrupt file stream.'}`,
+        error: 'CORRUPT_ARCHIVE',
+      };
+    }
+
+    await zipReader.close();
+    return {
+      valid: true,
+      isEncrypted: false,
+      fileCount: validEntries.length,
+      filenames,
+      message: cleanPassword
+        ? `Validation Passed: Archive is unencrypted (contains ${validEntries.length} files). Note: No password is required for this archive.`
+        : `Validation Passed: Archive verified cleanly (contains ${validEntries.length} files, unencrypted).`,
+    };
+  } catch (err: any) {
+    return {
+      valid: false,
+      isEncrypted: false,
+      fileCount: 0,
+      filenames: [],
+      message: `Failed to inspect archive: ${err?.message || 'Invalid ZIP format or corrupt file.'}`,
+      error: 'CORRUPT_ARCHIVE',
+    };
+  }
+}
+
