@@ -24,6 +24,7 @@ function ArenaContent() {
   const [selectedStageNumber, setSelectedStageNumber] = useState<number>(1);
   const [files, setFiles] = useState<ParsedFile[]>([]);
   const [activeFile, setActiveFile] = useState<ParsedFile | null>(null);
+  const [openFiles, setOpenFiles] = useState<ParsedFile[]>([]);
   const [allowedCopyFilename, setAllowedCopyFilename] = useState<string>('');
 
   // Active Stage ZIP Blob held in RAM
@@ -128,8 +129,10 @@ function ArenaContent() {
               extractedFiles.find((f) => f.type === 'markdown' || f.type === 'text') ||
               extractedFiles[0];
             setActiveFile(defaultFile);
+            setOpenFiles([defaultFile]);
           } else {
             setActiveFile(null);
+            setOpenFiles([]);
           }
 
           setIsPasswordModalOpen(false);
@@ -192,6 +195,10 @@ function ArenaContent() {
       setFiles(extractedFiles);
       if (extractedFiles.length > 0) {
         setActiveFile(extractedFiles[0]);
+        setOpenFiles([extractedFiles[0]]);
+      } else {
+        setActiveFile(null);
+        setOpenFiles([]);
       }
       setIsPasswordModalOpen(false);
       setPasswordModalError(null);
@@ -253,6 +260,8 @@ function ArenaContent() {
         selectedStageNumber={selectedStageNumber}
         files={files}
         activeFile={activeFile}
+        openFiles={openFiles}
+        onOpenFilesChange={setOpenFiles}
         allowedCopyFilename={allowedCopyFilename}
         loading={loading}
         participantName={user?.name || 'Participant'}
