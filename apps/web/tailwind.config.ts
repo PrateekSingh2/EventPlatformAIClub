@@ -9,7 +9,23 @@ const config: Config = {
   ],
   theme: {
     extend: {
+      screens: {
+        xs: '480px',
+      },
       colors: {
+        app: {
+          bg: 'var(--app-bg)',
+          surface: 'var(--app-surface)',
+          panel: 'var(--app-panel)',
+          border: 'var(--app-border)',
+          muted: 'var(--app-muted)',
+          hover: 'var(--app-hover)',
+          text: 'var(--app-text)',
+          subtext: 'var(--app-subtext)',
+          accent: 'var(--app-accent)',
+          accentBg: 'var(--app-accent-bg)',
+          accentBorder: 'var(--app-accent-border)',
+        },
         slate: {
           950: '#020617',
           900: '#0f172a',
@@ -29,16 +45,19 @@ const config: Config = {
           'Inter',
           '-apple-system',
           'BlinkMacSystemFont',
-          'Segoe UI',
+          '"SF Pro Text"',
+          '"Segoe UI"',
           'Roboto',
           'sans-serif',
         ],
         mono: [
-          'JetBrains Mono',
-          'Fira Code',
+          'ui-monospace',
+          'SFMono-Regular',
           'Menlo',
           'Monaco',
           'Consolas',
+          '"Liberation Mono"',
+          '"Courier New"',
           'monospace',
         ],
       },

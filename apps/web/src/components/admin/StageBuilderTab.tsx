@@ -284,17 +284,17 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
                 }`}
               >
                 <div className="flex items-center justify-between mb-1">
-                  <span className="text-xs font-bold text-cyan-400 font-mono">
+                  <span className="text-xs font-bold text-cyan-400">
                     STAGE {stg.stage_number}
                   </span>
-                  <span className="text-[10px] text-slate-400 font-mono">
+                  <span className="text-[10px] text-slate-400 font-semibold">
                     {stg.points} PTS
                   </span>
                 </div>
                 <h4 className="text-xs font-semibold text-slate-200 truncate">
                   {stg.title}
                 </h4>
-                <div className="flex items-center gap-3 mt-2 text-[10px] text-slate-400 font-mono">
+                <div className="flex items-center gap-3 mt-2 text-[10px] text-slate-400 font-medium">
                   <span className="flex items-center gap-1">
                     <Clock className="w-3 h-3 text-slate-500" />
                     &ge;{stg.min_expected_seconds}s
@@ -455,7 +455,7 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
                 <label className="block text-xs font-semibold text-slate-300 mb-1">
                   Upload Stage ZIP File
                 </label>
-                <div className="flex items-center gap-3">
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
                   <input
                     type="file"
                     accept=".zip"
@@ -466,7 +466,7 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
                     type="button"
                     onClick={handleDirectStorageUpload}
                     disabled={!uploadFile || uploading}
-                    className="px-4 py-2 text-xs font-bold text-white bg-violet-600 hover:bg-violet-500 rounded-xl shadow-neon-violet disabled:opacity-50 cursor-pointer flex items-center gap-1.5"
+                    className="px-4 py-2 text-xs font-bold text-white bg-violet-600 hover:bg-violet-500 rounded-xl shadow-neon-violet disabled:opacity-50 cursor-pointer flex items-center justify-center gap-1.5 shrink-0"
                   >
                     {uploading ? (
                       <>
@@ -501,8 +501,8 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
           </div>
 
           {/* Section 3: 2-Question Stage Gate Quiz Builder */}
-          <div className="p-5 rounded-2xl glass-panel border border-slate-800 space-y-6">
-            <div className="flex items-center justify-between">
+          <div className="p-4 sm:p-5 rounded-2xl glass-panel border border-slate-800 space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
               <h3 className="text-xs font-bold text-slate-200 uppercase tracking-wider flex items-center gap-2">
                 <HelpCircle className="w-4 h-4 text-cyan-400" />
                 2-Question Gate Quiz Builder
@@ -515,10 +515,10 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
             {questions.map((q, qIdx) => (
               <div
                 key={qIdx}
-                className="p-4 rounded-xl bg-slate-900/80 border border-slate-800 space-y-3"
+                className="p-3.5 sm:p-4 rounded-xl bg-slate-900/80 border border-slate-800 space-y-3"
               >
                 <div className="flex items-center gap-2">
-                  <span className="w-5 h-5 rounded-full bg-cyan-500/20 text-cyan-300 text-xs font-mono font-bold flex items-center justify-center">
+                  <span className="w-5 h-5 rounded-full bg-cyan-500/20 text-cyan-300 text-xs font-mono font-bold flex items-center justify-center shrink-0">
                     {qIdx + 1}
                   </span>
                   <input
@@ -537,7 +537,7 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
                   />
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pl-7">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pl-0 sm:pl-7">
                   {q.options.map((opt, optIdx) => {
                     const isCorrect = q.answer_idx === optIdx;
                     return (
@@ -580,7 +580,7 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
             <button
               type="submit"
               disabled={saving}
-              className="flex items-center gap-2 px-6 py-2.5 text-xs font-bold text-slate-950 bg-cyan-400 hover:bg-cyan-300 rounded-xl transition-all shadow-neon-cyan disabled:opacity-50 cursor-pointer"
+              className="w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-2.5 text-xs font-bold text-slate-950 bg-cyan-400 hover:bg-cyan-300 rounded-xl transition-all shadow-neon-cyan disabled:opacity-50 cursor-pointer"
             >
               {saving ? (
                 <>
