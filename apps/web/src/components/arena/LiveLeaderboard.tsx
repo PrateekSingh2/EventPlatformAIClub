@@ -3,7 +3,7 @@
 import React, { useEffect, useState, useTransition, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { supabase } from '@/lib/supabase';
-import { User } from '@/lib/types';
+import { User, ContestStatus } from '@/lib/types';
 import {
   Trophy,
   X,
@@ -12,24 +12,31 @@ import {
   Sparkles,
   Flame,
   RotateCw,
+  Pause,
+  CheckCircle2,
 } from 'lucide-react';
 
 interface LiveLeaderboardProps {
   isOpen: boolean;
   onClose: () => void;
   currentUserId?: string;
+  contestStatus?: ContestStatus;
 }
 
 export function LiveLeaderboard({
   isOpen,
   onClose,
   currentUserId,
+  contestStatus = 'LIVE',
 }: LiveLeaderboardProps) {
   const [users, setUsers] = useState<User[]>([]);
   const [search, setSearch] = useState('');
   const [activeTab, setActiveTab] = useState<'all' | 'top5' | 'my-stage'>('all');
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [, startTransition] = useTransition();
+
+  const isFrozen = contestStatus === 'FROZEN';
+  const isConcluded = contestStatus === 'CONCLUDED';
 
   // Initial fetch of leaderboard
   const fetchLeaderboard = useCallback(async () => {
@@ -79,6 +86,10 @@ export function LiveLeaderboard({
         'postgres_changes',
         { event: '*', schema: 'public', table: 'users' },
         () => {
+          // If frozen or concluded, do not update rankings from real-time events
+          if (contestStatus === 'FROZEN' || contestStatus === 'CONCLUDED') {
+            return;
+          }
           startTransition(() => {
             fetchLeaderboard();
           });
@@ -90,7 +101,7 @@ export function LiveLeaderboard({
       clearInterval(interval);
       supabase.removeChannel(channel);
     };
-  }, [isOpen, fetchLeaderboard]);
+  }, [isOpen, fetchLeaderboard, contestStatus]);
 
   const handleManualRefresh = async () => {
     setIsRefreshing(true);
@@ -124,38 +135,70 @@ export function LiveLeaderboard({
           className="w-screen max-w-xs sm:w-88 border-l border-app-border bg-app-surface flex flex-col shadow-[-16px_0_40px_rgba(0,0,0,0.5)] select-none h-full"
         >
           {/* Header */}
-          <div className="p-3.5 border-b border-app-border flex items-center justify-between">
-            <div className="flex items-center space-x-2.5">
-              <div className="w-8 h-8 rounded-xl bg-amber-500/10 border border-amber-500/25 flex items-center justify-center text-amber-500 dark:text-amber-400 shadow-xs">
-                <Trophy className="w-4 h-4" />
-              </div>
-              <div>
-                <h3 className="font-semibold text-xs text-app-text tracking-tight">Live Leaderboard</h3>
-                <div className="flex items-center gap-1.5 text-[9px] text-emerald-400 font-mono">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping inline-block" />
-                  <span>HOT-SYNC ACTIVE</span>
+          <div className="p-3.5 border-b border-app-border space-y-2">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-2.5">
+                <div className="w-8 h-8 rounded-xl bg-amber-500/10 border border-amber-500/25 flex items-center justify-center text-amber-500 dark:text-amber-400 shadow-xs">
+                  <Trophy className="w-4 h-4" />
                 </div>
+                <div>
+                  <h3 className="font-semibold text-xs text-app-text tracking-tight">
+                    {isConcluded ? 'Final Standings' : isFrozen ? 'Leaderboard (Frozen)' : 'Live Leaderboard'}
+                  </h3>
+                  <div className="flex items-center gap-1.5 text-[9px] font-mono">
+                    {isFrozen ? (
+                      <span className="flex items-center gap-1 text-amber-400 font-bold">
+                        <Pause className="w-2.5 h-2.5 fill-amber-400" />
+                        FROZEN
+                      </span>
+                    ) : isConcluded ? (
+                      <span className="flex items-center gap-1 text-purple-400 font-bold">
+                        <CheckCircle2 className="w-2.5 h-2.5" />
+                        OFFICIAL
+                      </span>
+                    ) : (
+                      <span className="flex items-center gap-1 text-emerald-400">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping inline-block" />
+                        HOT-SYNC ACTIVE
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center space-x-1">
+                <button
+                  onClick={handleManualRefresh}
+                  className={`p-1.5 rounded-lg hover:bg-white/5 text-app-subtext hover:text-app-text transition-colors cursor-pointer ${
+                    isRefreshing ? 'animate-spin text-app-accent' : ''
+                  }`}
+                  title="Force refresh"
+                >
+                  <RotateCw className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  onClick={onClose}
+                  className="text-app-subtext hover:text-app-text cursor-pointer p-1.5 rounded-lg hover:bg-white/5 transition-colors"
+                  title="Close (Esc)"
+                >
+                  <X className="w-4 h-4" />
+                </button>
               </div>
             </div>
 
-            <div className="flex items-center space-x-1">
-              <button
-                onClick={handleManualRefresh}
-                className={`p-1.5 rounded-lg hover:bg-white/5 text-app-subtext hover:text-app-text transition-colors cursor-pointer ${
-                  isRefreshing ? 'animate-spin text-app-accent' : ''
-                }`}
-                title="Force refresh"
-              >
-                <RotateCw className="w-3.5 h-3.5" />
-              </button>
-              <button
-                onClick={onClose}
-                className="text-app-subtext hover:text-app-text cursor-pointer p-1.5 rounded-lg hover:bg-white/5 transition-colors"
-                title="Close (Esc)"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
+            {isFrozen && (
+              <div className="p-2 rounded-xl bg-amber-950/60 border border-amber-500/40 text-amber-200 text-[11px] font-mono flex items-center gap-2">
+                <Pause className="w-3.5 h-3.5 fill-amber-400 flex-shrink-0" />
+                <span>Leaderboard is frozen. Submissions are paused and rankings are locked.</span>
+              </div>
+            )}
+
+            {isConcluded && (
+              <div className="p-2 rounded-xl bg-purple-950/60 border border-purple-500/40 text-purple-200 text-[11px] font-mono flex items-center gap-2">
+                <CheckCircle2 className="w-3.5 h-3.5 text-purple-400 flex-shrink-0" />
+                <span>Tournament concluded. Final official standings are locked in read-only form.</span>
+              </div>
+            )}
           </div>
 
           {/* Interactive Filter Tabs with Animated Layout Pill */}

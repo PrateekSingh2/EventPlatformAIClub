@@ -1,7 +1,8 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Stage, QuizQuestion } from '@/lib/types';
+import { Stage, QuizQuestion, PreflightValidationResult } from '@/lib/types';
+import { validateArchiveDecryption } from '@/lib/zip-engine';
 import {
   Upload,
   Plus,
@@ -15,6 +16,9 @@ import {
   HelpCircle,
   Loader2,
   Check,
+  FileArchive,
+  KeyRound,
+  AlertTriangle,
 } from 'lucide-react';
 
 interface StageBuilderTabProps {
@@ -53,6 +57,52 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<string | null>(null);
+
+  // Archive Decryption Preflight State
+  const [preflightResult, setPreflightResult] = useState<PreflightValidationResult | null>(null);
+  const [validatingArchive, setValidatingArchive] = useState(false);
+
+  // Preflight validation effect: re-runs whenever selected archive or password changes
+  useEffect(() => {
+    if (!uploadFile) {
+      setPreflightResult(null);
+      return;
+    }
+
+    let isMounted = true;
+    const runValidation = async () => {
+      setValidatingArchive(true);
+      try {
+        const result = await validateArchiveDecryption(uploadFile, zipPassword);
+        if (isMounted) {
+          setPreflightResult(result);
+          if (result.isEncrypted && !isPasswordProtected) {
+            setIsPasswordProtected(true);
+          }
+        }
+      } catch (err: any) {
+        if (isMounted) {
+          setPreflightResult({
+            valid: false,
+            isEncrypted: false,
+            fileCount: 0,
+            filenames: [],
+            message: err.message || 'Validation error',
+            error: 'ERROR',
+          });
+        }
+      } finally {
+        if (isMounted) {
+          setValidatingArchive(false);
+        }
+      }
+    };
+
+    runValidation();
+    return () => {
+      isMounted = false;
+    };
+  }, [uploadFile, zipPassword, isPasswordProtected]);
 
   // Save State
   const [saving, setSaving] = useState(false);
@@ -455,7 +505,7 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
                 <label className="block text-xs font-semibold text-slate-300 mb-1">
                   Upload Stage ZIP File
                 </label>
-                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+                <div className="flex flex-col sm:flex-row sm:items-center gap-3">
                   <input
                     type="file"
                     accept=".zip"
@@ -465,8 +515,13 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
                   <button
                     type="button"
                     onClick={handleDirectStorageUpload}
-                    disabled={!uploadFile || uploading}
-                    className="px-4 py-2 text-xs font-bold text-white bg-violet-600 hover:bg-violet-500 rounded-xl shadow-neon-violet disabled:opacity-50 cursor-pointer flex items-center justify-center gap-1.5 shrink-0"
+                    disabled={
+                      !uploadFile ||
+                      uploading ||
+                      validatingArchive ||
+                      (preflightResult !== null && !preflightResult.valid)
+                    }
+                    className="px-4 py-2 text-xs font-bold text-white bg-violet-600 hover:bg-violet-500 rounded-xl shadow-neon-violet disabled:opacity-50 cursor-pointer flex items-center justify-center gap-1.5"
                   >
                     {uploading ? (
                       <>
@@ -478,6 +533,46 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
                     )}
                   </button>
                 </div>
+
+                {/* Preflight Validation Status Display */}
+                {validatingArchive && (
+                  <div className="p-3 rounded-xl bg-slate-900 border border-cyan-500/30 text-xs text-cyan-300 flex items-center gap-2 mt-2">
+                    <Loader2 className="w-4 h-4 animate-spin text-cyan-400 flex-shrink-0" />
+                    <span>Running in-memory decryption pre-flight check...</span>
+                  </div>
+                )}
+
+                {preflightResult && !validatingArchive && (
+                  <div
+                    className={`p-3.5 rounded-xl border text-xs space-y-1.5 mt-2 ${
+                      preflightResult.valid
+                        ? 'bg-emerald-950/40 border-emerald-500/50 text-emerald-200'
+                        : 'bg-rose-950/40 border-rose-500/50 text-rose-200'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 font-bold">
+                      {preflightResult.valid ? (
+                        <>
+                          <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+                          <span className="text-emerald-300">Archive Pre-Flight Validated</span>
+                        </>
+                      ) : (
+                        <>
+                          <AlertTriangle className="w-4 h-4 text-rose-400 flex-shrink-0" />
+                          <span className="text-rose-300">Archive Pre-Flight Failed</span>
+                        </>
+                      )}
+                    </div>
+                    <p className="text-[11px] font-mono leading-relaxed">{preflightResult.message}</p>
+                    {preflightResult.valid && preflightResult.filenames.length > 0 && (
+                      <div className="text-[10px] text-slate-400 font-mono">
+                        Contains {preflightResult.fileCount} file(s): {preflightResult.filenames.slice(0, 4).join(', ')}
+                        {preflightResult.filenames.length > 4 ? ` (+${preflightResult.filenames.length - 4} more)` : ''}
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {uploadProgress && (
                   <p className="text-[11px] font-mono text-cyan-400 mt-1">
                     {uploadProgress}
@@ -579,18 +674,22 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
           <div className="flex justify-end pt-2">
             <button
               type="submit"
-              disabled={saving}
-              className="w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-2.5 text-xs font-bold text-slate-950 bg-cyan-400 hover:bg-cyan-300 rounded-xl transition-all shadow-neon-cyan disabled:opacity-50 cursor-pointer"
+              disabled={
+                saving ||
+                validatingArchive ||
+                (uploadFile !== null && preflightResult !== null && !preflightResult.valid)
+              }
+              className="flex items-center gap-2 px-6 py-2.5 text-xs font-bold text-slate-950 bg-cyan-400 hover:bg-cyan-300 rounded-xl transition-all shadow-neon-cyan disabled:opacity-50 cursor-pointer"
             >
               {saving ? (
                 <>
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  Saving Stage...
+                  <span>Saving Stage...</span>
                 </>
               ) : (
                 <>
                   <Save className="w-3.5 h-3.5" />
-                  Save Stage Configuration
+                  <span>Save Stage Configuration</span>
                 </>
               )}
             </button>

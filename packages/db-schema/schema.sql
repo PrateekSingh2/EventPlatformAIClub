@@ -49,6 +49,26 @@ COMMENT ON COLUMN stages.allowed_copy_filename IS 'Exact basename of the file pa
 COMMENT ON COLUMN stages.min_expected_seconds IS 'Threshold below which stage completion is silently flagged as flagged_too_fast';
 
 -- ------------------------------------------------------------------------------
+-- 1.5 TABLE: contest_settings
+-- Stores contest lifecycle state machine and operational settings
+-- ------------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS contest_settings (
+    id TEXT PRIMARY KEY DEFAULT 'default',
+    status TEXT NOT NULL DEFAULT 'DRAFT' CHECK (status IN ('DRAFT', 'LIVE', 'FROZEN', 'CONCLUDED')),
+    title TEXT NOT NULL DEFAULT 'AI Club Contest',
+    start_time TIMESTAMPTZ,
+    end_time TIMESTAMPTZ,
+    freeze_time TIMESTAMPTZ,
+    updated_by TEXT DEFAULT 'admin',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+INSERT INTO contest_settings (id, status, title)
+VALUES ('default', 'DRAFT', 'AI Club Contest')
+ON CONFLICT (id) DO NOTHING;
+
+-- ------------------------------------------------------------------------------
 -- 2. TABLE: users
 -- Stores participants and admins with cryptographic access tokens
 -- ------------------------------------------------------------------------------
@@ -56,16 +76,20 @@ CREATE TABLE IF NOT EXISTS users (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     email TEXT UNIQUE NOT NULL,
     name TEXT NOT NULL,
-    role TEXT NOT NULL CHECK (role IN ('admin', 'participant')) DEFAULT 'participant',
+    role TEXT NOT NULL CHECK (role IN ('admin', 'participant', 'disqualified')) DEFAULT 'participant',
     access_token TEXT UNIQUE NOT NULL,
     total_score INT NOT NULL DEFAULT 0,
     current_stage INT NOT NULL DEFAULT 1,
     is_flagged BOOLEAN NOT NULL DEFAULT false,
+    is_disqualified BOOLEAN NOT NULL DEFAULT false,
+    disqualified_at TIMESTAMPTZ,
+    disqualification_reason TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 COMMENT ON COLUMN users.access_token IS 'Cryptographic magic-link token formatted as AX-XXXX-XXXX';
+COMMENT ON COLUMN users.is_disqualified IS 'Set to true when an administrator executes a disqualification sanction';
 COMMENT ON COLUMN users.is_flagged IS 'Flagged if participant exhibits suspicious speed-run or excessive anti-cheat violations';
 
 -- ------------------------------------------------------------------------------
@@ -169,6 +193,66 @@ CREATE POLICY "Public update telemetry"
     FOR UPDATE
     USING (true);
 
+-- ------------------------------------------------------------------------------
+-- 3.5 TABLE: announcements
+-- Broadcast announcements published by administrators to participants
+-- ------------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS announcements (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    message TEXT NOT NULL,
+    urgency TEXT NOT NULL DEFAULT 'info' CHECK (urgency IN ('info', 'warning', 'critical')),
+    created_by TEXT DEFAULT 'admin',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- ------------------------------------------------------------------------------
+-- 6. ROW LEVEL SECURITY (RLS) POLICIES
+-- ------------------------------------------------------------------------------
+ALTER TABLE stages ENABLE ROW LEVEL SECURITY;
+ALTER TABLE users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE stage_telemetry ENABLE ROW LEVEL SECURITY;
+ALTER TABLE contest_settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE announcements ENABLE ROW LEVEL SECURITY;
+
+-- Anonymous users (participants) can read leaderboard user summaries
+CREATE POLICY "Public read user leaderboard"
+    ON users
+    FOR SELECT
+    USING (true);
+
+-- Anonymous users can read stage manifests
+CREATE POLICY "Public read stages manifest"
+    ON stages
+    FOR SELECT
+    USING (true);
+
+-- Anonymous users can read/write their own stage telemetry
+CREATE POLICY "Public read telemetry"
+    ON stage_telemetry
+    FOR SELECT
+    USING (true);
+
+CREATE POLICY "Public insert telemetry"
+    ON stage_telemetry
+    FOR INSERT
+    WITH CHECK (true);
+
+CREATE POLICY "Public update telemetry"
+    ON stage_telemetry
+    FOR UPDATE
+    USING (true);
+
+-- Public read for contest lifecycle settings and announcements
+CREATE POLICY "Public read contest_settings"
+    ON contest_settings
+    FOR SELECT
+    USING (true);
+
+CREATE POLICY "Public read announcements"
+    ON announcements
+    FOR SELECT
+    USING (true);
+
 -- Service role bypasses all RLS checks automatically for admin endpoints
 CREATE POLICY "Service role full access stages"
     ON stages
@@ -184,6 +268,18 @@ CREATE POLICY "Service role full access users"
 
 CREATE POLICY "Service role full access telemetry"
     ON stage_telemetry
+    FOR ALL
+    USING (auth.role() = 'service_role')
+    WITH CHECK (auth.role() = 'service_role');
+
+CREATE POLICY "Service role full access contest_settings"
+    ON contest_settings
+    FOR ALL
+    USING (auth.role() = 'service_role')
+    WITH CHECK (auth.role() = 'service_role');
+
+CREATE POLICY "Service role full access announcements"
+    ON announcements
     FOR ALL
     USING (auth.role() = 'service_role')
     WITH CHECK (auth.role() = 'service_role');
@@ -209,4 +305,21 @@ BEGIN
     ) THEN
         ALTER PUBLICATION supabase_realtime ADD TABLE stage_telemetry;
     END IF;
+
+    -- Enable replication on contest_settings for live lifecycle state synchronization
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_publication_tables 
+        WHERE pubname = 'supabase_realtime' AND tablename = 'contest_settings'
+    ) THEN
+        ALTER PUBLICATION supabase_realtime ADD TABLE contest_settings;
+    END IF;
+
+    -- Enable replication on announcements for live admin announcements
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_publication_tables 
+        WHERE pubname = 'supabase_realtime' AND tablename = 'announcements'
+    ) THEN
+        ALTER PUBLICATION supabase_realtime ADD TABLE announcements;
+    END IF;
 END $$;
+

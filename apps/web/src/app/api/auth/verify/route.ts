@@ -30,6 +30,24 @@ export async function POST(req: NextRequest) {
     if (token) {
       const user = await verifyParticipantToken(token);
       if (user) {
+        if (user.role === 'disqualified' || user.is_disqualified) {
+          return NextResponse.json(
+            {
+              authenticated: false,
+              role: 'disqualified',
+              error: 'Account Suspended for Fair-Play Violations',
+              user: {
+                id: user.id,
+                name: user.name,
+                email: user.email,
+                role: 'disqualified',
+                is_disqualified: true,
+              },
+            },
+            { status: 403 }
+          );
+        }
+
         return NextResponse.json({
           authenticated: true,
           role: user.role,

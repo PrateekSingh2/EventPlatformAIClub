@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { ParsedFile, StageManifest } from '@/lib/types';
+import { ParsedFile, StageManifest, ContestStatus } from '@/lib/types';
 import { SheetViewer } from './SheetViewer';
 import { useTheme } from '@/lib/theme';
 import { FileExtensionIcon } from './FileIcon';
@@ -37,6 +37,11 @@ import {
   UnfoldVertical,
   Palette,
   LogOut,
+  Sparkles,
+  Maximize2,
+  FileQuestion,
+  Pause,
+  CheckCircle2,
 } from 'lucide-react';
 
 interface InBrowserIDEProps {
@@ -52,6 +57,7 @@ interface InBrowserIDEProps {
   loading: boolean;
   participantName: string;
   totalScore: number;
+  contestStatus?: ContestStatus;
   onSelectStage: (stageNum: number) => void;
   onSelectFile: (file: ParsedFile | null) => void;
   onOpenUnlockModal: () => void;
@@ -79,6 +85,7 @@ export function InBrowserIDE({
   loading,
   participantName,
   totalScore,
+  contestStatus = 'LIVE',
   onSelectStage,
   onSelectFile,
   onOpenUnlockModal,
@@ -170,6 +177,8 @@ export function InBrowserIDE({
   }, []);
 
   const selectedStage = stages.find((s) => s.stageNumber === selectedStageNumber);
+  const isFrozen = contestStatus === 'FROZEN';
+  const isConcluded = contestStatus === 'CONCLUDED';
 
   // Terminal Logs State
   const [logs, setLogs] = useState<TerminalLog[]>([
@@ -787,24 +796,57 @@ export function InBrowserIDE({
               Contest Sandbox
             </span>
           </div>
+          {isFrozen && (
+            <span className="flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded bg-amber-500/20 border border-amber-500/40 text-amber-300 font-bold ml-2">
+              <Pause className="w-3 h-3 fill-amber-400" />
+              SUBMISSIONS FROZEN
+            </span>
+          )}
+
+          {isConcluded && (
+            <span className="flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded bg-purple-500/20 border border-purple-500/40 text-purple-300 font-bold ml-2">
+              <CheckCircle2 className="w-3 h-3 text-purple-400" />
+              CONTEST CONCLUDED
+            </span>
+          )}
         </div>
 
         {/* Right: Unlock Button (leftmost) + Theme Dropdown + Leaderboard Logo Button + Profile Dropdown */}
         <div className="flex items-center space-x-2 sm:space-x-3 shrink-0">
           
           {/* 1. Unlock Next Stage Button (Far Left of Right-Side Actions) */}
-          <button
-            onClick={onOpenUnlockModal}
-            className="flex items-center space-x-1 sm:space-x-1.5 px-3 sm:px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 text-slate-950 font-semibold text-xs hover:brightness-105 active:scale-[0.98] transition-all cursor-pointer shadow-[0_4px_14px_rgba(16,185,129,0.35),_inset_0_1px_0_rgba(255,255,255,0.4)] whitespace-nowrap"
-            title={`Unlock Stage ${selectedStageNumber + 1}`}
-          >
-            <Lock className="w-3.5 h-3.5 shrink-0" />
-            <span className="hidden sm:inline">Unlock Stage {selectedStageNumber + 1}</span>
-            <span className="sm:hidden">Stage {selectedStageNumber + 1}</span>
-            <span className="text-[10px] font-bold bg-black/20 px-1.5 py-0.5 rounded ml-0.5 sm:ml-1">
-              +{selectedStage?.points || 100} PTS
-            </span>
-          </button>
+          {isFrozen ? (
+            <button
+              disabled
+              title="Contest is currently frozen. Stage submissions are paused."
+              className="flex items-center space-x-1 sm:space-x-1.5 px-3 sm:px-3.5 py-1.5 rounded-xl bg-amber-950/60 border border-amber-500/40 text-amber-300 text-xs font-bold opacity-75 cursor-not-allowed whitespace-nowrap"
+            >
+              <Pause className="w-3.5 h-3.5 fill-amber-400" />
+              <span>Submissions Paused</span>
+            </button>
+          ) : isConcluded ? (
+            <button
+              disabled
+              title="Contest is concluded. Submissions are closed."
+              className="flex items-center space-x-1 sm:space-x-1.5 px-3 sm:px-3.5 py-1.5 rounded-xl bg-purple-950/60 border border-purple-500/40 text-purple-300 text-xs font-bold opacity-75 cursor-not-allowed whitespace-nowrap"
+            >
+              <CheckCircle2 className="w-3.5 h-3.5 text-purple-400" />
+              <span>Contest Concluded</span>
+            </button>
+          ) : (
+            <button
+              onClick={onOpenUnlockModal}
+              className="flex items-center space-x-1 sm:space-x-1.5 px-3 sm:px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 text-slate-950 font-semibold text-xs hover:brightness-105 active:scale-[0.98] transition-all cursor-pointer shadow-[0_4px_14px_rgba(16,185,129,0.35),_inset_0_1px_0_rgba(255,255,255,0.4)] whitespace-nowrap"
+              title={`Unlock Stage ${selectedStageNumber + 1}`}
+            >
+              <Lock className="w-3.5 h-3.5 shrink-0" />
+              <span className="hidden sm:inline">Unlock Stage {selectedStageNumber + 1}</span>
+              <span className="sm:hidden">Stage {selectedStageNumber + 1}</span>
+              <span className="text-[10px] font-bold bg-black/20 px-1.5 py-0.5 rounded ml-0.5 sm:ml-1">
+                +{selectedStage?.points || 100} PTS
+              </span>
+            </button>
+          )}
 
           {/* 2. Theme Dropdown Button */}
           <div className="relative">

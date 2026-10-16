@@ -5,8 +5,8 @@ import { useRouter } from 'next/navigation';
 import { StageBuilderTab } from '@/components/admin/StageBuilderTab';
 import { ParticipantImportTab } from '@/components/admin/ParticipantImportTab';
 import { TelemetryRadarTab } from '@/components/admin/TelemetryRadarTab';
-import { BrevoStudioTab } from '@/components/admin/BrevoStudioTab';
-import { useTheme } from '@/lib/theme';
+import { ContestLifecycleBar } from '@/components/admin/ContestLifecycleBar';
+import { ContestLifecycleTab } from '@/components/admin/ContestLifecycleTab';
 import {
   Layers,
   Users,
@@ -27,13 +27,17 @@ import {
   ChevronDown,
   Check,
   BrainCircuit,
+  Trophy,
 } from 'lucide-react';
+
+type AdminTab = 'lifecycle' | 'stages' | 'participants' | 'brevo' | 'telemetry';
 
 export default function AdminPage() {
   const router = useRouter();
   const { theme, setTheme } = useTheme();
 
   const [adminSecret, setAdminSecret] = useState<string>('');
+  const [activeTab, setActiveTab] = useState<AdminTab>('lifecycle');
   const [checkingAuth, setCheckingAuth] = useState(true);
   const [authError, setAuthError] = useState<string | null>(null);
   const [authLoading, setAuthLoading] = useState(false);
@@ -328,8 +332,23 @@ export default function AdminPage() {
         </div>
       </header>
 
+      {/* Contest Lifecycle Bar */}
+      <ContestLifecycleBar adminSecret={adminSecret} />
+
       {/* Admin Tab Switcher */}
       <nav className="px-4 sm:px-6 py-2.5 bg-app-surface border-b border-app-border flex items-center space-x-2 overflow-x-auto whitespace-nowrap scrollbar-none text-xs sm:text-sm">
+        <button
+          onClick={() => setActiveTab('lifecycle')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+            activeTab === 'lifecycle'
+              ? 'bg-amber-500/15 text-amber-300 border border-amber-500/40 shadow-sm'
+              : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+          }`}
+        >
+          <Trophy className="w-4 h-4 text-amber-400" />
+          <span>Tournament Ops & Broadcasts</span>
+        </button>
+
         <button
           onClick={() => setActiveTab('stages')}
           className={`flex items-center space-x-2 px-3.5 py-2 rounded-xl transition-all cursor-pointer shrink-0 ${
@@ -381,6 +400,7 @@ export default function AdminPage() {
 
       {/* Tab Panels Content */}
       <main className="flex-1 p-4 sm:p-6 max-w-7xl mx-auto w-full">
+        {activeTab === 'lifecycle' && <ContestLifecycleTab adminSecret={adminSecret} />}
         {activeTab === 'stages' && <StageBuilderTab adminSecret={adminSecret} />}
         {activeTab === 'participants' && <ParticipantImportTab adminSecret={adminSecret} />}
         {activeTab === 'telemetry' && <TelemetryRadarTab adminSecret={adminSecret} />}
