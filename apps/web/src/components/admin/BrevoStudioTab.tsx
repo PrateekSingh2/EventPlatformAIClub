@@ -168,7 +168,7 @@ export function BrevoStudioTab({ adminSecret }: BrevoStudioTabProps) {
   return (
     <div className="space-y-6">
       {/* Top Controls Bar */}
-      <div className="p-5 rounded-2xl glass-panel border border-slate-800 space-y-4">
+      <div className="p-4 sm:p-5 rounded-2xl glass-panel border border-slate-800 space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
             <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2">
@@ -180,7 +180,7 @@ export function BrevoStudioTab({ adminSecret }: BrevoStudioTabProps) {
             </p>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-800 text-xs font-mono text-slate-300">
               <Users className="w-3.5 h-3.5 text-cyan-400" />
               <span>{participants.length} Recipient{participants.length === 1 ? '' : 's'}</span>
@@ -189,7 +189,7 @@ export function BrevoStudioTab({ adminSecret }: BrevoStudioTabProps) {
             <button
               onClick={handleDispatch}
               disabled={sending || participants.length === 0}
-              className="flex items-center gap-2 px-5 py-2 text-xs font-bold text-slate-950 bg-cyan-400 hover:bg-cyan-300 rounded-xl transition-all shadow-neon-cyan disabled:opacity-50 cursor-pointer"
+              className="w-full sm:w-auto flex items-center justify-center gap-2 px-5 py-2 text-xs font-bold text-slate-950 bg-cyan-400 hover:bg-cyan-300 rounded-xl transition-all shadow-neon-cyan disabled:opacity-50 cursor-pointer"
             >
               {sending ? (
                 <>
@@ -248,8 +248,8 @@ export function BrevoStudioTab({ adminSecret }: BrevoStudioTabProps) {
       </div>
 
       {/* Editor & Preview Split View */}
-      <div className="p-5 rounded-2xl glass-panel border border-slate-800 space-y-4">
-        <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+      <div className="p-4 sm:p-5 rounded-2xl glass-panel border border-slate-800 space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-slate-800">
           <div className="flex items-center gap-2">
             <button
               onClick={() => setPreviewTab('preview')}

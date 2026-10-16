@@ -2,51 +2,103 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  --background: #020617;
-  --foreground: #f8fafc;
+/* =========================================================================
+   DESIGN SYSTEM TOKEN SPECIFICATIONS (Graphite, Forest, Studio Light)
+   ========================================================================= */
+
+/* 1. Graphite Charcoal (Default Matte Dark - Minimalist & Grounded) */
+:root,
+:root[data-theme="graphite"] {
+  --app-bg: #121316;
+  --app-surface: #181a1f;
+  --app-panel: #1f2228;
+  --app-border: #2e323b;
+  --app-muted: #282c34;
+  --app-hover: #2d313a;
+  --app-text: #e6e8ec;
+  --app-subtext: #8e95a2;
+  --app-accent: #e2e8f0; /* Muted Silver */
+  --app-accent-bg: rgba(226, 232, 240, 0.08);
+  --app-accent-border: rgba(226, 232, 240, 0.2);
+  --background: #121316;
+  --foreground: #e6e8ec;
+  color-scheme: dark;
+}
+
+/* 2. Earthy Forest (Dark Warm Slate + Sage Green Accent) */
+:root[data-theme="forest"] {
+  --app-bg: #0f1412;
+  --app-surface: #151b18;
+  --app-panel: #1c2420;
+  --app-border: #2a3530;
+  --app-muted: #222d27;
+  --app-hover: #2d3b33;
+  --app-text: #e1e9e5;
+  --app-subtext: #82958b;
+  --app-accent: #34d399; /* Earthy Sage Green */
+  --app-accent-bg: rgba(52, 211, 153, 0.1);
+  --app-accent-border: rgba(52, 211, 153, 0.25);
+  --background: #0f1412;
+  --foreground: #e1e9e5;
+  color-scheme: dark;
+}
+
+/* Enforce standard, natural numerals without slashed or dotted zeros across the entire platform */
+*,
+*::before,
+*::after {
+  font-feature-settings: "zero" 0, "cv01" 0, "cv02" 0, "cv03" 0, "cv04" 0;
+  font-variant-numeric: normal;
 }
 
 body {
-  color: var(--foreground);
-  background: var(--background);
-  font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  color: var(--app-text);
+  background: var(--app-bg);
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+  font-feature-settings: "zero" 0, "cv01" 0, "cv02" 0, "cv03" 0, "cv04" 0;
+  font-variant-numeric: normal;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
   overflow-x: hidden;
+  transition: background-color 150ms ease, color 150ms ease;
 }
 
-/* Custom cyber scrollbars */
+body, input, textarea, select, button, table, span, div, p, h1, h2, h3, h4, h5, h6 {
+  font-variant-numeric: normal;
+}
+
+/* Custom Non-Glow Focus Rings */
+:focus-visible {
+  outline: 2px solid var(--app-accent);
+  outline-offset: -1px;
+}
+
+/* Crisp Custom Scrollbars */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
-
 ::-webkit-scrollbar-track {
-  background: #090d16;
+  background: transparent;
 }
-
 ::-webkit-scrollbar-thumb {
-  background: #1e293b;
+  background: var(--app-border);
   border-radius: 3px;
 }
-
 ::-webkit-scrollbar-thumb:hover {
-  background: #334155;
+  background: var(--app-subtext);
 }
 
-/* Glassmorphism helpers */
+/* Glassmorphism / panel helpers */
 .glass-panel {
-  background: rgba(15, 23, 42, 0.65);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border: 1px solid rgba(51, 65, 85, 0.4);
+  background: var(--app-surface);
+  border: 1px solid var(--app-border);
 }
 
 .glass-panel-highlight {
-  background: rgba(15, 23, 42, 0.8);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border: 1px solid rgba(34, 211, 238, 0.3);
-  box-shadow: 0 0 25px -5px rgba(34, 211, 238, 0.15);
+  background: var(--app-panel);
+  border: 1px solid var(--app-border);
 }
 
 /* Anti-Cheat text selection locking */
@@ -62,4 +114,14 @@ body {
   -moz-user-select: text !important;
   -ms-user-select: text !important;
   user-select: text !important;
+}
+
+/* Hide scrollbar for Chrome, Safari and Opera */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+/* Hide scrollbar for IE, Edge and Firefox */
+.no-scrollbar {
+  -ms-overflow-style: none;  /* IE and Edge */
+  scrollbar-width: none;  /* Firefox */
 }

@@ -366,48 +366,48 @@ export function TelemetryRadarTab({ adminSecret }: TelemetryRadarTabProps) {
   return (
     <div className="space-y-6">
       {/* Top Telemetry Radar Stats Bar */}
-      <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
-        <div className="p-4 rounded-xl glass-panel border border-slate-800">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+        <div className="p-3.5 sm:p-4 rounded-xl glass-panel border border-slate-800">
           <div className="flex items-center justify-between text-slate-400 text-xs">
             <span>Live Stream</span>
-            <span className="flex items-center gap-1 text-[10px] text-emerald-400 font-mono">
+            <span className="flex items-center gap-1 text-[10px] text-emerald-400 font-medium">
               <Radio className="w-3 h-3 animate-pulse" /> ACTIVE
             </span>
           </div>
-          <div className="text-2xl font-extrabold text-white font-mono mt-1">
+          <div className="text-xl sm:text-2xl font-extrabold text-white mt-1">
             {telemetryRecords.length}
           </div>
           <p className="text-[10px] text-slate-500 mt-0.5">Stage telemetry events recorded</p>
         </div>
 
-        <div className="p-4 rounded-xl glass-panel border border-slate-800">
+        <div className="p-3.5 sm:p-4 rounded-xl glass-panel border border-slate-800">
           <div className="flex items-center justify-between text-slate-400 text-xs">
             <span>Suspicious Speed-Runs</span>
             <AlertTriangle className="w-3.5 h-3.5 text-rose-400" />
           </div>
-          <div className="text-2xl font-extrabold text-rose-400 font-mono mt-1">
+          <div className="text-xl sm:text-2xl font-extrabold text-rose-400 mt-1">
             {telemetryRecords.filter((r) => r.flagged_too_fast).length}
           </div>
           <p className="text-[10px] text-slate-500 mt-0.5">Stages completed &lt; min threshold</p>
         </div>
 
-        <div className="p-4 rounded-xl glass-panel border border-slate-800">
+        <div className="p-3.5 sm:p-4 rounded-xl glass-panel border border-slate-800">
           <div className="flex items-center justify-between text-slate-400 text-xs">
             <span>Fullscreen Exits</span>
             <Maximize2 className="w-3.5 h-3.5 text-amber-400" />
           </div>
-          <div className="text-2xl font-extrabold text-amber-400 font-mono mt-1">
+          <div className="text-xl sm:text-2xl font-extrabold text-amber-400 mt-1">
             {telemetryRecords.reduce((acc, r) => acc + (r.fullscreen_exits || 0), 0)}
           </div>
           <p className="text-[10px] text-slate-500 mt-0.5">Total arena departures</p>
         </div>
 
-        <div className="p-4 rounded-xl glass-panel border border-slate-800">
+        <div className="p-3.5 sm:p-4 rounded-xl glass-panel border border-slate-800">
           <div className="flex items-center justify-between text-slate-400 text-xs">
             <span>Tab Switches</span>
             <Eye className="w-3.5 h-3.5 text-violet-400" />
           </div>
-          <div className="text-2xl font-extrabold text-violet-400 font-mono mt-1">
+          <div className="text-xl sm:text-2xl font-extrabold text-violet-400 mt-1">
             {telemetryRecords.reduce((acc, r) => acc + (r.tab_switches || 0), 0)}
           </div>
           <p className="text-[10px] text-slate-500 mt-0.5">Total background blurs</p>
@@ -415,7 +415,7 @@ export function TelemetryRadarTab({ adminSecret }: TelemetryRadarTabProps) {
       </div>
 
       {/* Telemetry Radar Table */}
-      <div className="p-5 rounded-2xl glass-panel border border-slate-800 space-y-4">
+      <div className="p-4 sm:p-5 rounded-2xl glass-panel border border-slate-800 space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             <Radar className="w-4 h-4 text-rose-400 animate-spin" />
@@ -452,23 +452,22 @@ export function TelemetryRadarTab({ adminSecret }: TelemetryRadarTabProps) {
 
             <button
               onClick={() => setFilterOnlyFlagged(!filterOnlyFlagged)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer border ${
-                filterOnlyFlagged
+              className={`flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer border ${filterOnlyFlagged
                   ? 'bg-rose-500/20 text-rose-300 border-rose-500/40'
                   : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-white'
-              }`}
+                }`}
             >
               <Filter className="w-3 h-3" />
               Flagged Only ({totalFlagged})
             </button>
 
-            <div className="relative">
+            <div className="relative w-full sm:w-auto">
               <input
                 type="text"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Search participant or alert..."
-                className="w-48 sm:w-64 px-3 py-1.5 pl-8 text-xs text-white bg-slate-900 border border-slate-700 rounded-lg focus:border-cyan-400 font-mono"
+                className="w-full sm:w-64 px-3 py-1.5 pl-8 text-xs text-white bg-slate-900 border border-slate-700 rounded-lg focus:border-cyan-400 font-mono"
               />
               <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-2.5" />
             </div>
@@ -523,7 +522,7 @@ export function TelemetryRadarTab({ adminSecret }: TelemetryRadarTabProps) {
                           : isRedFlag
                           ? 'bg-rose-950/20 hover:bg-rose-950/30'
                           : 'hover:bg-slate-900/40'
-                      }`}
+                        }`}
                     >
                       <td className="px-4 py-3 font-sans">
                         <div className="font-semibold text-white flex items-center gap-1.5">
