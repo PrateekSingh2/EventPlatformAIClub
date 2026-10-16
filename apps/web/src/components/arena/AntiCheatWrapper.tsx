@@ -172,9 +172,9 @@ export function AntiCheatWrapper({
 
       {/* Fullscreen Exit Blurred Lock Overlay */}
       {!isFullscreen && !fullscreenWarningDismissed && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-black/80 backdrop-blur-md">
-          <div className="relative max-w-sm w-full p-6 text-center bg-app-surface border border-app-border rounded-lg shadow-2xl space-y-4 animate-in fade-in zoom-in-95 duration-150">
-            <div className="w-12 h-12 mx-auto rounded bg-app-muted border border-app-border flex items-center justify-center text-amber-500">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-black/80 backdrop-blur-xl">
+          <div className="relative max-w-sm w-full p-6 text-center bg-app-surface border border-app-border rounded-3xl shadow-2xl space-y-4 animate-in fade-in zoom-in-95 duration-150">
+            <div className="w-12 h-12 mx-auto rounded-2xl bg-app-muted border border-app-border flex items-center justify-center text-amber-500 shadow-xs">
               <ShieldAlert className="w-6 h-6" />
             </div>
 

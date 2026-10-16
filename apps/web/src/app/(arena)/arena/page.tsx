@@ -11,6 +11,30 @@ import { LiveLeaderboard } from '@/components/arena/LiveLeaderboard';
 import { ZipPasswordModal } from '@/components/arena/ZipPasswordModal';
 import { Loader2, AlertCircle } from 'lucide-react';
 
+const DEFAULT_STAGES: StageManifest[] = [
+  {
+    stageNumber: 1,
+    title: 'Neural Anomaly Extraction & Data Decryption',
+    isPasswordProtected: false,
+    allowedCopyFilename: 'ai_prompt.txt',
+    points: 100,
+  },
+  {
+    stageNumber: 2,
+    title: 'Quantum Key Distribution Protocol',
+    isPasswordProtected: true,
+    allowedCopyFilename: 'ai_prompt_stage2.txt',
+    points: 150,
+  },
+  {
+    stageNumber: 3,
+    title: 'Master Architecture Unlocked',
+    isPasswordProtected: true,
+    allowedCopyFilename: 'ai_prompt_stage3.txt',
+    points: 200,
+  },
+];
+
 function ArenaContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -20,7 +44,8 @@ function ArenaContent() {
   const [user, setUser] = useState<User | null>(null);
 
   // Stages & Files State
-  const [stages, setStages] = useState<StageManifest[]>([]);
+  const [stages, setStages] = useState<StageManifest[]>(DEFAULT_STAGES);
+  const [stageFilesMap, setStageFilesMap] = useState<Record<number, ParsedFile[]>>({});
   const [selectedStageNumber, setSelectedStageNumber] = useState<number>(1);
   const [files, setFiles] = useState<ParsedFile[]>([]);
   const [activeFile, setActiveFile] = useState<ParsedFile | null>(null);
@@ -44,11 +69,22 @@ function ArenaContent() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // 1. Authenticate user from token param or localStorage
+  // 1. Authenticate user from token param or localStorage with mandatory login check
   useEffect(() => {
-    const activeToken = tokenParam || localStorage.getItem('participant_token') || '';
+    const rawToken = tokenParam || searchParams.get('tokenid') || '';
+    const storedToken = localStorage.getItem('participant_token') || '';
+    const activeToken = (rawToken || storedToken).trim().toUpperCase();
+
+    const isSessionActive = sessionStorage.getItem('contestant_session_active') === 'true';
+
     if (!activeToken) {
-      router.push('/');
+      router.replace('/?loginRequired=true&redirect=/arena');
+      return;
+    }
+
+    // If accessing arena directly without signing in, require login first
+    if (!isSessionActive) {
+      router.replace(`/?token=${encodeURIComponent(activeToken)}&loginRequired=true&redirect=/arena`);
       return;
     }
 
@@ -72,6 +108,23 @@ function ArenaContent() {
 
         setUser(data.user);
         setSelectedStageNumber(data.user.current_stage || 1);
+
+        // Fetch all stages manifest for VS Code explorer sidebar
+        try {
+          const listRes = await fetch('/api/stage/list', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ accessToken: activeToken }),
+          });
+          if (listRes.ok) {
+            const listData = await listRes.json();
+            if (listData.stages && listData.stages.length > 0) {
+              setStages(listData.stages);
+            }
+          }
+        } catch {
+          // Keep default stages on error
+        }
       } catch (err: any) {
         setError(err.message || 'Failed to authenticate');
         setLoading(false);
@@ -121,15 +174,21 @@ function ArenaContent() {
             accessData.allowedCopyFilename
           );
 
-          setFiles(extractedFiles);
-          if (extractedFiles.length > 0) {
+          const taggedFiles = extractedFiles.map((f) => ({ ...f, stageNumber: stageNum }));
+          setFiles(taggedFiles);
+          setStageFilesMap((prev) => ({ ...prev, [stageNum]: taggedFiles }));
+
+          if (taggedFiles.length > 0) {
             // Select first text or markdown file, or first file by default
             const defaultFile =
-              extractedFiles.find((f) => f.name.toLowerCase() === accessData.allowedCopyFilename?.toLowerCase()) ||
-              extractedFiles.find((f) => f.type === 'markdown' || f.type === 'text') ||
-              extractedFiles[0];
+              taggedFiles.find((f) => f.name.toLowerCase() === accessData.allowedCopyFilename?.toLowerCase()) ||
+              taggedFiles.find((f) => f.type === 'markdown' || f.type === 'text') ||
+              taggedFiles[0];
             setActiveFile(defaultFile);
-            setOpenFiles([defaultFile]);
+            setOpenFiles((prev) => {
+              if (prev.some((f) => f.path === defaultFile.path)) return prev;
+              return [...prev, defaultFile];
+            });
           } else {
             setActiveFile(null);
             setOpenFiles([]);
@@ -152,7 +211,17 @@ function ArenaContent() {
                 },
               ].sort((a, b) => a.stageNumber - b.stageNumber);
             }
-            return prev;
+            return prev.map((s) =>
+              s.stageNumber === stageNum
+                ? {
+                    ...s,
+                    title: accessData.title || s.title,
+                    isPasswordProtected: accessData.isPasswordProtected,
+                    allowedCopyFilename: accessData.allowedCopyFilename || s.allowedCopyFilename,
+                    points: accessData.points || s.points,
+                  }
+                : s
+            );
           });
         } catch (zipErr: any) {
           if (zipErr instanceof ZipEngineError) {
@@ -192,10 +261,16 @@ function ArenaContent() {
         allowedCopyFilename
       );
 
-      setFiles(extractedFiles);
-      if (extractedFiles.length > 0) {
-        setActiveFile(extractedFiles[0]);
-        setOpenFiles([extractedFiles[0]]);
+      const taggedFiles = extractedFiles.map((f) => ({ ...f, stageNumber: selectedStageNumber }));
+      setFiles(taggedFiles);
+      setStageFilesMap((prev) => ({ ...prev, [selectedStageNumber]: taggedFiles }));
+
+      if (taggedFiles.length > 0) {
+        setActiveFile(taggedFiles[0]);
+        setOpenFiles((prev) => {
+          if (prev.some((f) => f.path === taggedFiles[0].path)) return prev;
+          return [...prev, taggedFiles[0]];
+        });
       } else {
         setActiveFile(null);
         setOpenFiles([]);
@@ -256,6 +331,7 @@ function ArenaContent() {
     >
       <InBrowserIDE
         stages={stages}
+        stageFilesMap={stageFilesMap}
         currentStageNumber={user?.current_stage || 1}
         selectedStageNumber={selectedStageNumber}
         files={files}
@@ -266,10 +342,43 @@ function ArenaContent() {
         loading={loading}
         participantName={user?.name || 'Participant'}
         totalScore={user?.total_score || 0}
-        onSelectStage={(stageNum) => setSelectedStageNumber(stageNum)}
-        onSelectFile={(file) => setActiveFile(file)}
+        onSelectStage={(stageNum) => {
+          setSelectedStageNumber(stageNum);
+          if (stageFilesMap[stageNum] && stageFilesMap[stageNum].length > 0) {
+            const cachedFiles = stageFilesMap[stageNum];
+            setFiles(cachedFiles);
+            if (!activeFile || activeFile.stageNumber !== stageNum) {
+              setActiveFile(cachedFiles[0]);
+              setOpenFiles((prev) => {
+                if (prev.some((f) => f.path === cachedFiles[0].path)) return prev;
+                return [...prev, cachedFiles[0]];
+              });
+            }
+          }
+        }}
+        onSelectFile={(file) => {
+          if (file) {
+            if (file.stageNumber && file.stageNumber !== selectedStageNumber) {
+              setSelectedStageNumber(file.stageNumber);
+              if (stageFilesMap[file.stageNumber]) {
+                setFiles(stageFilesMap[file.stageNumber]);
+              }
+            }
+            setActiveFile(file);
+            setOpenFiles((prev) => {
+              if (prev.some((f) => f.path === file.path)) return prev;
+              return [...prev, file];
+            });
+          } else {
+            setActiveFile(null);
+          }
+        }}
         onOpenUnlockModal={() => setIsUnlockModalOpen(true)}
         onOpenLeaderboard={() => setIsLeaderboardOpen(true)}
+        onLogout={() => {
+          localStorage.removeItem('participant_token');
+          router.push('/');
+        }}
       />
 
       {/* Unlock Next Stage Archive Password Modal */}

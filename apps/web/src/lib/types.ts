@@ -97,6 +97,7 @@ export interface ParsedFile {
   content?: string; // For text / markdown
   sheets?: SheetData[]; // For spreadsheets
   isCopyAllowed: boolean;
+  stageNumber?: number;
 }
 
 // ------------------------------------------------------------------------------
