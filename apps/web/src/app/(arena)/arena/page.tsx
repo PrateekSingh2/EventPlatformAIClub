@@ -9,6 +9,12 @@ import { InBrowserIDE } from '@/components/arena/InBrowserIDE';
 import { UnlockNextStageModal } from '@/components/arena/UnlockNextStageModal';
 import { LiveLeaderboard } from '@/components/arena/LiveLeaderboard';
 import { ZipPasswordModal } from '@/components/arena/ZipPasswordModal';
+import { DraftArenaLock } from '@/components/arena/DraftArenaLock';
+import { DisqualifiedScreen } from '@/components/arena/DisqualifiedScreen';
+import { BroadcastAnnouncementBanner } from '@/components/arena/BroadcastAnnouncementBanner';
+import { useContestLifecycle } from '@/hooks/useContestLifecycle';
+import { useAdminBroadcasts } from '@/hooks/useAdminBroadcasts';
+import { supabase } from '@/lib/supabase';
 import { Loader2, AlertCircle } from 'lucide-react';
 
 function ArenaContent() {
@@ -18,6 +24,14 @@ function ArenaContent() {
   const tokenParam = searchParams.get('token');
   const [token, setToken] = useState<string>('');
   const [user, setUser] = useState<User | null>(null);
+
+  // Contest Lifecycle & Announcements Hooks
+  const { contestState, loading: contestLoading, status } = useContestLifecycle();
+  const { activeAnnouncement } = useAdminBroadcasts();
+
+  // Disqualification State
+  const [isDisqualified, setIsDisqualified] = useState(false);
+  const [disqualifyReason, setDisqualifyReason] = useState<string | null>(null);
 
   // Stages & Files State
   const [stages, setStages] = useState<StageManifest[]>([]);
@@ -65,7 +79,22 @@ function ArenaContent() {
 
         const data = await res.json();
         if (!res.ok || !data.authenticated) {
+          if (res.status === 403 || data.role === 'disqualified' || data.user?.is_disqualified) {
+            setIsDisqualified(true);
+            setDisqualifyReason(data.error || 'Account suspended for fair-play violations.');
+            setUser(data.user || null);
+            setLoading(false);
+            return;
+          }
           setError(data.error || 'Authentication token expired or invalid');
+          setLoading(false);
+          return;
+        }
+
+        if (data.user?.role === 'disqualified' || data.user?.is_disqualified) {
+          setIsDisqualified(true);
+          setDisqualifyReason('Account suspended for fair-play violations.');
+          setUser(data.user);
           setLoading(false);
           return;
         }
@@ -80,6 +109,31 @@ function ArenaContent() {
 
     authenticate();
   }, [tokenParam, router]);
+
+  // Real-time listener for administrative disqualification
+  useEffect(() => {
+    if (!user?.id) return;
+
+    const channel = supabase
+      .channel(`participant-status-${user.id}`)
+      .on('broadcast', { event: 'disqualified' }, (payload: any) => {
+        if (payload?.payload?.userId === user.id) {
+          setIsDisqualified(true);
+          setDisqualifyReason(payload?.payload?.reason || 'Administrative disqualification applied.');
+        }
+      })
+      .on('broadcast', { event: 'reinstated' }, (payload: any) => {
+        if (payload?.payload?.userId === user.id) {
+          setIsDisqualified(false);
+          setDisqualifyReason(null);
+        }
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [user?.id]);
 
   // 2. Fetch stage manifest and download ZIP to RAM
   const loadStage = useCallback(
@@ -226,6 +280,14 @@ function ArenaContent() {
     loadStage(nextStageNumber, password);
   };
 
+  if (isDisqualified || user?.role === 'disqualified' || user?.is_disqualified) {
+    return <DisqualifiedScreen user={user} reason={disqualifyReason} />;
+  }
+
+  if (status === 'DRAFT') {
+    return <DraftArenaLock user={user} contestState={contestState} />;
+  }
+
   if (error) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen p-6 bg-slate-950 text-slate-100">
@@ -247,59 +309,64 @@ function ArenaContent() {
   const selectedStage = stages.find((s) => s.stageNumber === selectedStageNumber);
 
   return (
-    <AntiCheatWrapper
-      activeFilename={activeFile?.name || ''}
-      allowedCopyFilename={allowedCopyFilename}
-      activeFileContent={activeFile?.content || ''}
-      accessToken={token}
-      stageNumber={selectedStageNumber}
-    >
-      <InBrowserIDE
-        stages={stages}
-        currentStageNumber={user?.current_stage || 1}
-        selectedStageNumber={selectedStageNumber}
-        files={files}
-        activeFile={activeFile}
-        openFiles={openFiles}
-        onOpenFilesChange={setOpenFiles}
+    <>
+      {/* Real-Time Admin Broadcast Announcement Banner */}
+      <BroadcastAnnouncementBanner announcement={activeAnnouncement} />
+
+      <AntiCheatWrapper
+        activeFilename={activeFile?.name || ''}
         allowedCopyFilename={allowedCopyFilename}
-        loading={loading}
-        participantName={user?.name || 'Participant'}
-        totalScore={user?.total_score || 0}
-        onSelectStage={(stageNum) => setSelectedStageNumber(stageNum)}
-        onSelectFile={(file) => setActiveFile(file)}
-        onOpenUnlockModal={() => setIsUnlockModalOpen(true)}
-        onOpenLeaderboard={() => setIsLeaderboardOpen(true)}
-      />
-
-      {/* Unlock Next Stage Archive Password Modal */}
-      <UnlockNextStageModal
-        isOpen={isUnlockModalOpen}
-        currentStageNumber={selectedStageNumber}
-        nextStageNumber={selectedStageNumber + 1}
-        nextStageTitle={`Stage ${selectedStageNumber + 1}`}
-        points={selectedStage?.points || 100}
+        activeFileContent={activeFile?.content || ''}
         accessToken={token}
-        onClose={() => setIsUnlockModalOpen(false)}
-        onUnlockSuccess={handleUnlockSuccess}
-      />
-
-      {/* Archive Decryption Password Modal */}
-      <ZipPasswordModal
-        isOpen={isPasswordModalOpen}
         stageNumber={selectedStageNumber}
-        errorMessage={passwordModalError}
-        onSubmit={handlePasswordSubmit}
-        onCancel={() => setIsPasswordModalOpen(false)}
-      />
+      >
+        <InBrowserIDE
+          stages={stages}
+          currentStageNumber={user?.current_stage || 1}
+          selectedStageNumber={selectedStageNumber}
+          files={files}
+          activeFile={activeFile}
+          allowedCopyFilename={allowedCopyFilename}
+          loading={loading}
+          participantName={user?.name || 'Participant'}
+          totalScore={user?.total_score || 0}
+          contestStatus={status}
+          onSelectStage={(stageNum) => setSelectedStageNumber(stageNum)}
+          onSelectFile={(file) => setActiveFile(file)}
+          onOpenUnlockModal={() => setIsUnlockModalOpen(true)}
+          onOpenLeaderboard={() => setIsLeaderboardOpen(true)}
+        />
 
-      {/* Live Supabase Realtime Leaderboard Drawer */}
-      <LiveLeaderboard
-        isOpen={isLeaderboardOpen}
-        onClose={() => setIsLeaderboardOpen(false)}
-        currentUserId={user?.id}
-      />
-    </AntiCheatWrapper>
+        {/* Unlock Next Stage Archive Password Modal */}
+        <UnlockNextStageModal
+          isOpen={isUnlockModalOpen}
+          currentStageNumber={selectedStageNumber}
+          nextStageNumber={selectedStageNumber + 1}
+          nextStageTitle={`Stage ${selectedStageNumber + 1}`}
+          points={selectedStage?.points || 100}
+          accessToken={token}
+          onClose={() => setIsUnlockModalOpen(false)}
+          onUnlockSuccess={handleUnlockSuccess}
+        />
+
+        {/* Archive Decryption Password Modal */}
+        <ZipPasswordModal
+          isOpen={isPasswordModalOpen}
+          stageNumber={selectedStageNumber}
+          errorMessage={passwordModalError}
+          onSubmit={handlePasswordSubmit}
+          onCancel={() => setIsPasswordModalOpen(false)}
+        />
+
+        {/* Live Supabase Realtime Leaderboard Drawer */}
+        <LiveLeaderboard
+          isOpen={isLeaderboardOpen}
+          onClose={() => setIsLeaderboardOpen(false)}
+          currentUserId={user?.id}
+          contestStatus={status}
+        />
+      </AntiCheatWrapper>
+    </>
   );
 }
 

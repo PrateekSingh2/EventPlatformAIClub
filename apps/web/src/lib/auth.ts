@@ -1,5 +1,6 @@
 import { getSupabaseAdmin } from './supabase';
 import { User } from './types';
+import { isUserDisqualifiedLocally } from './disqualification';
 import crypto from 'crypto';
 
 /**
@@ -50,6 +51,22 @@ export async function verifyParticipantToken(token?: string | null): Promise<Use
   if (!token) return null;
   const cleanToken = token.trim().toUpperCase();
 
+  const checkDisqualified = (u: User): User => {
+    const isDisqualified =
+      u.role === 'disqualified' ||
+      u.is_disqualified === true ||
+      isUserDisqualifiedLocally(u.id);
+
+    if (isDisqualified) {
+      return {
+        ...u,
+        role: 'disqualified',
+        is_disqualified: true,
+      };
+    }
+    return u;
+  };
+
   // Instant demo token for frontend preview & testing
   if (
     cleanToken === 'AX-DEMO-2026' ||
@@ -57,7 +74,7 @@ export async function verifyParticipantToken(token?: string | null): Promise<Use
     cleanToken.startsWith('AX-DEMO') ||
     cleanToken === 'DEMO'
   ) {
-    return {
+    const demoUser: User = {
       id: '00000000-0000-0000-0000-000000000001',
       name: 'Alex Mercer (Contestant)',
       email: 'alex.mercer@aiclub.org',
@@ -69,6 +86,7 @@ export async function verifyParticipantToken(token?: string | null): Promise<Use
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
+    return checkDisqualified(demoUser);
   }
 
   try {
@@ -83,11 +101,11 @@ export async function verifyParticipantToken(token?: string | null): Promise<Use
       return null;
     }
 
-    return data as User;
+    return checkDisqualified(data as User);
   } catch (err) {
     // If Supabase is unconfigured, allow testing with standard pattern tokens
     if (cleanToken.startsWith('AX-')) {
-      return {
+      const fallbackUser: User = {
         id: '00000000-0000-0000-0000-000000000001',
         name: 'Alex Mercer (Contestant)',
         email: 'alex.mercer@aiclub.org',
@@ -99,6 +117,7 @@ export async function verifyParticipantToken(token?: string | null): Promise<Use
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       };
+      return checkDisqualified(fallbackUser);
     }
     return null;
   }

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { verifyParticipantToken } from '@/lib/auth';
 import { getSupabaseAdmin } from '@/lib/supabase';
 import { QuizQuestion } from '@/lib/types';
+import { getContestSettings } from '@/lib/contest';
 
 export async function POST(req: NextRequest) {
   try {
@@ -21,6 +22,34 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         { error: 'Unauthorized: Invalid participant token' },
         { status: 401 }
+      );
+    }
+
+    if (user.role === 'disqualified' || user.is_disqualified) {
+      return NextResponse.json(
+        { error: 'Account Suspended for Fair-Play Violations. Submissions blocked.' },
+        { status: 403 }
+      );
+    }
+
+    // 2. Enforce contest lifecycle
+    const contest = await getContestSettings();
+    if (contest.status === 'DRAFT') {
+      return NextResponse.json(
+        { error: 'Contest is in DRAFT mode. Submissions are not yet open.' },
+        { status: 403 }
+      );
+    }
+    if (contest.status === 'FROZEN') {
+      return NextResponse.json(
+        { error: 'Contest is currently FROZEN. Submissions are temporarily paused.' },
+        { status: 403 }
+      );
+    }
+    if (contest.status === 'CONCLUDED') {
+      return NextResponse.json(
+        { error: 'Contest has CONCLUDED. Submissions are closed.' },
+        { status: 403 }
       );
     }
 

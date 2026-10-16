@@ -16,6 +16,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false }, { status: 401 });
     }
 
+    if (user.role === 'disqualified' || user.is_disqualified) {
+      return NextResponse.json({ ok: false, error: 'Account Suspended for Fair-Play Violations' }, { status: 403 });
+    }
+
     const stageNum = Number(stageNumber);
     const supabaseAdmin = getSupabaseAdmin();
 

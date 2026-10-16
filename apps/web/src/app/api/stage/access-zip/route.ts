@@ -3,6 +3,7 @@ import { verifyParticipantToken } from '@/lib/auth';
 import { getSupabaseAdmin } from '@/lib/supabase';
 import { createParticipantDownloadUrl } from '@/lib/storage';
 import { SanitizedQuizQuestion } from '@/lib/types';
+import { getContestSettings } from '@/lib/contest';
 
 export async function POST(req: NextRequest) {
   try {
@@ -22,6 +23,34 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         { error: 'Unauthorized: Invalid access token' },
         { status: 401 }
+      );
+    }
+
+    if (user.role === 'disqualified' || user.is_disqualified) {
+      return NextResponse.json(
+        { error: 'Account Suspended for Fair-Play Violations. Access denied.' },
+        { status: 403 }
+      );
+    }
+
+    // 2. Enforce contest lifecycle
+    const contest = await getContestSettings();
+    if (contest.status === 'DRAFT') {
+      return NextResponse.json(
+        { error: 'Contest is currently in DRAFT mode. Arena access is locked until the contest starts.' },
+        { status: 403 }
+      );
+    }
+    if (contest.status === 'FROZEN') {
+      return NextResponse.json(
+        { error: 'Contest is currently FROZEN. Stage access and downloads are temporarily paused.' },
+        { status: 403 }
+      );
+    }
+    if (contest.status === 'CONCLUDED') {
+      return NextResponse.json(
+        { error: 'Contest has CONCLUDED. No further stage access permitted.' },
+        { status: 403 }
       );
     }
 

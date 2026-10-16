@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { ParsedFile, StageManifest } from '@/lib/types';
+import { ParsedFile, StageManifest, ContestStatus } from '@/lib/types';
 import { SheetViewer } from './SheetViewer';
 import { useTheme } from '@/lib/theme';
 import { FileExtensionIcon } from './FileIcon';
@@ -16,20 +16,11 @@ import {
   Trophy,
   Lock,
   Unlock,
-  KeyRound,
-  Terminal,
-  Copy,
-  Check,
-  CheckSquare,
-  Square,
-  ChevronRight,
-  BookOpen,
-  Table as TableIcon,
-  Code as CodeIcon,
-  HelpCircle,
-  Menu,
-  X,
-  MoreVertical,
+  Sparkles,
+  Maximize2,
+  FileQuestion,
+  Pause,
+  CheckCircle2,
 } from 'lucide-react';
 
 interface InBrowserIDEProps {
@@ -44,6 +35,7 @@ interface InBrowserIDEProps {
   loading: boolean;
   participantName: string;
   totalScore: number;
+  contestStatus?: ContestStatus;
   onSelectStage: (stageNum: number) => void;
   onSelectFile: (file: ParsedFile | null) => void;
   onOpenUnlockModal: () => void;
@@ -69,6 +61,7 @@ export function InBrowserIDE({
   loading,
   participantName,
   totalScore,
+  contestStatus = 'LIVE',
   onSelectStage,
   onSelectFile,
   onOpenUnlockModal,
@@ -118,6 +111,8 @@ export function InBrowserIDE({
   }, []);
 
   const selectedStage = stages.find((s) => s.stageNumber === selectedStageNumber);
+  const isFrozen = contestStatus === 'FROZEN';
+  const isConcluded = contestStatus === 'CONCLUDED';
 
   // Terminal Logs State
   const [logs, setLogs] = useState<TerminalLog[]>([
@@ -436,58 +431,56 @@ export function InBrowserIDE({
             <span className="text-app-subtext hidden xl:inline truncate max-w-[220px]">
               • {selectedStage?.title || 'Neural Anomaly Extraction & Recon'}
             </span>
-          </div>
+          )}
+
+          {isFrozen && (
+            <span className="flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded bg-amber-500/20 border border-amber-500/40 text-amber-300 font-bold">
+              <Pause className="w-3 h-3 fill-amber-400" />
+              SUBMISSIONS FROZEN
+            </span>
+          )}
+
+          {isConcluded && (
+            <span className="flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded bg-purple-500/20 border border-purple-500/40 text-purple-300 font-bold">
+              <CheckCircle2 className="w-3 h-3 text-purple-400" />
+              CONTEST CONCLUDED
+            </span>
+          )}
         </div>
 
-        {/* Right: Theme Switcher + Unlock + Leaderboard + Profile */}
-        <div className="flex items-center space-x-1.5 sm:space-x-3 shrink-0">
-          
-          {/* Theme Switcher Selector */}
-          <div className="flex items-center space-x-0.5 sm:space-x-1 bg-app-bg border border-app-border p-0.5 sm:p-1 rounded-md">
+        {/* Center / Right Action Controls */}
+        <div className="flex items-center gap-3">
+          {/* Unlock Next Stage Button */}
+          {isFrozen ? (
             <button
-              onClick={() => {
-                setTheme('graphite');
-                addLog('info', 'Switched theme to [GRAPHITE]');
-              }}
-              title="Graphite Theme"
-              className={`px-2 sm:px-2.5 py-0.5 sm:py-1 rounded text-[10px] sm:text-xs transition-colors ${
-                theme === 'graphite'
-                  ? 'font-semibold bg-app-surface text-app-text border border-app-border shadow-xs'
-                  : 'font-medium text-app-subtext hover:text-app-text'
-              }`}
+              disabled
+              title="Contest is currently frozen. Stage submissions are paused."
+              className="flex items-center gap-2 px-4 py-2 bg-amber-950/60 border border-amber-500/40 text-amber-300 rounded-xl text-xs font-bold opacity-75 cursor-not-allowed"
             >
-              Graphite
+              <Pause className="w-4 h-4 fill-amber-400" />
+              <span>Submissions Paused</span>
             </button>
+          ) : isConcluded ? (
             <button
-              onClick={() => {
-                setTheme('forest');
-                addLog('info', 'Switched theme to [FOREST]');
-              }}
-              title="Forest Theme"
-              className={`px-2 sm:px-2.5 py-0.5 sm:py-1 rounded text-[10px] sm:text-xs transition-colors ${
-                theme === 'forest'
-                  ? 'font-semibold bg-app-surface text-app-text border border-app-border shadow-xs'
-                  : 'font-medium text-app-subtext hover:text-app-text'
-              }`}
+              disabled
+              title="Contest is concluded. Submissions are closed."
+              className="flex items-center gap-2 px-4 py-2 bg-purple-950/60 border border-purple-500/40 text-purple-300 rounded-xl text-xs font-bold opacity-75 cursor-not-allowed"
             >
-              Forest
+              <CheckCircle2 className="w-4 h-4 text-purple-400" />
+              <span>Contest Concluded</span>
             </button>
-          </div>
-
-          <div className="h-4 sm:h-5 w-px bg-app-border hidden xs:block"></div>
-
-          {/* Stage Unlock Button */}
-          <button
-            onClick={onOpenUnlockModal}
-            className="flex items-center space-x-1 sm:space-x-1.5 px-2.5 sm:px-3.5 py-1 sm:py-1.5 rounded-md bg-app-accent text-app-bg font-medium text-[11px] sm:text-xs hover:opacity-90 transition-opacity cursor-pointer shadow-xs whitespace-nowrap"
-          >
-            <Lock className="w-3.5 h-3.5 shrink-0" />
-            <span className="hidden sm:inline">Unlock Stage {selectedStageNumber + 1}</span>
-            <span className="sm:hidden">Stage {selectedStageNumber + 1}</span>
-            <span className="text-[10px] sm:text-[11px] font-semibold opacity-90 pl-0.5 sm:pl-1">
-              +{selectedStage?.points || 100} PTS
-            </span>
-          </button>
+          ) : (
+            <button
+              onClick={onOpenUnlockModal}
+              className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-violet-600 to-cyan-500 hover:from-violet-500 hover:to-cyan-400 text-white rounded-xl text-xs font-bold transition-all shadow-neon-violet cursor-pointer"
+            >
+              <Unlock className="w-4 h-4" />
+              <span>Unlock Next Stage</span>
+              <span className="px-1.5 py-0.2 bg-white/20 rounded text-[10px] font-mono">
+                +{selectedStage?.points || 100} PTS
+              </span>
+            </button>
+          )}
 
           {/* Leaderboard Toggle */}
           <button
