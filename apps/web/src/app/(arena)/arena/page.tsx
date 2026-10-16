@@ -103,13 +103,13 @@ function ArenaContent() {
 
         setAllowedCopyFilename(accessData.allowedCopyFilename || '');
 
-        // Fetch binary archive directly from AWS S3 into browser RAM
-        const s3Res = await fetch(accessData.downloadUrl);
-        if (!s3Res.ok) {
+        // Fetch binary archive directly from Supabase Storage into browser RAM
+        const storageRes = await fetch(accessData.downloadUrl);
+        if (!storageRes.ok) {
           throw new Error('Failed to download stage archive from storage');
         }
 
-        const blob = await s3Res.blob();
+        const blob = await storageRes.blob();
         setActiveZipBlob(blob);
 
         // Decompress strictly in memory

@@ -80,11 +80,11 @@ export function UnlockNextStageModal({
       }
 
       // 2. Fetch the next stage ZIP binary directly into RAM
-      const s3Res = await fetch(accessData.downloadUrl);
-      if (!s3Res.ok) {
+      const storageRes = await fetch(accessData.downloadUrl);
+      if (!storageRes.ok) {
         throw new Error('Failed to retrieve next stage archive from storage.');
       }
-      const zipBlob = await s3Res.blob();
+      const zipBlob = await storageRes.blob();
 
       // 3. Validate password by attempting in-memory extraction of the next stage ZIP
       try {

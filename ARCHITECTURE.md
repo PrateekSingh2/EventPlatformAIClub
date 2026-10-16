@@ -22,8 +22,8 @@ flowchart TD
         BrevoRoute["POST /api/brevo/send"]
     end
 
-    subgraph Storage ["AWS S3 Private Storage"]
-        S3Bucket[("Private S3 Bucket (No Public Read)")]
+    subgraph Storage ["Supabase Storage Engine"]
+        SupabaseStorage[("Private 'stages' Bucket (No Public Read)")]
     end
 
     subgraph Database ["Supabase PostgreSQL & Realtime"]
@@ -39,10 +39,10 @@ flowchart TD
     %% Access flow
     UI -->|"1. POST /api/stage/access-zip"| AccessZipRoute
     AccessZipRoute -->|"2. Record started_at (ON CONFLICT DO NOTHING)"| DB
-    AccessZipRoute -->|"3. Generate 60s Presigned GET URL"| S3Bucket
-    AccessZipRoute -->|"4. Return Presigned URL + Stage Metadata"| UI
-    UI -->|"5. Fetch Binary Blob via Presigned URL"| S3Bucket
-    S3Bucket -->|"6. Binary Stream into RAM"| RAM
+    AccessZipRoute -->|"3. Generate 60s Signed GET URL"| SupabaseStorage
+    AccessZipRoute -->|"4. Return Signed URL + Stage Metadata"| UI
+    UI -->|"5. Fetch Binary Blob via Signed URL"| SupabaseStorage
+    SupabaseStorage -->|"6. Binary Stream into RAM"| RAM
     RAM --> ZipEngine
     ZipEngine --> SheetEngine
 
@@ -61,8 +61,8 @@ flowchart TD
     RealtimeEngine -.->|"Broadcast user updates"| RealtimeSub
 
     %% Admin flows
-    AdminRoutes -->|"Direct S3 PUT Presigned URL"| S3Bucket
-    AdminRoutes -->|"Upsert Stages (zip_password) & Participants"| DB
+    AdminRoutes -->|"Direct Signed PUT URL"| SupabaseStorage
+    AdminRoutes -->|"Upsert Stages (storage_path & zip_password) & Participants"| DB
     BrevoRoute -->|"Pooled chunked delivery (25 items/batch)"| BrevoSMTP
 ```
 
@@ -86,7 +86,7 @@ EventPlatformAIClub/
 ├── packages/
 │   ├── db-schema/
 │   │   ├── package.json               # Package descriptor for schema
-│   │   └── schema.sql                 # Supabase PostgreSQL schema & RPC functions
+│   │   └── schema.sql                 # Supabase PostgreSQL schema, buckets & RPC functions
 │   └── tsconfig/
 │       ├── package.json               # Shared TypeScript configurations
 │       └── base.json                  # Common compiler options
@@ -112,13 +112,14 @@ EventPlatformAIClub/
             │       ├── auth/
             │       │   └── verify/route.ts       # Auth verification endpoint
             │       ├── admin/
-            │       │   ├── s3-upload/route.ts    # S3 Presigned PUT URL generator
+            │       │   ├── storage-upload/route.ts # Supabase Storage Signed Upload URL generator
+            │       │   ├── s3-upload/route.ts    # Compatibility alias for storage-upload
             │       │   ├── stages/route.ts       # Stage rules & zip_password persistence
             │       │   └── participants/route.ts # Bulk participant importer
             │       ├── brevo/
             │       │   └── send/route.ts         # Pooled SMTP chunked emailer
             │       └── stage/
-            │           ├── access-zip/route.ts   # 60s Presigned GET URL + timer init
+            │           ├── access-zip/route.ts   # 60s Signed GET URL + timer init
             │           ├── telemetry-ping/route.ts # Silent background telemetry recorder
             │           └── submit/route.ts       # Password verification & speed-run auditor
             ├── components/
@@ -130,12 +131,13 @@ EventPlatformAIClub/
             │   │   ├── ZipPasswordModal.tsx      # Decryption password modal
             │   │   └── LiveLeaderboard.tsx       # Supabase Realtime broadcast drawer
             │   └── admin/
-            │       ├── StageBuilderTab.tsx       # Stage configuration & S3 uploader
+            │       ├── StageBuilderTab.tsx       # Stage configuration & Storage uploader
             │       ├── ParticipantImportTab.tsx  # CSV / Textarea participant generator
             │       ├── BrevoStudioTab.tsx        # Live HTML mailer template designer
             │       └── TelemetryRadarTab.tsx     # Real-time anti-cheat red-flag dashboard
             └── lib/
-                ├── s3.ts                         # AWS SDK v3 Presigned URL factory
+                ├── storage.ts                    # Supabase Storage Signed URL factory
+                ├── s3.ts                         # Backward compatibility re-export
                 ├── zip-engine.ts                 # Client in-memory decompression engine
                 ├── supabase.ts                   # Anon client & server Admin client
                 ├── auth.ts                       # Token & credential validation helpers
@@ -146,7 +148,7 @@ EventPlatformAIClub/
 
 ## 3. Detailed Data Flow & Interaction Lifecycle
 
-### 3.1 Stage Access & S3 Presigned URL Flow
+### 3.1 Stage Access & Supabase Storage Signed URL Flow
 1. Participant initiates stage transition or loads Arena.
 2. Participant browser invokes `POST /api/stage/access-zip` with payload:
    ```json
@@ -159,18 +161,23 @@ EventPlatformAIClub/
    VALUES ($1, $2, NOW())
    ON CONFLICT (user_id, stage_number) DO NOTHING;
    ```
-   *Note: Because of `DO NOTHING`, refreshing the page or re-fetching the presigned URL never resets the started timer.*
-5. Server signs a 60-second AWS S3 Presigned `GET` URL for the stage's `s3_key`.
+   *Note: Because of `DO NOTHING`, refreshing the page or re-fetching the signed URL never resets the started timer.*
+5. Server signs a 60-second Supabase Storage Signed `GET` URL for the stage's `storage_path`:
+   ```ts
+   const { data } = await supabaseAdmin.storage
+     .from('stages')
+     .createSignedUrl(stage.storage_path, 60);
+   ```
 6. Server returns stage configuration to the client:
    ```json
    {
-     "downloadUrl": "https://bucket.s3.region.amazonaws.com/stages/...",
+     "downloadUrl": "https://your-project.supabase.co/storage/v1/object/sign/stages/...",
      "allowedCopyFilename": "ai_prompt.txt",
      "isPasswordProtected": true,
      "hasPassword": true
    }
    ```
-7. Browser fetches the binary `ArrayBuffer` directly from S3, bypassing Netlify entirely.
+7. Browser fetches the binary `ArrayBuffer` directly from Supabase Storage CDN, bypassing Netlify entirely.
 8. `@zip.js/zip.js` extracts file entries in RAM. If password-protected, the UI captures the password exception and requests the key via `ZipPasswordModal.tsx`.
 
 ---
@@ -178,7 +185,7 @@ EventPlatformAIClub/
 ### 3.2 Stage Progression via Next Stage ZIP Password Decryption
 1. Participants inspect files within Stage $N$ to deduce the password for Stage $N+1$'s archive.
 2. Clicking **"Unlock Next Stage"** opens `UnlockNextStageModal.tsx`.
-3. The modal requests Stage $N+1$'s presigned download URL from `POST /api/stage/access-zip`.
+3. The modal requests Stage $N+1$'s signed download URL from `POST /api/stage/access-zip`.
 4. The client downloads Stage $N+1$'s archive into a memory `Blob` and tests client-side extraction using `@zip.js/zip.js` with the entered password.
 5. If extraction fails, the modal displays:
    `"Wrong password, try to figure it out once again."`

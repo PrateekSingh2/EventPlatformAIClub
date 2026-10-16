@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyParticipantToken } from '@/lib/auth';
 import { getSupabaseAdmin } from '@/lib/supabase';
-import { createParticipantDownloadUrl } from '@/lib/s3';
+import { createParticipantDownloadUrl } from '@/lib/storage';
 import { SanitizedQuizQuestion } from '@/lib/types';
 
 export async function POST(req: NextRequest) {
@@ -31,7 +31,7 @@ export async function POST(req: NextRequest) {
     // 2. Fetch stage details
     const { data: stage, error: stageErr } = await supabaseAdmin
       .from('stages')
-      .select('stage_number, title, s3_key, is_password_protected, allowed_copy_filename, points, quiz_questions')
+      .select('stage_number, title, storage_path, s3_key, is_password_protected, allowed_copy_filename, points, quiz_questions')
       .eq('stage_number', stageNum)
       .single();
 
@@ -102,8 +102,9 @@ export async function POST(req: NextRequest) {
       console.warn('[Telemetry insert warning]:', telemetryErr.message);
     }
 
-    // 4. Generate short-lived (60s) AWS S3 Presigned GET URL
-    const { downloadUrl } = await createParticipantDownloadUrl(stage.s3_key);
+    // 4. Generate short-lived (60s) Supabase Storage Signed GET URL
+    const archivePath = (stage as any).storage_path || stage.s3_key || '';
+    const { downloadUrl } = await createParticipantDownloadUrl(archivePath);
 
     // 5. Sanitize quiz questions (STRIP answer_idx completely before sending to client)
     const rawQuestions = (stage.quiz_questions as any[]) || [];

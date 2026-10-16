@@ -15,14 +15,13 @@ When modifying, extending, or maintaining this codebase, every AI Agent and engi
 - **NEVER** execute long-running loops or sequential network calls.
 - Heavy computational tasks (archive decompression, Excel spreadsheet parsing, markdown rendering) are strictly shifted to client browser RAM.
 
-### 2.2 Private AWS S3 & Presigned URLs (`MY_AWS_*`)
-- **Important Netlify Caveat:** Netlify's build & runtime environment reserves all environment variables starting with `AWS_` (e.g. `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`). Any custom environment variable starting with `AWS_` will be overwritten or rejected by Netlify!
-- **Mandatory Variable Naming:** Always use the `MY_AWS_` prefix:
-  - `MY_AWS_REGION`
-  - `MY_AWS_ACCESS_KEY_ID`
-  - `MY_AWS_SECRET_ACCESS_KEY`
-  - `MY_AWS_S3_BUCKET_NAME`
-- The S3 bucket is 100% private. All participant reads use **60-second Presigned GET URLs**. Admin uploads use **300-second Presigned PUT URLs**.
+### 2.2 Unified Supabase Storage Engine (`stages` Bucket)
+- **Zero AWS Dependency:** The platform uses **Supabase Storage** for private archive storage. No AWS S3, IAM user, or AWS credentials are required.
+- **Private Bucket:** Archives live in the private `stages` bucket.
+- **Signed URLs:**
+  - Participant reads use **60-second Signed GET URLs** generated via `supabaseAdmin.storage.from('stages').createSignedUrl(storagePath, 60)`.
+  - Admin uploads use **300-second Signed Upload URLs** via `createSignedUploadUrl(storagePath)`.
+- Client browsers download and upload directly to Supabase Storage CDN, completely bypassing the Netlify server function runtime memory.
 
 ### 2.3 Zero-Download In-Memory File Sandbox
 - When participants access a stage archive, the raw ZIP binary is fetched into RAM as a `Blob` and decompressed using `@zip.js/zip.js`.
@@ -42,7 +41,7 @@ When modifying, extending, or maintaining this codebase, every AI Agent and engi
   - On every other file, a red "CLIPBOARD LOCKED (Read-Only)" indicator is shown, and copy operations fail silently or show an alert.
 
 ### 2.5 Hidden Anti-Cheat Telemetry & Stage Password Progression
-- Participant starts are recorded the moment they fetch the ZIP presigned URL (`started_at = NOW()`), protected by `ON CONFLICT DO NOTHING`.
+- Participant starts are recorded the moment they fetch the ZIP signed URL (`started_at = NOW()`), protected by `ON CONFLICT DO NOTHING`.
 - Submissions (`POST /api/stage/submit`) validate `nextStagePassword` and compare elapsed time against `stages.min_expected_seconds`.
 - If the participant completed the stage faster than expected, they are silently marked as `flagged_too_fast = true` with a detailed `flag_reason`. The participant is allowed to advance to stage $N+1$ so they are unaware they were flagged.
 - If the password is wrong, the modal returns `"Wrong password, try to figure it out once again."` and keeps the user on the current stage.
@@ -51,6 +50,7 @@ When modifying, extending, or maintaining this codebase, every AI Agent and engi
 - `apps/web/src/lib/supabase.ts` exports two clients:
   1. `supabase`: Browser-safe anonymous client with `NEXT_PUBLIC_SUPABASE_ANON_KEY`, used for Realtime leaderboard and telemetry subscriptions.
   2. `supabaseAdmin`: Server-only service-role client with `SUPABASE_SERVICE_ROLE_KEY`.
+- `apps/web/src/lib/storage.ts` generates time-limited signed URLs using `supabaseAdmin`.
 - **In-Memory Guard:** Client API requests must **never** return passwords or `min_expected_seconds` to the browser in `access-zip`. Stage password checks are executed on the server in `POST /api/stage/submit` alongside client-side ZIP decompression tests in RAM.
 
 ---
@@ -64,19 +64,20 @@ apps/web/src/
 │   ├── (arena)/arena/page.tsx       # Fullscreen Participant IDE & Contest Arena
 │   └── api/
 │       ├── auth/verify/             # Token authentication
-│       ├── admin/s3-upload/         # Presigned PUT for stage uploads
+│       ├── admin/storage-upload/    # Supabase Storage Signed Upload URL generator
 │       ├── admin/stages/            # Stage metadata & zip_password persistence
 │       ├── admin/participants/      # Bulk participant ingestion
 │       ├── brevo/send/              # High-throughput pooled SMTP mailer
 │       └── stage/
-│           ├── access-zip/          # 60s Presigned GET & clock initialization
+│           ├── access-zip/          # 60s Signed GET & clock initialization
 │           ├── telemetry-ping/      # Background beacon for tab switches / fullscreen exits
 │           └── submit/              # Password verification & speed audit
 ├── components/
 │   ├── arena/                       # Arena UI modules (IDE, Sheets, Unlock Modal, Leaderboard)
 │   └── admin/                       # Admin tab modules
 └── lib/
-    ├── s3.ts                        # AWS SDK v3 factory
+    ├── storage.ts                   # Supabase Storage factory (signed URLs & bucket management)
+    ├── s3.ts                        # Re-export adapter for storage.ts (backwards compatibility)
     ├── zip-engine.ts                # Client-side decompression & SheetJS parser
     ├── supabase.ts                  # Supabase clients (Anon + Service Role)
     └── types.ts                     # TypeScript schemas

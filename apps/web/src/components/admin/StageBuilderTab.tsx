@@ -93,7 +93,7 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
   const handleSelectStageToEdit = (stage: Stage) => {
     setStageNumber(stage.stage_number);
     setTitle(stage.title);
-    setS3Key(stage.s3_key);
+    setS3Key(stage.storage_path || stage.s3_key || '');
     setIsPasswordProtected(stage.is_password_protected);
     setZipPassword(stage.zip_password || '');
     setAllowedCopyFilename(stage.allowed_copy_filename);
@@ -105,20 +105,20 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
     setStatusMessage(null);
   };
 
-  // Direct Browser-to-S3 Upload via Presigned PUT URL
-  const handleDirectS3Upload = async () => {
+  // Direct Browser-to-Supabase Storage Upload via Signed Upload URL
+  const handleDirectStorageUpload = async () => {
     if (!uploadFile) {
       setStatusMessage({ type: 'error', text: 'Please select a ZIP file to upload.' });
       return;
     }
 
     setUploading(true);
-    setUploadProgress('Requesting Presigned S3 PUT URL...');
+    setUploadProgress('Requesting Supabase Signed Upload URL...');
     setStatusMessage(null);
 
     try {
-      // 1. Get 300-second Presigned PUT URL from serverless endpoint
-      const presignRes = await fetch('/api/admin/s3-upload', {
+      // 1. Get 300-second Signed Upload URL from serverless endpoint
+      const presignRes = await fetch('/api/admin/storage-upload', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -130,12 +130,12 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
 
       const presignData = await presignRes.json();
       if (!presignRes.ok || !presignData.uploadUrl) {
-        throw new Error(presignData.error || 'Failed to generate S3 upload URL');
+        throw new Error(presignData.error || 'Failed to generate storage upload URL');
       }
 
-      setUploadProgress('Uploading archive directly to AWS S3...');
+      setUploadProgress('Uploading archive directly to Supabase Storage...');
 
-      // 2. Direct browser-to-S3 PUT upload (zero server memory/proxy overhead)
+      // 2. Direct browser-to-Supabase Storage PUT upload (zero server memory/proxy overhead)
       const uploadRes = await fetch(presignData.uploadUrl, {
         method: 'PUT',
         headers: {
@@ -145,25 +145,28 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
       });
 
       if (!uploadRes.ok) {
-        throw new Error(`S3 upload failed with status ${uploadRes.status}`);
+        throw new Error(`Storage upload failed with status ${uploadRes.status}`);
       }
 
-      setS3Key(presignData.s3Key);
+      const savedPath = presignData.storagePath || presignData.s3Key;
+      setS3Key(savedPath);
       setUploadProgress(null);
       setStatusMessage({
         type: 'success',
-        text: `Archive uploaded directly to S3: ${presignData.s3Key}`,
+        text: `Archive uploaded directly to Supabase Storage: ${savedPath}`,
       });
     } catch (err: any) {
       setUploadProgress(null);
       setStatusMessage({
         type: 'error',
-        text: err.message || 'Direct S3 upload failed',
+        text: err.message || 'Direct storage upload failed',
       });
     } finally {
       setUploading(false);
     }
   };
+
+  const handleDirectS3Upload = handleDirectStorageUpload;
 
   // Handle saving stage configuration
   const handleSaveStage = async (e: React.FormEvent) => {
@@ -187,6 +190,7 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
           adminSecret,
           stageNumber,
           title,
+          storagePath: s3Key,
           s3Key,
           isPasswordProtected,
           zipPassword,
@@ -439,11 +443,11 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
             )}
           </div>
 
-          {/* Section 2: AWS S3 Direct Upload */}
+          {/* Section 2: Supabase Storage Direct Upload */}
           <div className="p-5 rounded-2xl glass-panel border border-slate-800 space-y-4">
             <h3 className="text-xs font-bold text-slate-200 uppercase tracking-wider flex items-center gap-2">
               <Upload className="w-4 h-4 text-violet-400" />
-              Direct-to-S3 Archive Upload
+              Direct-to-Storage Archive Upload (Supabase Storage)
             </h3>
 
             <div className="space-y-3">
@@ -460,17 +464,17 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
                   />
                   <button
                     type="button"
-                    onClick={handleDirectS3Upload}
+                    onClick={handleDirectStorageUpload}
                     disabled={!uploadFile || uploading}
                     className="px-4 py-2 text-xs font-bold text-white bg-violet-600 hover:bg-violet-500 rounded-xl shadow-neon-violet disabled:opacity-50 cursor-pointer flex items-center gap-1.5"
                   >
                     {uploading ? (
                       <>
                         <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                        Uploading to S3...
+                        Uploading to Storage...
                       </>
                     ) : (
-                      'Upload to S3'
+                      'Upload to Supabase Storage'
                     )}
                   </button>
                 </div>
@@ -483,13 +487,13 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
 
               <div>
                 <label className="block text-xs font-semibold text-slate-300 mb-1">
-                  AWS S3 Key
+                  Storage Path (Supabase Storage)
                 </label>
                 <input
                   type="text"
                   value={s3Key}
                   onChange={(e) => setS3Key(e.target.value)}
-                  placeholder="e.g. stages/stage-1/1729000000-dataset.zip"
+                  placeholder="e.g. stage-1/1729000000-dataset.zip"
                   className="w-full px-3 py-2 text-xs font-mono text-slate-300 bg-slate-900 border border-slate-700 rounded-xl focus:border-cyan-400"
                 />
               </div>

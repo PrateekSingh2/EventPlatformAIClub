@@ -32,7 +32,8 @@ export interface Stage {
   id: string;
   stage_number: number;
   title: string;
-  s3_key: string;
+  storage_path: string;
+  s3_key?: string; // Backwards compatibility alias
   is_password_protected: boolean;
   zip_password?: string;
   allowed_copy_filename: string;
@@ -159,7 +160,9 @@ export interface AdminUploadRequest {
 
 export interface AdminUploadResponse {
   uploadUrl: string;
-  s3Key: string;
+  storagePath: string;
+  s3Key?: string; // Backwards compatibility alias
+  token?: string;
   expiresIn: number;
 }
 

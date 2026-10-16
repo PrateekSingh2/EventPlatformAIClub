@@ -16,7 +16,7 @@ export class ZipEngineError extends Error {
  * Extracts a ZIP archive strictly in-memory within the client's browser RAM.
  * No data is written to the user's hard drive or persistent disk storage.
  *
- * @param zipBlob The raw binary ZIP Blob fetched from AWS S3 Presigned GET URL
+ * @param zipBlob The raw binary ZIP Blob fetched from Supabase Storage Signed GET URL
  * @param password Optional password for AES / ZipCrypto encrypted entries
  * @param allowedCopyFilename Whitelisted filename permitted for clipboard copy operations
  */

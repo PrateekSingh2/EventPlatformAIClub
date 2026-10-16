@@ -109,6 +109,7 @@ export async function POST(req: NextRequest) {
     const {
       stageNumber,
       title,
+      storagePath,
       s3Key,
       isPasswordProtected,
       zipPassword,
@@ -124,9 +125,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    if (!stageNumber || !title || !s3Key) {
+    const archivePath = (storagePath || s3Key || '').trim();
+
+    if (!stageNumber || !title || !archivePath) {
       return NextResponse.json(
-        { error: 'stageNumber, title, and s3Key are required fields' },
+        { error: 'stageNumber, title, and storagePath (or s3Key) are required fields' },
         { status: 400 }
       );
     }
@@ -138,7 +141,8 @@ export async function POST(req: NextRequest) {
         {
           stage_number: Number(stageNumber),
           title: title.trim(),
-          s3_key: s3Key.trim(),
+          storage_path: archivePath,
+          s3_key: archivePath, // Backwards compatibility
           is_password_protected: Boolean(isPasswordProtected),
           zip_password: (zipPassword || '').trim(),
           allowed_copy_filename: (allowedCopyFilename || '').trim(),

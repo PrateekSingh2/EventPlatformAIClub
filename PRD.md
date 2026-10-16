@@ -10,7 +10,7 @@ High-stakes coding and AI puzzle hackathons with 150–200 concurrent participan
 1. **Server-Side Compute & Network Bottlenecks:** Centralized servers decompressing large zip files or executing untrusted user code suffer catastrophic lag, socket exhaustion, or crash under simultaneous traffic spikes.
 2. **Cheat Vectors & Prompt Leaks:** Participants bypass restrictions by directly saving secret data files to their local file system, inspecting browser devtools, or distributing problem prompt texts across unauthorized channels without audit trails.
 
-**The Solution:** An ultra-lightweight, high-concurrency serverless architecture deployed on **Netlify**, powered by **Next.js 15 App Router**, **Supabase PostgreSQL & Realtime**, **AWS S3 Presigned URLs**, and client-side in-memory browser sandbox decompression (`@zip.js/zip.js` and SheetJS `xlsx`). The backend performs **zero heavy compute or file proxying**; instead, all archive processing occurs strictly in participant RAM.
+**The Solution:** An ultra-lightweight, high-concurrency serverless architecture deployed on **Netlify**, powered by **Next.js 15 App Router**, **Supabase PostgreSQL & Realtime**, **Supabase Storage Signed URLs**, and client-side in-memory browser sandbox decompression (`@zip.js/zip.js` and SheetJS `xlsx`). The backend performs **zero heavy compute or file proxying**; instead, all archive processing occurs strictly in participant RAM.
 
 ---
 
@@ -31,7 +31,7 @@ High-stakes coding and AI puzzle hackathons with 150–200 concurrent participan
 ### 2.2 Admin / Contest Director
 - **Entry Method:** Authenticates via secure Admin Secret Key (`ADMIN_SECRET_KEY`) at `/admin`.
 - **Workflow:**
-  - Configures stages: uploads ZIP archives directly to AWS S3 using presigned `PUT` URLs, defines `zip_password`, sets `allowed_copy_filename`, `min_expected_seconds`, and stage points.
+  - Configures stages: uploads ZIP archives directly to Supabase Storage using signed `PUT` URLs, defines `zip_password`, sets `allowed_copy_filename`, `min_expected_seconds`, and stage points.
   - Imports participant rosters via CSV or paste (`name, email`), issuing unique cryptographically secure tokens.
   - Dispatches branded HTML onboarding emails via pooled Brevo SMTP connection.
   - Monitors Live Telemetry Radar in real time: tracks stage completion durations, flags suspicious speed-runs, detects tab switches and fullscreen exits, with controls to review or disqualify participants.
@@ -41,8 +41,8 @@ High-stakes coding and AI puzzle hackathons with 150–200 concurrent participan
 ## 3. Core Architectural & Security Invariants
 
 ### 3.1 Zero-Download In-Browser ZIP & Sandbox
-1. All archives reside in a **100% Private AWS S3 Bucket**. No public read access is granted.
-2. Participant requests access via `POST /api/stage/access-zip`. The server issues a short-lived **60-second AWS S3 Presigned GET URL**.
+1. All archives reside in a **100% Private Supabase Storage Bucket** (`stages`). No public read access is granted.
+2. Participant requests access via `POST /api/stage/access-zip`. The server issues a short-lived **60-second Supabase Storage Signed GET URL**.
 3. Browser downloads the archive binary into client RAM (`Blob`) and decompresses it strictly in-memory using `@zip.js/zip.js`.
 4. Extracted files are held in state memory. No download triggers, anchor links (`<a>[download]`), or filesystem writes are allowed.
 5. If the ZIP is encrypted (AES or ZipCrypto), the engine intercepts decryption failure and prompts the user for the password in a glassmorphic modal.
@@ -74,7 +74,7 @@ High-stakes coding and AI puzzle hackathons with 150–200 concurrent participan
 
 ### 3.4 Stage-Locked ZIP Decryption Password Gate & Realtime Leaderboard
 1. **Clue Deduction:** To advance from Stage $N$ to Stage $N+1$, participants analyze datasets, logs, or encrypted hints inside the current stage's in-memory files to deduce the password for Stage $N+1$'s ZIP archive.
-2. **In-Browser Decryption Test:** Clicking **"Unlock Next Stage"** opens `UnlockNextStageModal`. The browser fetches Stage $N+1$'s presigned GET URL, streams the ZIP binary into RAM, and tests client-side decompression using `@zip.js/zip.js` with the entered password.
+2. **In-Browser Decryption Test:** Clicking **"Unlock Next Stage"** opens `UnlockNextStageModal`. The browser fetches Stage $N+1$'s signed GET URL, streams the ZIP binary into RAM, and tests client-side decompression using `@zip.js/zip.js` with the entered password.
 3. **Validation & Progression:** If decryption succeeds, the client invokes `POST /api/stage/submit` with `nextStagePassword`. The server validates the password, audits time taken against `min_expected_seconds`, and executes the atomic PL/pgSQL function `complete_stage_and_award_points`.
 4. **Error Handling & State Resilience:** If the entered password fails to decrypt the archive, the modal displays: `"Wrong password, try to figure it out once again."` and keeps the user on the current stage without losing state.
 5. **Realtime Leaderboard:** Supabase Realtime broadcast updates the Live Leaderboard across all 150–200 connected clients without polling the database.
@@ -85,11 +85,11 @@ High-stakes coding and AI puzzle hackathons with 150–200 concurrent participan
 
 | Dimension | Specification | Rationale |
 | :--- | :--- | :--- |
-| **Concurrency** | 150–200 simultaneous active users | Zero server CPU for file extraction; traffic served through Netlify CDN & direct S3 URLs. |
+| **Concurrency** | 150–200 simultaneous active users | Zero server CPU for file extraction; traffic served through Netlify CDN & direct Supabase Storage URLs. |
 | **Serverless Execution** | $\le 10$ seconds per API invocation | Mandatory Netlify serverless execution limit. File processing is offloaded to client; SMTP connections are pooled. |
 | **Database Concurrency** | Up to 200 concurrent real-time sockets | Supabase Realtime handles websocket broadcasting efficiently without connection exhaustion. |
-| **Security & Privacy** | Private S3 + Presigned URLs (60s) | No public bucket permissions; links expire quickly after client fetch. |
-| **Environment Compatibility** | `MY_AWS_*` prefixed environment variables | Netlify reserves `AWS_*` variables; custom prefix ensures zero deployment collisions. |
+| **Security & Privacy** | Private Supabase Storage + Signed URLs (60s) | No public bucket permissions; links expire quickly after client fetch. |
+| **Infrastructure Simplicity** | Unified Supabase stack (DB + Storage) | Zero AWS IAM setup; eliminates Netlify `AWS_*` variable collisions. |
 
 ---
 
@@ -101,9 +101,9 @@ High-stakes coding and AI puzzle hackathons with 150–200 concurrent participan
 - **Then** the platform validates the token against Supabase `users`, sets a client session, and loads the active stage.
 
 ### US-2: In-Memory Decompression of Encrypted Archives
-- **Given** an encrypted ZIP stage archive hosted on AWS S3
+- **Given** an encrypted ZIP stage archive hosted on Supabase Storage
 - **When** the participant accesses the stage
-- **Then** the browser requests a presigned GET URL, fetches the binary into an in-memory `Blob`, attempts extraction, catches encryption error, and prompts for decryption password.
+- **Then** the browser requests a signed GET URL, fetches the binary into an in-memory `Blob`, attempts extraction, catches encryption error, and prompts for decryption password.
 - **When** valid password is entered, files render in the IDE without touching the local disk.
 
 ### US-3: Anti-Cheat Enforcement & Selective Prompt Copy

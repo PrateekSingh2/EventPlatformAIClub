@@ -1,6 +1,7 @@
 -- ==============================================================================
 -- EVENTPLATFORM AI CLUB - COMPLETE POSTGRESQL SCHEMA FOR SUPABASE
 -- High-Concurrency Serverless Anti-Cheat Contest Platform (150-200 Participants)
+-- Storage Engine: Supabase Storage (Private 'stages' bucket)
 -- ==============================================================================
 
 -- Enable UUID extension if not already present
@@ -8,14 +9,31 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
 -- ------------------------------------------------------------------------------
+-- 0. SUPABASE STORAGE BUCKET: stages
+-- Creates private bucket for stage archive ZIPs if not already created
+-- ------------------------------------------------------------------------------
+INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+VALUES (
+    'stages',
+    'stages',
+    false,
+    104857600, -- 100MB limit per stage ZIP
+    ARRAY['application/zip', 'application/x-zip-compressed']
+)
+ON CONFLICT (id) DO UPDATE SET
+    public = false,
+    file_size_limit = 104857600;
+
+-- ------------------------------------------------------------------------------
 -- 1. TABLE: stages
--- Stores stage manifests, S3 keys, anti-cheat limits, and 2-question gate quiz
+-- Stores stage manifests, storage paths, anti-cheat limits, and zip passwords
 -- ------------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS stages (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     stage_number INT UNIQUE NOT NULL,
     title TEXT NOT NULL,
-    s3_key TEXT NOT NULL,
+    storage_path TEXT NOT NULL DEFAULT '',
+    s3_key TEXT DEFAULT '', -- Backwards compatibility alias
     is_password_protected BOOLEAN NOT NULL DEFAULT false,
     zip_password TEXT DEFAULT '',
     allowed_copy_filename TEXT NOT NULL DEFAULT '',
@@ -26,8 +44,7 @@ CREATE TABLE IF NOT EXISTS stages (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Ensure quiz_questions is an array of exactly 2 items in production
-COMMENT ON COLUMN stages.quiz_questions IS 'JSONB array of 2 questions: [{"question": "...", "options": ["A","B","C","D"], "answer_idx": 0}]';
+COMMENT ON COLUMN stages.storage_path IS 'Path within Supabase Storage stages bucket (e.g., stage-1/dataset.zip)';
 COMMENT ON COLUMN stages.allowed_copy_filename IS 'Exact basename of the file participants are authorized to copy to clipboard (e.g., ai_prompt.txt)';
 COMMENT ON COLUMN stages.min_expected_seconds IS 'Threshold below which stage completion is silently flagged as flagged_too_fast';
 
@@ -71,7 +88,7 @@ CREATE TABLE IF NOT EXISTS stage_telemetry (
     CONSTRAINT uq_user_stage UNIQUE (user_id, stage_number)
 );
 
-COMMENT ON COLUMN stage_telemetry.started_at IS 'Set on initial S3 Presigned URL fetch with ON CONFLICT DO NOTHING to prevent reset on page refresh';
+COMMENT ON COLUMN stage_telemetry.started_at IS 'Set on initial storage signed URL fetch with ON CONFLICT DO NOTHING to prevent reset on page refresh';
 
 -- ------------------------------------------------------------------------------
 -- 4. PERFORMANCE INDEXES
@@ -79,14 +96,13 @@ COMMENT ON COLUMN stage_telemetry.started_at IS 'Set on initial S3 Presigned URL
 -- ------------------------------------------------------------------------------
 CREATE INDEX IF NOT EXISTS idx_users_access_token ON users (access_token);
 CREATE INDEX IF NOT EXISTS idx_users_total_score ON users (total_score DESC);
-CREATE INDEX IF NOT EXISTS idx_users_role ON users (role);
 CREATE INDEX IF NOT EXISTS idx_stages_stage_number ON stages (stage_number);
-CREATE INDEX IF NOT EXISTS idx_stage_telemetry_user_stage ON stage_telemetry (user_id, stage_number);
-CREATE INDEX IF NOT EXISTS idx_stage_telemetry_flagged ON stage_telemetry (flagged_too_fast);
+CREATE INDEX IF NOT EXISTS idx_telemetry_user_stage ON stage_telemetry (user_id, stage_number);
+CREATE INDEX IF NOT EXISTS idx_telemetry_flagged ON stage_telemetry (flagged_too_fast);
 
 -- ------------------------------------------------------------------------------
 -- 5. ATOMIC RPC FUNCTION: complete_stage_and_award_points
--- Race-condition-proof stage advancement and score calculation
+-- Prevents race conditions during stage transitions across concurrent users
 -- ------------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION complete_stage_and_award_points(
     p_user_id UUID,
@@ -99,7 +115,7 @@ LANGUAGE plpgsql
 SECURITY DEFINER
 AS $$
 BEGIN
-    -- 1. Update user total score, advance current stage, and update flagged state
+    -- 1. Advance participant stage, add points, update flag status
     UPDATE users
     SET 
         total_score = total_score + p_points,
@@ -108,12 +124,11 @@ BEGIN
         updated_at = NOW()
     WHERE id = p_user_id;
 
-    -- 2. Mark stage telemetry record as completed and compute duration
+    -- 2. Seal telemetry record with completion time and computed duration
     UPDATE stage_telemetry
     SET
         completed_at = NOW(),
         duration_seconds = EXTRACT(EPOCH FROM (NOW() - started_at))::INT,
-        flagged_too_fast = flagged_too_fast OR p_is_flagged,
         updated_at = NOW()
     WHERE user_id = p_user_id AND stage_number = p_stage_number;
 END;
@@ -121,26 +136,53 @@ $$;
 
 -- ------------------------------------------------------------------------------
 -- 6. ROW LEVEL SECURITY (RLS) POLICIES
--- Strict boundary: Clients can only read safe fields, service role executes writes
 -- ------------------------------------------------------------------------------
 ALTER TABLE stages ENABLE ROW LEVEL SECURITY;
 ALTER TABLE users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE stage_telemetry ENABLE ROW LEVEL SECURITY;
 
--- Stages Policy: Public anon can read stages (but API layer strips answer_idx)
-CREATE POLICY "Allow public read stages without secrets"
-    ON stages
-    FOR SELECT
-    USING (true);
-
--- Users Policy: Allow public read of leaderboard data (name, score, current_stage)
-CREATE POLICY "Allow public read leaderboard"
+-- Anonymous users (participants) can read leaderboard user summaries
+CREATE POLICY "Public read user leaderboard"
     ON users
     FOR SELECT
     USING (true);
 
--- Telemetry Policy: Service role only (direct table mutations handled via backend API)
-CREATE POLICY "Allow service role full access on telemetry"
+-- Anonymous users can read stage manifests
+CREATE POLICY "Public read stages manifest"
+    ON stages
+    FOR SELECT
+    USING (true);
+
+-- Anonymous users can read/write their own stage telemetry
+CREATE POLICY "Public read telemetry"
+    ON stage_telemetry
+    FOR SELECT
+    USING (true);
+
+CREATE POLICY "Public insert telemetry"
+    ON stage_telemetry
+    FOR INSERT
+    WITH CHECK (true);
+
+CREATE POLICY "Public update telemetry"
+    ON stage_telemetry
+    FOR UPDATE
+    USING (true);
+
+-- Service role bypasses all RLS checks automatically for admin endpoints
+CREATE POLICY "Service role full access stages"
+    ON stages
+    FOR ALL
+    USING (auth.role() = 'service_role')
+    WITH CHECK (auth.role() = 'service_role');
+
+CREATE POLICY "Service role full access users"
+    ON users
+    FOR ALL
+    USING (auth.role() = 'service_role')
+    WITH CHECK (auth.role() = 'service_role');
+
+CREATE POLICY "Service role full access telemetry"
     ON stage_telemetry
     FOR ALL
     USING (auth.role() = 'service_role')

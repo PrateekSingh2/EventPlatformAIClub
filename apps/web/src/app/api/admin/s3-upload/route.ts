@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyAdminSecret } from '@/lib/auth';
-import { createAdminUploadUrl } from '@/lib/s3';
+import { createAdminUploadUrl } from '@/lib/storage';
 
 export async function POST(req: NextRequest) {
   try {
@@ -24,20 +24,22 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { uploadUrl, s3Key, expiresIn } = await createAdminUploadUrl(
+    const { uploadUrl, token, storagePath, s3Key, expiresIn } = await createAdminUploadUrl(
       Number(stageNumber),
       filename
     );
 
     return NextResponse.json({
       uploadUrl,
-      s3Key,
+      token,
+      storagePath,
+      s3Key, // Kept for backwards compatibility
       expiresIn,
     });
   } catch (error: any) {
-    console.error('[API /admin/s3-upload error]:', error);
+    console.error('[API /admin/storage-upload error]:', error);
     return NextResponse.json(
-      { error: error.message || 'Failed to generate S3 presigned upload URL' },
+      { error: error.message || 'Failed to generate Supabase Storage signed upload URL' },
       { status: 500 }
     );
   }
