@@ -1,0 +1,6 @@
+{
+  "name": "@eventplatform/db-schema",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Supabase PostgreSQL database schema and migrations for EventPlatformAIClub"
+}

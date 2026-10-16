@@ -1,0 +1,61 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { verifyParticipantToken } from '@/lib/auth';
+import { getSupabaseAdmin } from '@/lib/supabase';
+
+export async function POST(req: NextRequest) {
+  try {
+    const body = await req.json();
+    const { accessToken, stageNumber, type } = body;
+
+    if (!accessToken || !stageNumber || !type) {
+      return NextResponse.json({ ok: false }, { status: 400 });
+    }
+
+    const user = await verifyParticipantToken(accessToken);
+    if (!user) {
+      return NextResponse.json({ ok: false }, { status: 401 });
+    }
+
+    const stageNum = Number(stageNumber);
+    const supabaseAdmin = getSupabaseAdmin();
+
+    // Query current telemetry record to increment safely
+    const { data: telemetry } = await supabaseAdmin
+      .from('stage_telemetry')
+      .select('id, tab_switches, fullscreen_exits')
+      .eq('user_id', user.id)
+      .eq('stage_number', stageNum)
+      .maybeSingle();
+
+    if (telemetry) {
+      const updates: Record<string, any> = {
+        updated_at: new Date().toISOString(),
+      };
+
+      if (type === 'tab_switch') {
+        updates.tab_switches = (telemetry.tab_switches || 0) + 1;
+      } else if (type === 'fullscreen_exit') {
+        updates.fullscreen_exits = (telemetry.fullscreen_exits || 0) + 1;
+      }
+
+      await supabaseAdmin
+        .from('stage_telemetry')
+        .update(updates)
+        .eq('id', telemetry.id);
+    } else {
+      // Create initial row if it somehow wasn't initialized yet
+      await supabaseAdmin.from('stage_telemetry').insert({
+        user_id: user.id,
+        stage_number: stageNum,
+        started_at: new Date().toISOString(),
+        tab_switches: type === 'tab_switch' ? 1 : 0,
+        fullscreen_exits: type === 'fullscreen_exit' ? 1 : 0,
+      });
+    }
+
+    return NextResponse.json({ ok: true });
+  } catch (error) {
+    // Non-blocking telemetry failure - return silent 200 or 500 without impacting participant UX
+    return NextResponse.json({ ok: false }, { status: 200 });
+  }
+}
