@@ -2,11 +2,13 @@
 
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import { useTheme } from '@/lib/theme';
 import { StageBuilderTab } from '@/components/admin/StageBuilderTab';
 import { ParticipantImportTab } from '@/components/admin/ParticipantImportTab';
 import { TelemetryRadarTab } from '@/components/admin/TelemetryRadarTab';
 import { ContestLifecycleBar } from '@/components/admin/ContestLifecycleBar';
 import { ContestLifecycleTab } from '@/components/admin/ContestLifecycleTab';
+import { BrevoStudioTab } from '@/components/admin/BrevoStudioTab';
 import {
   Layers,
   Users,
@@ -42,7 +44,6 @@ export default function AdminPage() {
   const [authError, setAuthError] = useState<string | null>(null);
   const [authLoading, setAuthLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
-  const [activeTab, setActiveTab] = useState<'stages' | 'participants' | 'telemetry' | 'brevo'>('stages');
   const [themeMenuOpen, setThemeMenuOpen] = useState(false);
 
   useEffect(() => {
