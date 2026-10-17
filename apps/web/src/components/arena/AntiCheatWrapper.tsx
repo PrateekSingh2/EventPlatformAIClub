@@ -6,6 +6,7 @@ import {
   Maximize2,
   Lock,
   Tv2,
+  AppWindow,
 } from 'lucide-react';
 
 interface AntiCheatWrapperProps {
@@ -34,6 +35,11 @@ export function AntiCheatWrapper({
   const hasReportedMultiMonitorRef = useRef(false);
   const isDevToolsDetectedRef = useRef(false);
 
+  // Window Switching (Alt+Tab / Win+Tab / Focus Loss) States
+  const [isWindowSwitchViolation, setIsWindowSwitchViolation] = useState(false);
+  const [windowSwitchViolationReason, setWindowSwitchViolationReason] = useState<string>('');
+  const lastWindowSwitchTimestampRef = useRef<number>(0);
+
   // Send silent background telemetry beacon
   const sendTelemetryPing = useCallback(
     (type: 'tab_switch' | 'fullscreen_exit' | 'multi_monitor_detected') => {
@@ -56,6 +62,23 @@ export function AntiCheatWrapper({
       }
     },
     [accessToken, stageNumber]
+  );
+
+  // Trigger window switch violation (Alt+Tab / Win+Tab / window blur)
+  const triggerWindowSwitchViolation = useCallback(
+    (reason: string) => {
+      const now = Date.now();
+      // Debounce window switch events within 600ms to avoid firing duplicated beacons
+      if (now - lastWindowSwitchTimestampRef.current < 600) {
+        return;
+      }
+      lastWindowSwitchTimestampRef.current = now;
+
+      setIsWindowSwitchViolation(true);
+      setWindowSwitchViolationReason(reason);
+      sendTelemetryPing('tab_switch');
+    },
+    [sendTelemetryPing]
   );
 
   // Check if current active file matches the whitelisted copy filename
@@ -228,9 +251,6 @@ export function AntiCheatWrapper({
     // Event listeners
     window.addEventListener('resize', runCheck);
     window.addEventListener('mousemove', runCheck);
-    window.addEventListener('blur', runCheck);
-    window.addEventListener('focus', runCheck);
-    document.addEventListener('visibilitychange', runCheck);
 
     if (window.screen && (window.screen as any).addEventListener) {
       (window.screen as any).addEventListener('change', runCheck);
@@ -250,14 +270,32 @@ export function AntiCheatWrapper({
       clearInterval(intervalId);
       window.removeEventListener('resize', runCheck);
       window.removeEventListener('mousemove', runCheck);
-      window.removeEventListener('blur', runCheck);
-      window.removeEventListener('focus', runCheck);
-      document.removeEventListener('visibilitychange', runCheck);
       if (window.screen && (window.screen as any).removeEventListener) {
         (window.screen as any).removeEventListener('change', runCheck);
       }
     };
   }, [inspectDisplayAndWindowBounds, sendTelemetryPing]);
+
+  // Window Focus & Switching (Alt+Tab, Win+Tab, Task Switch) Detection
+  useEffect(() => {
+    const handleWindowBlur = () => {
+      triggerWindowSwitchViolation('Window lost focus: Application switch or Alt+Tab / Win+Tab departure detected.');
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        triggerWindowSwitchViolation('Contest Arena hidden: Participant switched away from browser tab/window.');
+      }
+    };
+
+    window.addEventListener('blur', handleWindowBlur);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener('blur', handleWindowBlur);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [triggerWindowSwitchViolation]);
 
   // Handler to clear multi-monitor lock once participant re-aligns to primary display
   const handleResolveMultiMonitor = async () => {
@@ -275,7 +313,17 @@ export function AntiCheatWrapper({
     }
   };
 
-  // Listen to fullscreen changes & visibility changes
+  // Handler to resume from window switch lock
+  const handleResumeFromWindowSwitch = async () => {
+    setIsWindowSwitchViolation(false);
+    setWindowSwitchViolationReason('');
+    await enterFullscreen();
+    if (typeof window !== 'undefined') {
+      window.focus();
+    }
+  };
+
+  // Listen to fullscreen changes
   useEffect(() => {
     const handleFullscreenChange = () => {
       const inFs = Boolean(document.fullscreenElement);
@@ -285,22 +333,14 @@ export function AntiCheatWrapper({
       }
     };
 
-    const handleVisibilityChange = () => {
-      if (document.hidden) {
-        sendTelemetryPing('tab_switch');
-      }
-    };
-
     document.addEventListener('fullscreenchange', handleFullscreenChange);
-    document.addEventListener('visibilitychange', handleVisibilityChange);
 
     return () => {
       document.removeEventListener('fullscreenchange', handleFullscreenChange);
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, [sendTelemetryPing]);
 
-  // Block global DevTools shortcuts, right-click context menu, and unauthorized clipboard actions
+  // Block global DevTools shortcuts, Alt+Tab / Win keys, context menu, and unauthorized clipboard actions
   useEffect(() => {
     const handleContextMenu = (e: MouseEvent) => {
       e.preventDefault();
@@ -337,7 +377,18 @@ export function AntiCheatWrapper({
         return false;
       }
 
-      // 3. Block Ctrl+C / Cmd+C / Ctrl+X unless copying is authorized on this exact file
+      // 3. Catch Alt+Tab, Alt+Escape, or Windows key task switching attempts
+      if (e.altKey && (e.key === 'Tab' || e.key === 'Escape')) {
+        e.preventDefault();
+        triggerWindowSwitchViolation('Window switching shortcut detected (Alt+Tab).');
+        return false;
+      }
+
+      if (e.key === 'Meta' || e.key === 'OS') {
+        triggerWindowSwitchViolation('Operating system task switch key detected (Windows key).');
+      }
+
+      // 4. Block Ctrl+C / Cmd+C / Ctrl+X unless copying is authorized on this exact file
       if ((e.ctrlKey || e.metaKey) && (e.key === 'c' || e.key === 'C' || e.key === 'x' || e.key === 'X')) {
         if (!isCopyPermitted) {
           e.preventDefault();
@@ -369,11 +420,13 @@ export function AntiCheatWrapper({
       window.removeEventListener('copy', handleCopy);
       window.removeEventListener('cut', handleCut);
     };
-  }, [isCopyPermitted, sendTelemetryPing]);
+  }, [isCopyPermitted, sendTelemetryPing, triggerWindowSwitchViolation]);
 
-  // Combined lock state: active if either multi-monitor violation is detected or fullscreen is exited
+  // Combined lock state: active if either multi-monitor violation, window switch violation, or fullscreen exit
   const isBlurredArenaLocked =
-    isMultiMonitorViolation || (!isFullscreen && !fullscreenWarningDismissed);
+    isMultiMonitorViolation ||
+    isWindowSwitchViolation ||
+    (!isFullscreen && !fullscreenWarningDismissed);
 
   return (
     <div className="relative w-screen h-screen overflow-hidden bg-app-bg text-app-text select-none">
@@ -431,8 +484,53 @@ export function AntiCheatWrapper({
         </div>
       )}
 
-      {/* 2. Fullscreen Exit Blurred Arena Lock Modal */}
-      {!isMultiMonitorViolation && !isFullscreen && !fullscreenWarningDismissed && (
+      {/* 2. Window Switching / Alt+Tab / Focus Loss Blurred Arena Lock Modal */}
+      {!isMultiMonitorViolation && isWindowSwitchViolation && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-black/80 backdrop-blur-xl animate-in fade-in duration-200">
+          <div className="relative max-w-md w-full p-6 text-center bg-app-surface border border-violet-500/40 rounded-3xl shadow-2xl space-y-4 animate-in zoom-in-95 duration-150">
+            <div className="w-14 h-14 mx-auto rounded-2xl bg-violet-950/60 border border-violet-500/40 flex items-center justify-center text-violet-400 shadow-neon-cyan">
+              <AppWindow className="w-7 h-7" />
+            </div>
+
+            <div className="space-y-1.5">
+              <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold tracking-wider uppercase bg-violet-950/80 border border-violet-500/50 text-violet-300">
+                <ShieldAlert className="w-3 h-3 text-violet-400" />
+                Anti-Cheat Lock: Window Switch Violation
+              </div>
+              <h2 className="text-lg font-bold text-white tracking-tight">
+                Window Switch / Application Departure Detected
+              </h2>
+              <p className="text-xs text-app-subtext leading-relaxed">
+                You have navigated away from the Contest Arena. Pressing Alt+Tab, Windows+Tab, or switching to background applications is strictly prohibited during live tournament play.
+              </p>
+              {windowSwitchViolationReason && (
+                <div className="p-2.5 rounded-xl bg-violet-950/40 border border-violet-800/60 text-[11px] font-mono text-violet-300 text-left">
+                  <strong>Trigger:</strong> {windowSwitchViolationReason}
+                </div>
+              )}
+            </div>
+
+            <div className="p-2.5 rounded-xl bg-app-muted/60 border border-app-border text-[10px] font-mono text-slate-400 text-left space-y-1">
+              <div>&bull; Event telemetry logged as <span className="text-amber-400 font-bold">tab_switches</span>.</div>
+              <div>&bull; Multiple window departures will flag your account on the Telemetry Radar.</div>
+              <div>&bull; Keep the Contest Arena focused at all times.</div>
+            </div>
+
+            <div className="pt-2">
+              <button
+                onClick={handleResumeFromWindowSwitch}
+                className="w-full flex items-center justify-center gap-2 px-4 py-2.5 text-xs font-semibold rounded-xl bg-violet-600 hover:bg-violet-500 text-white transition-colors cursor-pointer shadow-lg shadow-violet-950"
+              >
+                <Maximize2 className="w-4 h-4" />
+                Resume Contest Arena
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 3. Fullscreen Exit Blurred Arena Lock Modal */}
+      {!isMultiMonitorViolation && !isWindowSwitchViolation && !isFullscreen && !fullscreenWarningDismissed && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-black/80 backdrop-blur-xl animate-in fade-in duration-200">
           <div className="relative max-w-sm w-full p-6 text-center bg-app-surface border border-app-border rounded-3xl shadow-2xl space-y-4 animate-in zoom-in-95 duration-150">
             <div className="w-12 h-12 mx-auto rounded-2xl bg-app-muted border border-app-border flex items-center justify-center text-amber-500 shadow-xs">
