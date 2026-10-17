@@ -181,6 +181,7 @@ export function TelemetryRadarTab({ adminSecret }: TelemetryRadarTabProps) {
           duration_seconds,
           tab_switches,
           fullscreen_exits,
+          multi_monitor_detected,
           flagged_too_fast,
           flag_reason,
           created_at,
@@ -348,7 +349,10 @@ export function TelemetryRadarTab({ adminSecret }: TelemetryRadarTabProps) {
   // Filter records
   const filtered = telemetryRecords.filter((rec) => {
     const isSuspicious =
-      rec.flagged_too_fast || rec.tab_switches > 2 || rec.fullscreen_exits > 1;
+      rec.flagged_too_fast ||
+      rec.tab_switches > 2 ||
+      rec.fullscreen_exits > 1 ||
+      ((rec.multi_monitor_detected ?? 0) > 0);
     if (filterOnlyFlagged && !isSuspicious) return false;
 
     if (!search.trim()) return true;
@@ -360,7 +364,11 @@ export function TelemetryRadarTab({ adminSecret }: TelemetryRadarTabProps) {
   });
 
   const totalFlagged = telemetryRecords.filter(
-    (r) => r.flagged_too_fast || r.tab_switches > 2 || r.fullscreen_exits > 1
+    (r) =>
+      r.flagged_too_fast ||
+      r.tab_switches > 2 ||
+      r.fullscreen_exits > 1 ||
+      ((r.multi_monitor_detected ?? 0) > 0)
   ).length;
 
   return (
@@ -484,6 +492,7 @@ export function TelemetryRadarTab({ adminSecret }: TelemetryRadarTabProps) {
                 <th className="px-4 py-3">Duration</th>
                 <th className="px-4 py-3">Tab Switches</th>
                 <th className="px-4 py-3">Fullscreen Exits</th>
+                <th className="px-4 py-3">Multi-Monitor</th>
                 <th className="px-4 py-3">Anti-Cheat Status</th>
                 <th className="px-4 py-3 text-right">Actions</th>
               </tr>
@@ -491,14 +500,14 @@ export function TelemetryRadarTab({ adminSecret }: TelemetryRadarTabProps) {
             <tbody className="divide-y divide-slate-800/60 bg-slate-950/60">
               {loading ? (
                 <tr>
-                  <td colSpan={7} className="py-8 text-center text-slate-500">
+                  <td colSpan={8} className="py-8 text-center text-slate-500">
                     <Loader2 className="w-5 h-5 animate-spin mx-auto mb-2 text-rose-400" />
                     Connecting to live telemetry stream...
                   </td>
                 </tr>
               ) : filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="py-8 text-center text-slate-500">
+                  <td colSpan={8} className="py-8 text-center text-slate-500">
                     No telemetry records found.
                   </td>
                 </tr>
@@ -507,7 +516,8 @@ export function TelemetryRadarTab({ adminSecret }: TelemetryRadarTabProps) {
                   const isRedFlag =
                     rec.flagged_too_fast ||
                     rec.tab_switches > 2 ||
-                    rec.fullscreen_exits > 1;
+                    rec.fullscreen_exits > 1 ||
+                    ((rec.multi_monitor_detected ?? 0) > 0);
 
                   const isDisqualified =
                     rec.user?.role === 'disqualified' ||
@@ -573,6 +583,16 @@ export function TelemetryRadarTab({ adminSecret }: TelemetryRadarTabProps) {
                           }
                         >
                           {rec.fullscreen_exits}
+                        </span>
+                      </td>
+
+                      <td className="px-4 py-3">
+                        <span
+                          className={
+                            (rec.multi_monitor_detected ?? 0) > 0 ? 'text-rose-400 font-bold' : 'text-slate-400'
+                          }
+                        >
+                          {rec.multi_monitor_detected ?? 0}
                         </span>
                       </td>
 

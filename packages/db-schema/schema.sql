@@ -105,6 +105,7 @@ CREATE TABLE IF NOT EXISTS stage_telemetry (
     duration_seconds INT,
     tab_switches INT NOT NULL DEFAULT 0,
     fullscreen_exits INT NOT NULL DEFAULT 0,
+    multi_monitor_detected INT NOT NULL DEFAULT 0,
     flagged_too_fast BOOLEAN NOT NULL DEFAULT false,
     flag_reason TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),

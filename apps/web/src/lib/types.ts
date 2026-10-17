@@ -116,6 +116,7 @@ export interface StageTelemetry {
   duration_seconds: number | null;
   tab_switches: number;
   fullscreen_exits: number;
+  multi_monitor_detected?: number;
   flagged_too_fast: boolean;
   flag_reason: string | null;
   created_at: string;
@@ -188,7 +189,7 @@ export interface AccessZipResponse {
 export interface TelemetryPingRequest {
   accessToken: string;
   stageNumber: number;
-  type: 'tab_switch' | 'fullscreen_exit';
+  type: 'tab_switch' | 'fullscreen_exit' | 'multi_monitor_detected';
 }
 
 export interface StageSubmitRequest {

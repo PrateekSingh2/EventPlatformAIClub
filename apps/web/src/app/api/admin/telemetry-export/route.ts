@@ -56,6 +56,7 @@ export async function GET(req: NextRequest) {
           duration_seconds,
           tab_switches,
           fullscreen_exits,
+          multi_monitor_detected,
           flagged_too_fast,
           flag_reason,
           created_at,
@@ -169,6 +170,7 @@ export async function GET(req: NextRequest) {
       'Time Threshold',
       'Tab Switches',
       'Fullscreen Exits',
+      'Multi-Monitor Detections',
       'Flag Reasons',
     ];
 
@@ -188,13 +190,14 @@ export async function GET(req: NextRequest) {
       const timeThreshold = `${thresholdSeconds}s`;
       const tabSwitches = rec.tab_switches ?? 0;
       const fullscreenExits = rec.fullscreen_exits ?? 0;
+      const multiMonitorDetections = rec.multi_monitor_detected ?? 0;
 
       let flagReason = rec.flag_reason || '';
       if (!flagReason) {
         if (rec.flagged_too_fast) {
           flagReason = `Flagged: Completed under minimum expected time of ${timeThreshold}`;
-        } else if (tabSwitches > 2 || fullscreenExits > 1) {
-          flagReason = `Flagged: Excessive violation beacons (${tabSwitches} tabs, ${fullscreenExits} fullscreen exits)`;
+        } else if (tabSwitches > 2 || fullscreenExits > 1 || multiMonitorDetections > 0) {
+          flagReason = `Flagged: Excessive violation beacons (${tabSwitches} tabs, ${fullscreenExits} fullscreen exits, ${multiMonitorDetections} multi-monitor)`;
         } else {
           flagReason = 'Clean';
         }
@@ -209,6 +212,7 @@ export async function GET(req: NextRequest) {
           escapeCsvCell(timeThreshold),
           escapeCsvCell(tabSwitches),
           escapeCsvCell(fullscreenExits),
+          escapeCsvCell(multiMonitorDetections),
           escapeCsvCell(flagReason),
         ].join(',')
       );
