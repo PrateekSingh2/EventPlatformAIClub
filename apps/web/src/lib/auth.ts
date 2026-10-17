@@ -1,25 +1,18 @@
 import { getSupabaseAdmin } from './supabase';
 import { User } from './types';
 import { isUserDisqualifiedLocally } from './disqualification';
+import { generateContestToken } from './tokens';
+import { readTokenActivations } from './contest';
 import crypto from 'crypto';
 
 /**
- * Generates an industrial-grade cryptographic access token: AX-XXXX-XXXX
+ * Generates an access token in the format AX-DEMO-2026:
+ * - Block 1: 2 uppercase letters
+ * - Block 2: 4 uppercase letters
+ * - Block 3: 4 digits
  */
 export function generateAccessToken(): string {
-  const chars = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ'; // exclude ambiguous characters (0, O, 1, I)
-  const randomBytes = crypto.randomBytes(8);
-  let part1 = '';
-  let part2 = '';
-
-  for (let i = 0; i < 4; i++) {
-    part1 += chars[randomBytes[i] % chars.length];
-  }
-  for (let i = 4; i < 8; i++) {
-    part2 += chars[randomBytes[i] % chars.length];
-  }
-
-  return `AX-${part1}-${part2}`;
+  return generateContestToken();
 }
 
 /**
@@ -66,6 +59,29 @@ export async function verifyParticipantToken(token?: string | null): Promise<Use
     }
     return u;
   };
+
+  // Check token activation registry first
+  try {
+    const activations = readTokenActivations();
+    if (activations[cleanToken]) {
+      const act = activations[cleanToken];
+      const activatedUser: User = {
+        id: act.userId || `user-${act.email.replace(/[^a-z0-9]/g, '_')}`,
+        name: act.name,
+        email: act.email,
+        role: 'participant',
+        access_token: cleanToken,
+        total_score: 150,
+        current_stage: 1,
+        is_flagged: false,
+        created_at: act.activatedAt,
+        updated_at: act.activatedAt,
+      };
+      return checkDisqualified(activatedUser);
+    }
+  } catch {
+    // Ignore
+  }
 
   // Instant demo token for frontend preview & testing
   if (

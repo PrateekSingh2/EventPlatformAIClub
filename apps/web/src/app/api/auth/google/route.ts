@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSupabaseAdmin } from '@/lib/supabase';
 import { generateAccessToken } from '@/lib/auth';
+import { validateAndActivateToken } from '@/lib/contest';
 import { User } from '@/lib/types';
 
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { email, name, photoURL, uid } = body;
+    const { email, name, photoURL, uid, token } = body;
 
     if (!email) {
       return NextResponse.json(
@@ -17,18 +18,48 @@ export async function POST(req: NextRequest) {
 
     const cleanEmail = email.trim().toLowerCase();
     const cleanName = (name || cleanEmail.split('@')[0]).trim();
+    let assignedToken = token ? token.trim().toUpperCase() : null;
+
+    // 1. If a token was provided, validate single-account exclusivity
+    if (assignedToken) {
+      const validation = await validateAndActivateToken({
+        token: assignedToken,
+        email: cleanEmail,
+        name: cleanName,
+        userId: uid,
+      });
+
+      if (!validation.success) {
+        return NextResponse.json(
+          {
+            authenticated: false,
+            error: validation.error || 'This token is already bound to another account.',
+          },
+          { status: 403 }
+        );
+      }
+    }
 
     try {
       const supabaseAdmin = getSupabaseAdmin();
 
-      // 1. Check if user already exists with this Google email
-      const { data: existingUser, error: fetchError } = await supabaseAdmin
+      // 2. Check if user already exists with this Google email
+      const { data: existingUser } = await supabaseAdmin
         .from('users')
         .select('*')
         .eq('email', cleanEmail)
         .maybeSingle();
 
       if (existingUser) {
+        // If a new token was supplied and validated, update the user's token
+        if (assignedToken && existingUser.access_token !== assignedToken) {
+          await supabaseAdmin
+            .from('users')
+            .update({ access_token: assignedToken, updated_at: new Date().toISOString() })
+            .eq('id', existingUser.id);
+          existingUser.access_token = assignedToken;
+        }
+
         return NextResponse.json({
           authenticated: true,
           token: existingUser.access_token,
@@ -37,17 +68,25 @@ export async function POST(req: NextRequest) {
         });
       }
 
-      // 2. Generate a new cryptographic contestant access token
-      const newToken = generateAccessToken();
+      // 3. If no token provided, generate a new one
+      if (!assignedToken) {
+        assignedToken = generateAccessToken();
+        await validateAndActivateToken({
+          token: assignedToken,
+          email: cleanEmail,
+          name: cleanName,
+          userId: uid,
+        });
+      }
 
-      // 3. Insert newly registered contestant
+      // 4. Insert newly registered contestant into participants list
       const { data: newUser, error: insertError } = await supabaseAdmin
         .from('users')
         .insert({
           email: cleanEmail,
           name: cleanName,
           role: 'participant',
-          access_token: newToken,
+          access_token: assignedToken,
           total_score: 0,
           current_stage: 1,
           is_flagged: false,
@@ -64,7 +103,7 @@ export async function POST(req: NextRequest) {
         });
       }
     } catch (dbErr) {
-      console.warn('[Google Auth DB Warning]: Supabase unconfigured or offline. Utilizing ephemeral session.', dbErr);
+      console.warn('[Google Auth DB Warning]: Supabase unconfigured or offline. Utilizing local session.', dbErr);
     }
 
     // 4. Safe fallback for local development or unconfigured databases

@@ -28,7 +28,29 @@ export async function POST(req: NextRequest) {
 
     // 2. Check if verifying participant token
     if (token) {
-      const user = await verifyParticipantToken(token);
+      const { userEmail, userName } = body;
+      const cleanToken = token.trim().toUpperCase();
+
+      if (userEmail) {
+        const { validateAndActivateToken } = await import('@/lib/contest');
+        const validation = await validateAndActivateToken({
+          token: cleanToken,
+          email: userEmail,
+          name: userName,
+        });
+
+        if (!validation.success) {
+          return NextResponse.json(
+            {
+              authenticated: false,
+              error: validation.error || 'This token has already been activated by another account. One token is valid for one ID only.',
+            },
+            { status: 403 }
+          );
+        }
+      }
+
+      const user = await verifyParticipantToken(cleanToken);
       if (user) {
         if (user.role === 'disqualified' || user.is_disqualified) {
           return NextResponse.json(

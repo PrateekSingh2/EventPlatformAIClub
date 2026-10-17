@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyAdminSecret, generateAccessToken } from '@/lib/auth';
 import { getSupabaseAdmin } from '@/lib/supabase';
+import { readTokenActivations } from '@/lib/contest';
 
 export async function GET(req: NextRequest) {
   try {
@@ -8,6 +9,21 @@ export async function GET(req: NextRequest) {
     if (!verifyAdminSecret(adminSecret)) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
+
+    const activations = readTokenActivations();
+    const activatedList = Object.values(activations).map((act, i) => ({
+      id: act.userId || `act-${i}-${act.token}`,
+      name: act.name,
+      email: act.email,
+      role: 'participant' as const,
+      access_token: act.token,
+      total_score: 100,
+      current_stage: 1,
+      is_flagged: false,
+      created_at: act.activatedAt,
+      updated_at: act.activatedAt,
+      stage_telemetry: [],
+    }));
 
     const supabaseAdmin = getSupabaseAdmin();
     const { data: users, error } = await supabaseAdmin
@@ -97,10 +113,35 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    return NextResponse.json({ participants: users || [] });
+    const combinedUsers = [...(users || [])];
+    const userEmails = new Set(combinedUsers.map((u) => (u.email || '').toLowerCase()));
+    for (const act of activatedList) {
+      if (!userEmails.has(act.email.toLowerCase())) {
+        combinedUsers.unshift(act);
+        userEmails.add(act.email.toLowerCase());
+      }
+    }
+
+    return NextResponse.json({ participants: combinedUsers });
   } catch (error: any) {
+    const activations = readTokenActivations();
+    const activatedList = Object.values(activations).map((act, i) => ({
+      id: act.userId || `act-${i}-${act.token}`,
+      name: act.name,
+      email: act.email,
+      role: 'participant' as const,
+      access_token: act.token,
+      total_score: 100,
+      current_stage: 1,
+      is_flagged: false,
+      created_at: act.activatedAt,
+      updated_at: act.activatedAt,
+      stage_telemetry: [],
+    }));
+
     return NextResponse.json({
       participants: [
+        ...activatedList,
         {
           id: '1',
           name: 'Maya Lin',

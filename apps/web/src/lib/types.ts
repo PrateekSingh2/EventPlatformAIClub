@@ -56,6 +56,20 @@ export interface PreflightValidationResult {
   error?: string;
 }
 
+export interface Contest {
+  id: string;
+  title: string;
+  status: ContestStatus;
+  teams_count: number;
+  tokens: string[];
+  stages?: Stage[];
+  created_at: string;
+  updated_at: string;
+  start_time?: string | null;
+  end_time?: string | null;
+  freeze_time?: string | null;
+}
+
 export interface QuizQuestion {
   question: string;
   options: string[];
@@ -78,7 +92,7 @@ export interface Stage {
   allowed_copy_filename: string;
   min_expected_seconds: number;
   points: number;
-  quiz_questions: QuizQuestion[];
+  quiz_questions?: QuizQuestion[];
   created_at: string;
   updated_at: string;
 }

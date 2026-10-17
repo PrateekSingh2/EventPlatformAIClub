@@ -27,18 +27,6 @@ export async function GET(req: NextRequest) {
             allowed_copy_filename: 'ai_prompt.txt',
             min_expected_seconds: 60,
             points: 100,
-            quiz_questions: [
-              {
-                question: 'What is the anomaly threshold identified in the data cluster?',
-                options: ['0.042 ms', '1.284 ms', '9.810 ms', '0.001 ms'],
-                answer_idx: 0,
-              },
-              {
-                question: 'Which model parameter governs the selective prompt transmission?',
-                options: ['allowed_copy_filename', 'temperature', 'top_p', 'max_tokens'],
-                answer_idx: 0,
-              },
-            ],
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
           },
@@ -51,18 +39,6 @@ export async function GET(req: NextRequest) {
             allowed_copy_filename: 'ai_prompt_stage2.txt',
             min_expected_seconds: 90,
             points: 150,
-            quiz_questions: [
-              {
-                question: 'Which encryption cipher was required to unlock the Stage 2 archive?',
-                options: ['AES-256 / ZipCrypto', 'RSA-4096', 'Triple-DES', 'Blowfish-128'],
-                answer_idx: 0,
-              },
-              {
-                question: 'What is the classified protocol code name in the dossier?',
-                options: ['Quantum Key Distribution Protocol', 'Deep Neural Net', 'Bypass Vector', 'Shadow Cache'],
-                answer_idx: 0,
-              },
-            ],
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
           },
@@ -83,18 +59,6 @@ export async function GET(req: NextRequest) {
           allowed_copy_filename: 'ai_prompt.txt',
           min_expected_seconds: 60,
           points: 100,
-          quiz_questions: [
-            {
-              question: 'What is the anomaly threshold identified in the data cluster?',
-              options: ['0.042 ms', '1.284 ms', '9.810 ms', '0.001 ms'],
-              answer_idx: 0,
-            },
-            {
-              question: 'Which model parameter governs the selective prompt transmission?',
-              options: ['allowed_copy_filename', 'temperature', 'top_p', 'max_tokens'],
-              answer_idx: 0,
-            },
-          ],
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         },

@@ -211,6 +211,7 @@ function HomePageContent() {
           photoURL: firebaseUser.photoURL,
           uid: firebaseUser.uid,
           idToken: firebaseUser.idToken,
+          token: (incomingToken || tokenInput).trim().toUpperCase(),
         }),
       });
 
