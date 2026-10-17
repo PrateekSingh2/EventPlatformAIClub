@@ -7,9 +7,15 @@
     "build": "turbo run build",
     "dev": "turbo run dev",
     "lint": "turbo run lint",
-    "clean": "turbo run clean"
+    "clean": "turbo run clean",
+    "db:setup":"tsx packages/db-schema/seed.ts"
   },
   "devDependencies": {
+    "@supabase/supabase-js": "^2.117.3",
+    "@types/pg": "^8.23.1",
+    "dotenv": "^18.0.8",
+    "pg": "^8.23.1",
+    "tsx": "^4.23.15",
     "turbo": "^2.4.4"
   }
 }
