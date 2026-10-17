@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { supabase } from '@/lib/supabase';
+import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 import { ContestSettings } from '@/lib/types';
 
 type StateListener = (state: ContestSettings) => void;
@@ -14,7 +14,7 @@ let sharedChannel: ReturnType<typeof supabase.channel> | null = null;
 let activeHookCount = 0;
 
 function subscribeSharedChannel() {
-  if (sharedChannel) return;
+  if (sharedChannel || !isSupabaseConfigured) return;
 
   sharedChannel = supabase
     .channel('contest-lifecycle')

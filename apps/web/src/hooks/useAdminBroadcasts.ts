@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { supabase } from '@/lib/supabase';
+import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 import { Announcement } from '@/lib/types';
 
 type BroadcastListener = (ann: Announcement) => void;
@@ -10,7 +10,7 @@ let sharedBroadcastChannel: ReturnType<typeof supabase.channel> | null = null;
 let activeBroadcastCount = 0;
 
 function subscribeSharedBroadcastChannel() {
-  if (sharedBroadcastChannel) return;
+  if (sharedBroadcastChannel || !isSupabaseConfigured) return;
 
   sharedBroadcastChannel = supabase
     .channel('admin-broadcasts')

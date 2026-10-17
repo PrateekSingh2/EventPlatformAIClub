@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState, useTransition, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { supabase } from '@/lib/supabase';
+import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 import { User, ContestStatus } from '@/lib/types';
 import {
   Trophy,
@@ -79,27 +79,32 @@ export function LiveLeaderboard({
       fetchLeaderboard();
     }, 2500);
 
-    // Subscribe to real-time postgres updates on users table
-    const channel = supabase
-      .channel('leaderboard-channel')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'users' },
-        () => {
-          // If frozen or concluded, do not update rankings from real-time events
-          if (contestStatus === 'FROZEN' || contestStatus === 'CONCLUDED') {
-            return;
+    // Subscribe to real-time postgres updates on users table if configured
+    let channel: any = null;
+    if (isSupabaseConfigured) {
+      channel = supabase
+        .channel('leaderboard-channel')
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'users' },
+          () => {
+            // If frozen or concluded, do not update rankings from real-time events
+            if (contestStatus === 'FROZEN' || contestStatus === 'CONCLUDED') {
+              return;
+            }
+            startTransition(() => {
+              fetchLeaderboard();
+            });
           }
-          startTransition(() => {
-            fetchLeaderboard();
-          });
-        }
-      )
-      .subscribe();
+        )
+        .subscribe();
+    }
 
     return () => {
       clearInterval(interval);
-      supabase.removeChannel(channel);
+      if (channel) {
+        supabase.removeChannel(channel);
+      }
     };
   }, [isOpen, fetchLeaderboard, contestStatus]);
 

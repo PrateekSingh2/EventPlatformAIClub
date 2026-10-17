@@ -45,11 +45,35 @@ export interface GoogleAuthResult {
 }
 
 /**
+ * Detects whether genuine Firebase credentials have been configured
+ */
+export const isFirebaseConfigured = Boolean(
+  process.env.NEXT_PUBLIC_FIREBASE_API_KEY &&
+  !process.env.NEXT_PUBLIC_FIREBASE_API_KEY.includes('DemoFallback') &&
+  !process.env.NEXT_PUBLIC_FIREBASE_API_KEY.includes('placeholder')
+);
+
+/**
  * Executes Google OAuth sign-in via Firebase
  * Catches popup auto-closure (unauthorized domain, disabled provider, popup blockers, COOP)
  * and guarantees a working session for contestants without getting stuck
  */
 export async function signInWithGoogle(): Promise<GoogleAuthResult> {
+  // If no genuine API key is configured, immediately return safe mock contestant profile
+  // without triggering an invalid Google Identity Toolkit network request
+  if (!isFirebaseConfigured) {
+    await new Promise((r) => setTimeout(r, 400));
+    return {
+      uid: 'demo-contestant-' + Math.random().toString(36).substring(2, 9),
+      email: 'contestant@aiclub.org',
+      displayName: 'AI Club Contestant',
+      photoURL: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80',
+      idToken: 'mock-google-id-token',
+      isAutoFallback: true,
+      diagnosticNotice: 'Running in Fast Contestant Mode (No real Firebase API key found in .env).',
+    };
+  }
+
   const startTime = Date.now();
 
   try {
@@ -82,7 +106,8 @@ export async function signInWithGoogle(): Promise<GoogleAuthResult> {
       err?.code === 'auth/popup-blocked' ||
       err?.code === 'auth/internal-error' ||
       err?.code === 'auth/network-request-failed' ||
-      err?.code === 'auth/invalid-api-key';
+      err?.code === 'auth/invalid-api-key' ||
+      (typeof err?.code === 'string' && err.code.includes('api-key-not-valid'));
 
     let diagnosticNotice = '';
     if (err?.code === 'auth/unauthorized-domain') {
