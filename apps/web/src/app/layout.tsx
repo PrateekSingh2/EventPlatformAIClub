@@ -24,17 +24,12 @@ export default function RootLayout({
           dangerouslySetInnerHTML={{
             __html: `
               try {
-                const savedTheme = localStorage.getItem('contest_sandbox_theme') === 'light' ? 'light' : 'graphite';
+                localStorage.setItem('contest_sandbox_theme', 'graphite');
                 const el = document.getElementById('app-root');
                 if (el) {
-                  el.setAttribute('data-theme', savedTheme);
-                  if (savedTheme === 'light') {
-                    el.classList.remove('dark');
-                    el.classList.add('light');
-                  } else {
-                    el.classList.remove('light');
-                    el.classList.add('dark');
-                  }
+                  el.setAttribute('data-theme', 'graphite');
+                  el.classList.remove('light');
+                  el.classList.add('dark');
                 }
               } catch (e) {}
 

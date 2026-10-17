@@ -66,7 +66,10 @@ export function useContestLifecycle() {
   const fetchState = useCallback(async () => {
     try {
       const res = await fetch('/api/contest', {
-        headers: { 'Cache-Control': 'no-store' },
+        headers: {
+          'Cache-Control': 'no-store, no-cache, must-revalidate',
+          Pragma: 'no-cache',
+        },
       });
       const data = await res.json();
       if (res.ok && data.contest && mountedRef.current) {
@@ -104,10 +107,10 @@ export function useContestLifecycle() {
 
     subscribeSharedChannel();
 
-    // Resilient periodic polling fallback every 8 seconds
+    // Continuous background ping every 2 seconds for immediate tournament lifecycle shifts
     const interval = setInterval(() => {
       fetchState();
-    }, 8000);
+    }, 2000);
 
     return () => {
       mountedRef.current = false;

@@ -58,48 +58,88 @@ function unsubscribeSharedBroadcastChannel() {
 export function useAdminBroadcasts() {
   const [activeAnnouncement, setActiveAnnouncement] = useState<Announcement | null>(null);
   const [history, setHistory] = useState<Announcement[]>([]);
+  const [acknowledgedIds, setAcknowledgedIds] = useState<Set<string>>(() => {
+    if (typeof window === 'undefined') return new Set();
+    try {
+      const stored = sessionStorage.getItem('acknowledged_broadcast_ids');
+      return stored ? new Set(JSON.parse(stored)) : new Set();
+    } catch {
+      return new Set();
+    }
+  });
+
   const mountedRef = useRef(true);
-  const activeTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const acknowledgedIdsRef = useRef(acknowledgedIds);
+  acknowledgedIdsRef.current = acknowledgedIds;
+
+  const acknowledgeAnnouncement = useCallback((id?: string) => {
+    const targetId = id || activeAnnouncement?.id;
+    if (!targetId) {
+      setActiveAnnouncement(null);
+      return;
+    }
+
+    setAcknowledgedIds((prev) => {
+      const next = new Set(prev);
+      next.add(targetId);
+      try {
+        sessionStorage.setItem('acknowledged_broadcast_ids', JSON.stringify(Array.from(next)));
+      } catch {}
+      return next;
+    });
+
+    setActiveAnnouncement((current) => (current?.id === targetId ? null : current));
+  }, [activeAnnouncement?.id]);
 
   const triggerAnnouncement = useCallback((ann: Announcement) => {
     if (!mountedRef.current) return;
-    setActiveAnnouncement(ann);
-    setHistory((prev) => [ann, ...prev.filter((a) => a.id !== ann.id)].slice(0, 20));
 
-    if (activeTimerRef.current) {
-      clearTimeout(activeTimerRef.current);
-    }
-
-    // Keep announcement visible for at least 25 seconds before fading out,
-    // ensuring participants have ample time to read without a close button.
-    activeTimerRef.current = setTimeout(() => {
-      if (mountedRef.current) {
-        setActiveAnnouncement(null);
+    // Append to full persistent history
+    setHistory((prev) => {
+      const exists = prev.some((a) => a.id === ann.id);
+      if (exists) {
+        return prev.map((a) => (a.id === ann.id ? ann : a));
       }
-    }, 25000);
+      return [ann, ...prev].slice(0, 50);
+    });
+
+    // Only popup in middle of screen if participant hasn't acknowledged it yet
+    if (!acknowledgedIdsRef.current.has(ann.id)) {
+      setActiveAnnouncement(ann);
+    }
   }, []);
 
   const fetchRecent = useCallback(async () => {
     try {
       const res = await fetch('/api/announcements', {
-        headers: { 'Cache-Control': 'no-store' },
+        headers: { 'Cache-Control': 'no-store, no-cache' },
       });
       const data = await res.json();
       if (res.ok && data.announcements && mountedRef.current) {
-        setHistory(data.announcements);
-        // If there's an announcement from the last 2 minutes, display it on initial load
-        if (data.announcements.length > 0) {
-          const latest = data.announcements[0];
+        const list: Announcement[] = data.announcements;
+        setHistory((prev) => {
+          // Merge while preserving unique items
+          const map = new Map<string, Announcement>();
+          list.forEach((item) => map.set(item.id, item));
+          prev.forEach((item) => map.set(item.id, item));
+          return Array.from(map.values()).sort(
+            (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+          );
+        });
+
+        // If the newest announcement hasn't been acknowledged and is recent (within 5 minutes), pop it up
+        if (list.length > 0) {
+          const latest = list[0];
           const ageMs = Date.now() - new Date(latest.created_at).getTime();
-          if (ageMs < 120000 && !activeAnnouncement) {
-            triggerAnnouncement(latest);
+          if (ageMs < 300000 && !acknowledgedIdsRef.current.has(latest.id)) {
+            setActiveAnnouncement((curr) => curr || latest);
           }
         }
       }
     } catch {
-      // Ignore
+      // Ignore network errors
     }
-  }, [activeAnnouncement, triggerAnnouncement]);
+  }, []);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -116,11 +156,14 @@ export function useAdminBroadcasts() {
 
     subscribeSharedBroadcastChannel();
 
+    // Background poll every 5 seconds for late-login participants or realtime offline
+    const interval = setInterval(() => {
+      fetchRecent();
+    }, 5000);
+
     return () => {
       mountedRef.current = false;
-      if (activeTimerRef.current) {
-        clearTimeout(activeTimerRef.current);
-      }
+      clearInterval(interval);
       broadcastListeners.delete(onBroadcast);
       activeBroadcastCount--;
       unsubscribeSharedBroadcastChannel();
@@ -130,5 +173,7 @@ export function useAdminBroadcasts() {
   return {
     activeAnnouncement,
     announcementsHistory: history,
+    acknowledgeAnnouncement,
+    unreadCount: history.filter((a) => !acknowledgedIds.has(a.id)).length,
   };
 }

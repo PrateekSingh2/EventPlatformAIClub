@@ -2,7 +2,6 @@
 
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { useTheme } from '@/lib/theme';
 import { StageBuilderTab } from '@/components/admin/StageBuilderTab';
 import { ParticipantImportTab } from '@/components/admin/ParticipantImportTab';
 import { TelemetryRadarTab } from '@/components/admin/TelemetryRadarTab';
@@ -25,9 +24,6 @@ import {
   Sparkles,
   ArrowRight,
   ArrowLeft,
-  Palette,
-  ChevronDown,
-  Check,
   BrainCircuit,
   Trophy,
 } from 'lucide-react';
@@ -36,7 +32,6 @@ type AdminTab = 'lifecycle' | 'stages' | 'participants' | 'brevo' | 'telemetry';
 
 export default function AdminPage() {
   const router = useRouter();
-  const { theme, setTheme } = useTheme();
 
   const [adminSecret, setAdminSecret] = useState<string>('');
   const [activeTab, setActiveTab] = useState<AdminTab>('lifecycle');
@@ -44,7 +39,6 @@ export default function AdminPage() {
   const [authError, setAuthError] = useState<string | null>(null);
   const [authLoading, setAuthLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
-  const [themeMenuOpen, setThemeMenuOpen] = useState(false);
 
   useEffect(() => {
     const storedSecret = sessionStorage.getItem('admin_secret');
@@ -266,53 +260,6 @@ export default function AdminPage() {
         </div>
 
         <div className="flex items-center space-x-2 sm:space-x-3 shrink-0">
-          {/* Theme Dropdown */}
-          <div className="relative">
-            <button
-              onClick={() => setThemeMenuOpen((prev) => !prev)}
-              className="flex items-center space-x-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl border border-app-border bg-app-surface hover:bg-app-hover text-app-text text-xs shadow-xs transition-all cursor-pointer"
-              title="Select Color Theme"
-            >
-              <Palette className="w-3.5 h-3.5 text-app-accent" />
-              <span className="capitalize hidden sm:inline font-medium">{theme}</span>
-              <ChevronDown className={`w-3 h-3 text-app-subtext transition-transform ${themeMenuOpen ? 'rotate-180' : ''}`} />
-            </button>
-
-            {themeMenuOpen && (
-              <div
-                onClick={() => setThemeMenuOpen(false)}
-                className="absolute right-0 top-full mt-2 w-48 bg-app-surface border border-app-border rounded-2xl shadow-2xl py-2 z-50 text-xs animate-in fade-in zoom-in-95 duration-100"
-              >
-                <button
-                  onClick={() => setTheme('graphite')}
-                  className={`w-full text-left px-3.5 py-2 flex items-center justify-between hover:bg-app-hover transition-colors cursor-pointer ${
-                    theme === 'graphite' ? 'text-app-accent font-semibold bg-app-accentBg' : 'text-app-text'
-                  }`}
-                >
-                  <div className="flex items-center space-x-2">
-                    <span className="w-2.5 h-2.5 rounded-full bg-slate-700 border border-slate-500" />
-                    <span>Graphite (Dark)</span>
-                  </div>
-                  {theme === 'graphite' && <Check className="w-3.5 h-3.5 text-app-accent" />}
-                </button>
-                <button
-                  onClick={() => setTheme('light')}
-                  className={`w-full text-left px-3.5 py-2 flex items-center justify-between hover:bg-app-hover transition-colors cursor-pointer ${
-                    theme === 'light' ? 'text-app-accent font-semibold bg-app-accentBg' : 'text-app-text'
-                  }`}
-                >
-                  <div className="flex items-center space-x-2">
-                    <span className="w-2.5 h-2.5 rounded-full bg-blue-600 border border-blue-400" />
-                    <span>Soft Light</span>
-                  </div>
-                  {theme === 'light' && <Check className="w-3.5 h-3.5 text-app-accent" />}
-                </button>
-              </div>
-            )}
-          </div>
-
-          <div className="h-5 w-px bg-app-border hidden xs:block"></div>
-
           <a
             href="/"
             target="_blank"

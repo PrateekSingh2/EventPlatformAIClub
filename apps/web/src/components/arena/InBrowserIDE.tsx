@@ -5,7 +5,6 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { ParsedFile, StageManifest, ContestStatus } from '@/lib/types';
 import { SheetViewer } from './SheetViewer';
-import { useTheme } from '@/lib/theme';
 import { FileExtensionIcon } from './FileIcon';
 import {
   FileText,
@@ -35,13 +34,13 @@ import {
   MoreVertical,
   FoldVertical,
   UnfoldVertical,
-  Palette,
   LogOut,
   Sparkles,
   Maximize2,
   FileQuestion,
   Pause,
   CheckCircle2,
+  Megaphone,
 } from 'lucide-react';
 
 interface InBrowserIDEProps {
@@ -63,6 +62,8 @@ interface InBrowserIDEProps {
   onOpenUnlockModal: () => void;
   onOpenLeaderboard: () => void;
   onLogout?: () => void;
+  unreadBroadcastCount?: number;
+  onOpenBroadcastDrawer?: () => void;
 }
 
 interface TerminalLog {
@@ -91,8 +92,9 @@ export function InBrowserIDE({
   onOpenUnlockModal,
   onOpenLeaderboard,
   onLogout,
+  unreadBroadcastCount = 0,
+  onOpenBroadcastDrawer,
 }: InBrowserIDEProps) {
-  const { theme, setTheme } = useTheme();
   const [terminalOpen, setTerminalOpen] = useState(true);
   const [copied, setCopied] = useState(false);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
@@ -100,7 +102,6 @@ export function InBrowserIDE({
   const [sidebarVisible, setSidebarVisible] = useState(true);
 
   // Navbar Dropdown States
-  const [themeMenuOpen, setThemeMenuOpen] = useState(false);
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
 
   // VS Code Explorer Stage Folders Expansion State
@@ -387,7 +388,6 @@ export function InBrowserIDE({
   useEffect(() => {
     const handleClickOutside = () => {
       setTabsMenuOpen(false);
-      setThemeMenuOpen(false);
       setProfileMenuOpen(false);
     };
     window.addEventListener('click', handleClickOutside);
@@ -441,13 +441,12 @@ export function InBrowserIDE({
     if (!line) return <span>&nbsp;</span>;
 
     const ext = filename.split('.').pop()?.toLowerCase();
-    const isLight = theme === 'light';
 
     // Python code highlighting
     if (ext === 'py') {
       const trimmed = line.trimStart();
       if (trimmed.startsWith('#')) {
-        return <span className={isLight ? 'text-slate-600 italic font-medium' : 'text-slate-500 italic'}>{line}</span>;
+        return <span className="text-slate-500 italic">{line}</span>;
       }
 
       const tokenRegex = /(#[^\n]*)|("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')|(\b(?:def|class|import|from|return|if|elif|else|while|for|in|try|except|finally|with|as|lambda|pass|break|continue|raise|yield|assert|async|await)\b)|(\b(?:True|False|None|self)\b)|(\b\d+(?:\.\d+)?\b)|(\b[A-Za-z_][A-Za-z0-9_]*(?=\s*\())/g;
@@ -461,17 +460,17 @@ export function InBrowserIDE({
         }
         const [full, comment, str, kw, builtin, num, fn] = match;
         if (comment) {
-          elements.push(<span key={match.index} className={isLight ? 'text-slate-600 italic font-medium' : 'text-slate-500 italic'}>{comment}</span>);
+          elements.push(<span key={match.index} className="text-slate-500 italic">{comment}</span>);
         } else if (str) {
-          elements.push(<span key={match.index} className={isLight ? 'text-emerald-800 font-medium' : 'text-emerald-400'}>{str}</span>);
+          elements.push(<span key={match.index} className="text-emerald-400">{str}</span>);
         } else if (kw) {
-          elements.push(<span key={match.index} className={isLight ? 'text-purple-800 font-bold' : 'text-purple-400 font-semibold'}>{kw}</span>);
+          elements.push(<span key={match.index} className="text-purple-400 font-semibold">{kw}</span>);
         } else if (builtin) {
-          elements.push(<span key={match.index} className={isLight ? 'text-blue-800 font-semibold' : 'text-sky-400 font-medium'}>{builtin}</span>);
+          elements.push(<span key={match.index} className="text-sky-400 font-medium">{builtin}</span>);
         } else if (num) {
-          elements.push(<span key={match.index} className={isLight ? 'text-amber-800 font-semibold' : 'text-amber-400'}>{num}</span>);
+          elements.push(<span key={match.index} className="text-amber-400">{num}</span>);
         } else if (fn) {
-          elements.push(<span key={match.index} className={isLight ? 'text-indigo-900 font-bold' : 'text-yellow-300'}>{fn}</span>);
+          elements.push(<span key={match.index} className="text-yellow-300">{fn}</span>);
         }
         lastIndex = tokenRegex.lastIndex;
       }
@@ -494,13 +493,13 @@ export function InBrowserIDE({
         }
         const [full, key, str, boolNull, num] = match;
         if (key) {
-          elements.push(<span key={match.index} className={isLight ? 'text-blue-800 font-bold' : 'text-sky-400 font-medium'}>{key}</span>);
+          elements.push(<span key={match.index} className="text-sky-400 font-medium">{key}</span>);
         } else if (str) {
-          elements.push(<span key={match.index} className={isLight ? 'text-emerald-800 font-medium' : 'text-emerald-400'}>{str}</span>);
+          elements.push(<span key={match.index} className="text-emerald-400">{str}</span>);
         } else if (boolNull) {
-          elements.push(<span key={match.index} className={isLight ? 'text-amber-800 font-bold' : 'text-amber-400 font-semibold'}>{boolNull}</span>);
+          elements.push(<span key={match.index} className="text-amber-400 font-semibold">{boolNull}</span>);
         } else if (num) {
-          elements.push(<span key={match.index} className={isLight ? 'text-amber-800 font-medium' : 'text-amber-400'}>{num}</span>);
+          elements.push(<span key={match.index} className="text-amber-400">{num}</span>);
         }
         lastIndex = tokenRegex.lastIndex;
       }
@@ -526,11 +525,7 @@ export function InBrowserIDE({
           elements.push(
             <span
               key={match.index}
-              className={
-                isLight
-                  ? 'text-emerald-900 font-bold bg-emerald-600/20 border border-emerald-600/35 px-1.5 py-0.5 rounded shadow-xs'
-                  : 'text-emerald-400 font-bold bg-emerald-500/15 border border-emerald-500/30 px-1 py-0.5 rounded'
-              }
+              className="text-emerald-400 font-bold bg-emerald-500/15 border border-emerald-500/30 px-1 py-0.5 rounded"
             >
               {header}
             </span>
@@ -539,7 +534,7 @@ export function InBrowserIDE({
           elements.push(
             <span
               key={match.index}
-              className={isLight ? 'text-slate-600 italic font-medium' : 'text-slate-500 italic'}
+              className="text-slate-500 italic"
             >
               {comment}
             </span>
@@ -548,7 +543,7 @@ export function InBrowserIDE({
           elements.push(
             <span
               key={match.index}
-              className={isLight ? 'text-blue-800 underline font-semibold' : 'text-cyan-400 underline'}
+              className="text-cyan-400 underline"
             >
               {url}
             </span>
@@ -560,11 +555,7 @@ export function InBrowserIDE({
           elements.push(
             <span
               key={match.index}
-              className={
-                isLight
-                  ? 'text-amber-900 font-bold bg-amber-500/20 border border-amber-600/30 px-1 py-0.5 rounded shadow-xs'
-                  : 'text-amber-400 font-semibold'
-              }
+              className="text-amber-400 font-semibold"
             >
               {keyword}
             </span>
@@ -585,8 +576,6 @@ export function InBrowserIDE({
 
   // Reusable File Content Viewer with Zero Line-Number Mismatch
   const renderFileViewer = (file: ParsedFile) => {
-    const isLight = theme === 'light';
-
     if (file.type === 'spreadsheet' && file.sheets) {
       return <SheetViewer sheets={file.sheets} filename={file.name} />;
     }
@@ -623,9 +612,7 @@ export function InBrowserIDE({
           </div>
           <div className="flex-1 p-4 sm:p-6 overflow-y-auto">
             <div
-              className={`max-w-3xl mx-auto prose ${
-                isLight ? 'prose-slate text-slate-950 font-normal' : 'prose-invert'
-              } prose-headings:text-app-text prose-p:text-app-text prose-pre:bg-app-surface/90 prose-pre:border prose-pre:border-white/10 prose-pre:rounded-xl prose-pre:shadow-lg`}
+              className="max-w-3xl mx-auto prose prose-invert prose-headings:text-app-text prose-p:text-app-text prose-pre:bg-app-surface/90 prose-pre:border prose-pre:border-white/10 prose-pre:rounded-xl prose-pre:shadow-lg"
             >
               <ReactMarkdown remarkPlugins={[remarkGfm]}>
                 {file.content || ''}
@@ -652,11 +639,7 @@ export function InBrowserIDE({
             <span className="font-semibold text-app-text truncate">{file.name}</span>
             {isPrompt && (
               <span
-                className={`text-[9px] px-1.5 py-0.5 rounded-md font-bold uppercase tracking-wider shrink-0 ml-1 border ${
-                  isLight
-                    ? 'bg-emerald-600/15 text-emerald-800 border-emerald-600/30'
-                    : 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
-                }`}
+                className="text-[9px] px-1.5 py-0.5 rounded-md font-bold uppercase tracking-wider shrink-0 ml-1 border bg-emerald-500/15 text-emerald-400 border-emerald-500/30"
               >
                 PROMPT DIRECTIVE
               </span>
@@ -700,11 +683,7 @@ export function InBrowserIDE({
             {isPrompt ? (
               <button
                 onClick={handleCopyPrompt}
-                className={`flex items-center space-x-1 px-2.5 py-0.5 rounded-lg text-[11px] font-semibold transition-all cursor-pointer ${
-                  isLight
-                    ? 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm'
-                    : 'bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 border border-emerald-500/30'
-                }`}
+                className="flex items-center space-x-1 px-2.5 py-0.5 rounded-lg text-[11px] font-semibold transition-all cursor-pointer bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 border border-emerald-500/30"
               >
                 {copied ? <Check className="w-3 h-3 text-current" /> : <Copy className="w-3 h-3 text-current" />}
                 <span>{copied ? 'Copied!' : 'Copy Prompt'}</span>
@@ -737,11 +716,7 @@ export function InBrowserIDE({
               >
                 {/* Line Number Gutter */}
                 <div
-                  className={`w-12 sm:w-14 shrink-0 pr-3 text-right select-none ${
-                    isLight
-                      ? 'text-slate-600 group-hover:text-slate-950 border-slate-300'
-                      : 'text-app-subtext/40 group-hover:text-app-subtext border-app-border/40'
-                  } font-mono text-xs leading-6 border-r tabular-nums cursor-pointer select-none`}
+                  className="w-12 sm:w-14 shrink-0 pr-3 text-right select-none text-app-subtext/40 group-hover:text-app-subtext border-app-border/40 font-mono text-xs leading-6 border-r tabular-nums cursor-pointer select-none"
                   title={`Line ${lineNum}`}
                 >
                   {lineNum}
@@ -749,9 +724,7 @@ export function InBrowserIDE({
 
                 {/* Line Content */}
                 <div
-                  className={`pl-4 pr-6 flex-1 ${
-                    isLight ? 'text-slate-950 font-medium' : 'text-app-text'
-                  } font-mono text-xs leading-6 min-h-[24px] ${
+                  className={`pl-4 pr-6 flex-1 text-app-text font-mono text-xs leading-6 min-h-[24px] ${
                     wordWrap ? 'whitespace-pre-wrap break-words' : 'whitespace-pre overflow-x-visible'
                   }`}
                 >
@@ -848,65 +821,20 @@ export function InBrowserIDE({
             </button>
           )}
 
-          {/* 2. Theme Dropdown Button */}
-          <div className="relative">
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                setThemeMenuOpen((prev) => !prev);
-                setProfileMenuOpen(false);
-              }}
-              className="flex items-center space-x-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl border border-white/10 bg-app-surface/80 hover:bg-white/10 text-app-text text-xs shadow-[0_2px_8px_rgba(0,0,0,0.25),_inset_0_1px_0_rgba(255,255,255,0.1)] transition-all cursor-pointer"
-              title="Select Theme"
-            >
-              <Palette className="w-3.5 h-3.5 text-app-accent shrink-0" />
-              <span className="capitalize hidden md:inline font-medium">{theme}</span>
-              <ChevronDown className={`w-3 h-3 text-app-subtext transition-transform duration-150 ${themeMenuOpen ? 'rotate-180' : ''}`} />
-            </button>
-
-            {themeMenuOpen && (
-              <div
-                onClick={(e) => e.stopPropagation()}
-                className="absolute right-0 top-full mt-2 w-48 bg-app-surface border border-app-border rounded-2xl shadow-2xl py-2 z-50 text-xs animate-in fade-in zoom-in-95 duration-100"
-              >
-                <div className="px-3 py-1 text-[10px] uppercase tracking-wider font-semibold text-app-subtext">
-                  Theme
-                </div>
-                <button
-                  onClick={() => {
-                    setTheme('graphite');
-                    addLog('info', 'Switched theme to [GRAPHITE]');
-                    setThemeMenuOpen(false);
-                  }}
-                  className={`w-full text-left px-3 py-2 flex items-center justify-between hover:bg-app-hover transition-colors cursor-pointer ${
-                    theme === 'graphite' ? 'text-app-accent font-semibold bg-app-accentBg' : 'text-app-text'
-                  }`}
-                >
-                  <div className="flex items-center space-x-2">
-                    <span className="w-2.5 h-2.5 rounded-full bg-slate-700 border border-slate-500 shadow-xs"></span>
-                    <span>Graphite</span>
-                  </div>
-                  {theme === 'graphite' && <Check className="w-3.5 h-3.5 text-app-accent" />}
-                </button>
-                <button
-                  onClick={() => {
-                    setTheme('light');
-                    addLog('info', 'Switched theme to [SOFT LIGHT]');
-                    setThemeMenuOpen(false);
-                  }}
-                  className={`w-full text-left px-3 py-2 flex items-center justify-between hover:bg-app-hover transition-colors cursor-pointer ${
-                    theme === 'light' ? 'text-app-accent font-semibold bg-app-accentBg' : 'text-app-text'
-                  }`}
-                >
-                  <div className="flex items-center space-x-2">
-                    <span className="w-2.5 h-2.5 rounded-full bg-blue-600 border border-blue-400 shadow-xs"></span>
-                    <span>Soft Light</span>
-                  </div>
-                  {theme === 'light' && <Check className="w-3.5 h-3.5 text-app-accent" />}
-                </button>
-              </div>
-            )}
-          </div>
+          {/* 2. Broadcast Feed Side Panel Button */}
+          <button
+            onClick={onOpenBroadcastDrawer}
+            className="relative p-2 rounded-xl border border-app-border bg-app-surface hover:bg-app-hover text-app-text transition-all cursor-pointer flex items-center justify-center shrink-0 shadow-xs"
+            title="Tournament Broadcast Feed"
+            aria-label="Open Broadcast Feed"
+          >
+            <Megaphone className="w-4 h-4 text-cyan-500 dark:text-cyan-400 shrink-0" />
+            {unreadBroadcastCount && unreadBroadcastCount > 0 ? (
+              <span className="absolute -top-1 -right-1 flex h-4 min-w-4 px-1 items-center justify-center rounded-full bg-rose-500 text-[9px] font-bold text-white shadow-xs">
+                {unreadBroadcastCount > 9 ? '9+' : unreadBroadcastCount}
+              </span>
+            ) : null}
+          </button>
 
           {/* 3. Leaderboard Simple Logo-like Button */}
           <button
@@ -928,7 +856,6 @@ export function InBrowserIDE({
               onClick={(e) => {
                 e.stopPropagation();
                 setProfileMenuOpen((prev) => !prev);
-                setThemeMenuOpen(false);
               }}
               className="flex items-center space-x-2 p-1 sm:px-2.5 sm:py-1.5 rounded-xl border border-app-border bg-app-surface hover:bg-app-hover transition-all cursor-pointer shadow-xs"
               title="User Account"
@@ -1029,10 +956,10 @@ export function InBrowserIDE({
           </div>
 
           {/* VS Code Stage Tree View */}
-          <div className="p-1.5 space-y-1 flex-1 overflow-y-auto">
-            <div className="px-2 py-1 text-[10px] font-semibold tracking-wider text-app-subtext uppercase flex items-center justify-between">
+          <div className="py-1 flex-1 overflow-y-auto select-none font-sans">
+            <div className="px-3 py-1 text-[10px] font-semibold tracking-wider text-app-subtext uppercase flex items-center justify-between">
               <span>SANDBOX DIRECTORY</span>
-              <span className="text-[9px] bg-app-bg/80 px-2 py-0.5 rounded-md border border-white/10 shadow-[inset_0_1px_2px_rgba(0,0,0,0.3)] font-mono">
+              <span className="text-[9px] bg-app-bg/80 px-1.5 py-0.5 rounded border border-white/10 font-mono">
                 {stages.length} Stages
               </span>
             </div>
@@ -1046,39 +973,33 @@ export function InBrowserIDE({
               const isLoadingStage = loading && isSelected && stageFiles.length === 0;
 
               return (
-                <div key={stage.stageNumber} className="rounded-xl select-none overflow-hidden my-0.5">
-                  {/* Stage Folder Row Header */}
-                  <div
-                    onClick={() => {
+                <div key={stage.stageNumber} className="select-none">
+                  {/* Stage Folder Row as a VS Code Tree Link */}
+                  <a
+                    href={`#stage-${stage.stageNumber}`}
+                    onClick={(e) => {
+                      e.preventDefault();
                       toggleStage(stage.stageNumber);
                       if (isUnlocked && !isSelected) {
                         onSelectStage(stage.stageNumber);
                       }
                     }}
-                    className={`group flex items-center justify-between px-2.5 py-1.5 rounded-xl cursor-pointer text-xs transition-all ${
+                    className={`w-full flex items-center justify-between px-2.5 py-1 cursor-pointer transition-colors text-xs select-none no-underline group ${
                       isSelected
-                        ? 'bg-app-accentBg/85 border border-app-accentBorder/70 text-app-text font-semibold shadow-[0_2px_8px_rgba(0,0,0,0.25),_inset_0_1px_0_rgba(255,255,255,0.12)]'
-                        : 'hover:bg-white/[0.04] text-app-text border border-transparent hover:border-white/[0.06]'
+                        ? 'bg-[#37373d]/90 text-white font-medium'
+                        : 'text-slate-300 hover:bg-white/[0.04] hover:text-white'
                     }`}
                     title={`Stage ${stage.stageNumber}: ${stage.title} (Click to ${isExpanded ? 'collapse' : 'expand'})`}
                   >
                     <div className="flex items-center space-x-1.5 min-w-0 flex-1">
                       {/* Chevron Toggle Icon */}
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          toggleStage(stage.stageNumber);
-                        }}
-                        className="p-0.5 rounded hover:bg-white/10 text-app-subtext hover:text-app-text shrink-0 cursor-pointer transition-colors"
-                        title={isExpanded ? 'Collapse' : 'Expand'}
-                      >
+                      <span className="p-0.5 text-slate-400 group-hover:text-slate-200 shrink-0">
                         {isExpanded ? (
                           <ChevronDown className="w-3.5 h-3.5" />
                         ) : (
                           <ChevronRight className="w-3.5 h-3.5" />
                         )}
-                      </button>
+                      </span>
 
                       {/* Folder / Lock Icon */}
                       {!isUnlocked ? (
@@ -1090,75 +1011,80 @@ export function InBrowserIDE({
                           }`}
                         />
                       ) : (
-                        <Folder className="w-3.5 h-3.5 text-app-subtext shrink-0" />
+                        <Folder className="w-3.5 h-3.5 text-slate-400 shrink-0" />
                       )}
 
                       {/* Stage Name & Subtitle */}
                       <div className="truncate flex-1 min-w-0">
-                        <span className="truncate text-xs">Stage {stage.stageNumber}</span>
+                        <span className="truncate">Stage {stage.stageNumber}</span>
                         {stage.title && (
-                          <span className="text-[10px] text-app-subtext font-normal truncate block -mt-0.5 opacity-80">
+                          <span className="text-[10px] text-slate-400 font-normal truncate block -mt-0.5 opacity-75">
                             {stage.title}
                           </span>
                         )}
                       </div>
                     </div>
 
-                    {/* Stage Status / Points Pill */}
+                    {/* Stage Status / Points Indicator */}
                     <div className="flex items-center space-x-1 shrink-0 ml-1">
                       {isCurrent ? (
-                        <span className="text-[9px] px-1.5 py-0.2 rounded-md font-sans font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 shadow-[inset_0_1px_0_rgba(16,185,129,0.15)]">
+                        <span className="text-[9px] px-1.5 py-0.2 rounded font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
                           ACTIVE
                         </span>
                       ) : !isUnlocked ? (
-                        <span className="text-[9px] px-1.5 py-0.2 rounded-md font-sans font-medium bg-rose-500/10 text-rose-400 border border-rose-500/20">
+                        <span className="text-[9px] px-1.5 py-0.2 rounded font-mono font-medium text-rose-400 opacity-80">
                           LOCKED
                         </span>
                       ) : (
-                        <span className="text-[9px] px-1.5 py-0.2 rounded-md font-sans font-medium bg-sky-500/10 text-sky-400 border border-sky-500/20">
+                        <span className="text-[9px] font-mono text-slate-400">
                           +{stage.points}
                         </span>
                       )}
                     </div>
-                  </div>
+                  </a>
 
                   {/* Expanded Stage Folder Contents (VS Code Indented Tree Branch) */}
                   {isExpanded && (
-                    <div className="ml-3.5 pl-2.5 border-l border-white/10 py-1 space-y-0.5">
+                    <div className="py-0.5 space-y-0.5">
                       {!isUnlocked ? (
-                        <div className="px-2.5 py-2.5 rounded-xl bg-app-bg/75 backdrop-blur-md border border-white/10 text-[11px] space-y-2 my-1 shadow-[inset_0_1px_3px_rgba(0,0,0,0.3)]">
-                          <div className="flex items-center space-x-1.5 text-rose-400">
+                        <div className="ml-6 mr-2 px-2.5 py-2 text-[11px] space-y-1.5 bg-white/[0.02] border-l-2 border-amber-500/50 my-1">
+                          <div className="flex items-center space-x-1.5 text-amber-400 font-medium">
                             <Lock className="w-3 h-3 shrink-0" />
-                            <span className="font-semibold text-[11px]">Stage {stage.stageNumber} Locked</span>
+                            <span>Stage {stage.stageNumber} Locked</span>
                           </div>
-                          <p className="text-[10px] text-app-subtext leading-snug">
+                          <p className="text-[10px] text-slate-400 leading-tight">
                             Complete previous stage directives and enter archive key to decrypt.
                           </p>
-                          <button
+                          <a
+                            href="#decrypt"
                             onClick={(e) => {
-                              e.stopPropagation();
+                              e.preventDefault();
                               onOpenUnlockModal();
                             }}
-                            className="w-full py-1 px-2 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 text-amber-400 border border-amber-500/30 text-[10px] font-semibold flex items-center justify-center space-x-1 shadow-[0_2px_6px_rgba(245,158,11,0.15),_inset_0_1px_0_rgba(255,255,255,0.1)] transition-all cursor-pointer"
+                            className="text-amber-400 hover:text-amber-300 hover:underline inline-flex items-center gap-1.5 text-[11px] font-medium py-0.5 transition-colors cursor-pointer"
                           >
-                            <KeyRound className="w-3 h-3" />
-                            <span>Enter Decryption Key</span>
-                          </button>
+                            <KeyRound className="w-3 h-3 shrink-0" />
+                            <span>Enter Decryption Key &rarr;</span>
+                          </a>
                         </div>
                       ) : isLoadingStage ? (
-                        <div className="flex items-center space-x-2 px-2 py-2 text-xs text-app-subtext">
-                          <div className="w-3.5 h-3.5 border-2 border-app-accent border-t-transparent rounded-full animate-spin shrink-0" />
-                          <span className="text-[11px]">Decompressing stage files...</span>
+                        <div className="flex items-center space-x-2 pl-7 pr-2 py-1.5 text-xs text-slate-400">
+                          <div className="w-3 h-3 border-2 border-app-accent border-t-transparent rounded-full animate-spin shrink-0" />
+                          <span className="text-[11px]">Loading stage files...</span>
                         </div>
                       ) : stageFiles.length === 0 ? (
-                        <div className="px-2 py-1.5 text-[11px] text-app-subtext flex items-center justify-between">
+                        <div className="pl-7 pr-2.5 py-1 text-[11px] text-slate-400 flex items-center justify-between">
                           <span className="italic">No files loaded yet</span>
-                          <button
-                            onClick={() => onSelectStage(stage.stageNumber)}
-                            className="text-[10px] text-app-accent underline cursor-pointer"
+                          <a
+                            href="#load-archive"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              onSelectStage(stage.stageNumber);
+                            }}
+                            className="text-[10px] text-app-accent hover:underline cursor-pointer"
                           >
                             Load Archive
-                          </button>
+                          </a>
                         </div>
                       ) : (
                         stageFiles.map((file) => {
@@ -1167,20 +1093,22 @@ export function InBrowserIDE({
                           const badge = getFileBadge(file);
 
                           return (
-                            <div
+                            <a
                               key={file.path}
-                              onClick={() => {
+                              href={`#${file.path}`}
+                              onClick={(e) => {
+                                e.preventDefault();
                                 if (selectedStageNumber !== stage.stageNumber) {
                                   onSelectStage(stage.stageNumber);
                                 }
                                 handleOpenFile(file);
                               }}
-                              className={`group flex items-center justify-between px-2.5 py-1.5 rounded-lg cursor-pointer text-xs transition-all ${
+                              className={`w-full flex items-center justify-between pl-6 pr-2.5 py-1 text-xs select-none transition-colors duration-75 cursor-pointer no-underline group ${
                                 isFileActive
-                                  ? 'bg-app-accentBg/80 text-app-text font-semibold border border-app-accentBorder/60 shadow-[0_2px_6px_rgba(0,0,0,0.2),_inset_0_1px_0_rgba(255,255,255,0.08)]'
+                                  ? 'bg-[#37373d] text-white font-medium border-l-2 border-app-accent pl-[22px]'
                                   : isFileOpen
-                                  ? 'bg-white/[0.05] text-app-text border border-transparent hover:border-white/10'
-                                  : 'text-app-subtext hover:bg-white/[0.04] hover:text-app-text border border-transparent hover:border-white/[0.05]'
+                                  ? 'text-white hover:bg-white/[0.05]'
+                                  : 'text-slate-400 hover:bg-white/[0.04] hover:text-slate-200'
                               }`}
                               title={isFileOpen ? `${file.name} (Open in tabs)` : `Open ${file.name}`}
                             >
@@ -1189,17 +1117,17 @@ export function InBrowserIDE({
                                 <span className="truncate text-xs">{file.name}</span>
                                 {isFileOpen && !isFileActive && (
                                   <span
-                                    className="w-1.5 h-1.5 rounded-full bg-app-accent/60 shrink-0"
+                                    className="w-1.5 h-1.5 rounded-full bg-app-accent/70 shrink-0"
                                     title="Open in tab"
                                   />
                                 )}
                               </div>
                               <span
-                                className={`text-[9px] px-1.5 py-0.2 rounded font-sans font-semibold tracking-wider shrink-0 ml-1 ${badge.color}`}
+                                className={`text-[9px] px-1 py-0.2 rounded font-mono font-medium tracking-wider shrink-0 ml-1 opacity-70 group-hover:opacity-100 ${badge.color}`}
                               >
                                 {badge.label}
                               </span>
-                            </div>
+                            </a>
                           );
                         })
                       )}

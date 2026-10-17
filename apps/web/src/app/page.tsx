@@ -3,7 +3,6 @@
 import React, { useState, useEffect, useRef, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { motion } from 'framer-motion';
-import { useTheme } from '@/lib/theme';
 import { signInWithGoogle } from '@/lib/firebase';
 import {
   Sparkles,
@@ -18,8 +17,6 @@ import {
   Trophy,
   Check,
   Loader2,
-  Palette,
-  ChevronDown,
   KeyRound,
   X,
   BrainCircuit,
@@ -29,7 +26,6 @@ import {
 function HomePageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { theme, setTheme } = useTheme();
 
   // Incoming query params (for direct route redirections like /token?tokenid=... or /arena?token=...)
   const incomingToken = (
@@ -48,9 +44,6 @@ function HomePageContent() {
   const [tokenLoading, setTokenLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [existingToken, setExistingToken] = useState<string | null>(null);
-
-  // Theme dropdown state
-  const [themeMenuOpen, setThemeMenuOpen] = useState(false);
 
   // Admin secret modal state
   const [showAdminModal, setShowAdminModal] = useState(false);
@@ -94,8 +87,6 @@ function HomePageContent() {
     };
     window.addEventListener('resize', handleResize);
 
-    const isLight = theme === 'light';
-
     // Neural Nodes
     const nodeCount = Math.min(Math.floor((width * height) / 22000), 45);
     const nodes: {
@@ -109,21 +100,12 @@ function HomePageContent() {
       lineColor: string;
     }[] = [];
 
-    const darkColors = [
+    const palette = [
       { node: 'rgba(52, 211, 153, 0.85)', line: '52, 211, 153' }, // Emerald
       { node: 'rgba(34, 211, 238, 0.85)', line: '34, 211, 238' }, // Cyan
       { node: 'rgba(168, 85, 247, 0.75)', line: '168, 85, 247' }, // Purple
       { node: 'rgba(251, 191, 36, 0.75)', line: '251, 191, 36' }, // Amber
     ];
-
-    const lightColors = [
-      { node: 'rgba(29, 78, 216, 0.75)', line: '29, 78, 216' }, // Deep Cobalt
-      { node: 'rgba(13, 148, 136, 0.75)', line: '13, 148, 136' }, // Teal
-      { node: 'rgba(79, 70, 229, 0.75)', line: '79, 70, 229' }, // Indigo
-      { node: 'rgba(71, 85, 105, 0.65)', line: '71, 85, 105' }, // Slate
-    ];
-
-    const palette = isLight ? lightColors : darkColors;
 
     for (let i = 0; i < nodeCount; i++) {
       const c = palette[Math.floor(Math.random() * palette.length)];
@@ -158,7 +140,7 @@ function HomePageContent() {
           const dist = Math.sqrt(dx * dx + dy * dy);
 
           if (dist < 130) {
-            const alpha = (1 - dist / 130) * (isLight ? 0.16 : 0.22);
+            const alpha = (1 - dist / 130) * 0.22;
             ctx.beginPath();
             ctx.moveTo(nodes[i].x, nodes[i].y);
             ctx.lineTo(nodes[j].x, nodes[j].y);
@@ -173,7 +155,7 @@ function HomePageContent() {
         const mdy = nodes[i].y - mouseY;
         const mdist = Math.sqrt(mdx * mdx + mdy * mdy);
         if (mdist < 145) {
-          const malpha = (1 - mdist / 145) * (isLight ? 0.22 : 0.32);
+          const malpha = (1 - mdist / 145) * 0.32;
           ctx.beginPath();
           ctx.moveTo(nodes[i].x, nodes[i].y);
           ctx.lineTo(mouseX, mouseY);
@@ -209,7 +191,7 @@ function HomePageContent() {
       window.removeEventListener('mousemove', handleMouseMove);
       cancelAnimationFrame(animationFrameId);
     };
-  }, [theme]);
+  }, []);
 
   // Handle Google OAuth Sign-In via Firebase
   const handleGoogleSignIn = async () => {
@@ -392,53 +374,8 @@ function HomePageContent() {
           </div>
         </div>
 
-        {/* Right: Theme Selector + Admin Key Button */}
+        {/* Right: Admin Key Button */}
         <div className="flex items-center space-x-2">
-          
-          {/* Theme Dropdown */}
-          <div className="relative">
-            <button
-              onClick={() => setThemeMenuOpen((prev) => !prev)}
-              className="flex items-center space-x-1.5 px-2.5 py-1 rounded-xl border border-app-border bg-app-surface hover:bg-app-hover text-app-text text-xs shadow-xs transition-all cursor-pointer"
-              title="Select Color Theme"
-            >
-              <Palette className="w-3.5 h-3.5 text-app-accent" />
-              <span className="capitalize hidden sm:inline font-medium">{theme}</span>
-              <ChevronDown className={`w-3 h-3 text-app-subtext transition-transform ${themeMenuOpen ? 'rotate-180' : ''}`} />
-            </button>
-
-            {themeMenuOpen && (
-              <div
-                onClick={() => setThemeMenuOpen(false)}
-                className="absolute right-0 top-full mt-2 w-44 bg-app-surface border border-app-border rounded-2xl shadow-2xl py-2 z-50 text-xs animate-in fade-in zoom-in-95 duration-100"
-              >
-                <button
-                  onClick={() => setTheme('graphite')}
-                  className={`w-full text-left px-3 py-1.5 flex items-center justify-between hover:bg-app-hover transition-colors cursor-pointer ${
-                    theme === 'graphite' ? 'text-app-accent font-semibold bg-app-accentBg' : 'text-app-text'
-                  }`}
-                >
-                  <div className="flex items-center space-x-2">
-                    <span className="w-2.5 h-2.5 rounded-full bg-slate-700 border border-slate-500" />
-                    <span>Graphite (Dark)</span>
-                  </div>
-                  {theme === 'graphite' && <Check className="w-3.5 h-3.5 text-app-accent" />}
-                </button>
-                <button
-                  onClick={() => setTheme('light')}
-                  className={`w-full text-left px-3 py-1.5 flex items-center justify-between hover:bg-app-hover transition-colors cursor-pointer ${
-                    theme === 'light' ? 'text-app-accent font-semibold bg-app-accentBg' : 'text-app-text'
-                  }`}
-                >
-                  <div className="flex items-center space-x-2">
-                    <span className="w-2.5 h-2.5 rounded-full bg-blue-600 border border-blue-400" />
-                    <span>Soft Light</span>
-                  </div>
-                  {theme === 'light' && <Check className="w-3.5 h-3.5 text-app-accent" />}
-                </button>
-              </div>
-            )}
-          </div>
 
           {/* Admin Command Portal Button */}
           <button
