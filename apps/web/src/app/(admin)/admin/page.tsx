@@ -34,6 +34,7 @@ export default function AdminPage() {
   const router = useRouter();
 
   const [adminSecret, setAdminSecret] = useState<string>('');
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [activeTab, setActiveTab] = useState<AdminTab>('lifecycle');
   const [checkingAuth, setCheckingAuth] = useState(true);
   const [authError, setAuthError] = useState<string | null>(null);
@@ -57,6 +58,7 @@ export default function AdminPage() {
         const data = await res.json();
         if (res.ok && data.authenticated) {
           setAdminSecret(storedSecret);
+          setIsAuthenticated(true);
         } else {
           sessionStorage.removeItem('admin_secret');
         }
@@ -90,6 +92,8 @@ export default function AdminPage() {
         return;
       }
       sessionStorage.setItem('admin_secret', adminSecret.trim());
+      setAdminSecret(adminSecret.trim());
+      setIsAuthenticated(true);
       setAuthError(null);
     } catch {
       setAuthError('Authentication verification failed');
@@ -101,6 +105,7 @@ export default function AdminPage() {
   const handleLogout = () => {
     sessionStorage.removeItem('admin_secret');
     setAdminSecret('');
+    setIsAuthenticated(false);
     router.push('/');
   };
 
@@ -116,7 +121,7 @@ export default function AdminPage() {
   // =========================================================================
   // ENHANCED ADMIN LOGIN PANEL (OPAQUE CARD, SLEEK NEOMORPHIC UI)
   // =========================================================================
-  if (!adminSecret) {
+  if (!isAuthenticated) {
     return (
       <div className="min-h-screen bg-app-bg text-app-text flex flex-col items-center justify-center p-4 sm:p-6 relative overflow-hidden transition-colors duration-200">
         {/* Ambient atmospheric backdrop glow */}

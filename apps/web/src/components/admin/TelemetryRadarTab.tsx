@@ -28,6 +28,7 @@ interface TelemetryRadarTabProps {
 export function TelemetryRadarTab({ adminSecret }: TelemetryRadarTabProps) {
   const [telemetryRecords, setTelemetryRecords] = useState<StageTelemetry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [telemetryError, setTelemetryError] = useState<string | null>(null);
   const [filterOnlyFlagged, setFilterOnlyFlagged] = useState(false);
   const [search, setSearch] = useState('');
 
@@ -169,7 +170,7 @@ export function TelemetryRadarTab({ adminSecret }: TelemetryRadarTabProps) {
 
   const fetchTelemetry = async () => {
     try {
-      setLoading(true);
+      setTelemetryError(null);
       const { data, error } = await supabase
         .from('stage_telemetry')
         .select(`
@@ -202,106 +203,22 @@ export function TelemetryRadarTab({ adminSecret }: TelemetryRadarTabProps) {
         ...row,
         user: Array.isArray(row.users) ? row.users[0] : row.users,
       }));
-
-      if (formatted.length > 0) {
-        setTelemetryRecords(formatted);
-        return;
-      }
+      setTelemetryRecords(formatted);
     } catch (err) {
-      // Fallback to sample telemetry records for preview
+      console.error('Failed to load telemetry records', err);
+      setTelemetryError('Could not load live telemetry. Check the database connection and permissions.');
+      setTelemetryRecords([]);
+    } finally {
+      setLoading(false);
     }
-
-    setTelemetryRecords([
-      {
-        id: 't-0',
-        user_id: '00000000-0000-0000-0000-000000000001',
-        stage_number: 1,
-        started_at: new Date(Date.now() - 180000).toISOString(),
-        completed_at: new Date(Date.now() - 40000).toISOString(),
-        duration_seconds: 22,
-        tab_switches: 3,
-        fullscreen_exits: 2,
-        flagged_too_fast: true,
-        flag_reason: 'Suspicious Telemetry: Multiple tab switches during active stage',
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-        user: {
-          name: 'Alex Mercer (Contestant)',
-          email: 'alex.mercer@aiclub.org',
-          total_score: 150,
-          current_stage: 1,
-          is_flagged: true,
-        },
-      },
-      {
-        id: 't-1',
-        user_id: 'u-1',
-        stage_number: 1,
-        started_at: new Date(Date.now() - 120000).toISOString(),
-        completed_at: new Date(Date.now() - 102000).toISOString(),
-        duration_seconds: 18,
-        tab_switches: 4,
-        fullscreen_exits: 2,
-        flagged_too_fast: true,
-        flag_reason: 'Speed-Run Alert: Completed Stage 1 in 18s (Admin threshold: 60s)',
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-        user: {
-          name: 'Devin Thorne',
-          email: 'devin@ai-labs.org',
-          total_score: 100,
-          current_stage: 2,
-          is_flagged: true,
-        },
-      },
-      {
-        id: 't-2',
-        user_id: 'u-2',
-        stage_number: 2,
-        started_at: new Date(Date.now() - 360000).toISOString(),
-        completed_at: new Date(Date.now() - 210000).toISOString(),
-        duration_seconds: 150,
-        tab_switches: 1,
-        fullscreen_exits: 0,
-        flagged_too_fast: false,
-        flag_reason: null,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-        user: {
-          name: 'Marcus Vance',
-          email: 'marcus.v@berkeley.edu',
-          total_score: 350,
-          current_stage: 3,
-          is_flagged: false,
-        },
-      },
-      {
-        id: 't-3',
-        user_id: 'u-3',
-        stage_number: 1,
-        started_at: new Date(Date.now() - 600000).toISOString(),
-        completed_at: new Date(Date.now() - 520000).toISOString(),
-        duration_seconds: 80,
-        tab_switches: 0,
-        fullscreen_exits: 0,
-        flagged_too_fast: false,
-        flag_reason: null,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-        user: {
-          name: 'Elena Rostova',
-          email: 'erostova@stanford.edu',
-          total_score: 300,
-          current_stage: 3,
-          is_flagged: false,
-        },
-      },
-    ]);
-    setLoading(false);
   };
 
   useEffect(() => {
     fetchTelemetry();
+
+    // Reconcile missed realtime events and keep the live view fresh if realtime
+    // is unavailable or disconnected.
+    const refreshInterval = window.setInterval(fetchTelemetry, 5000);
 
     // Subscribe to real-time telemetry changes
     const channel = supabase
@@ -316,6 +233,7 @@ export function TelemetryRadarTab({ adminSecret }: TelemetryRadarTabProps) {
       .subscribe();
 
     return () => {
+      window.clearInterval(refreshInterval);
       supabase.removeChannel(channel);
     };
   }, []);
@@ -508,7 +426,7 @@ export function TelemetryRadarTab({ adminSecret }: TelemetryRadarTabProps) {
               ) : filtered.length === 0 ? (
                 <tr>
                   <td colSpan={8} className="py-8 text-center text-slate-500">
-                    No telemetry records found.
+                    {telemetryError || 'No telemetry records found yet.'}
                   </td>
                 </tr>
               ) : (
