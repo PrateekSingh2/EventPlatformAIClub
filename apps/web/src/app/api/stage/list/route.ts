@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyParticipantToken } from '@/lib/auth';
-import { getSupabaseAdmin } from '@/lib/supabase';
+import { getSupabaseAdmin, isSupabaseConfigured } from '@/lib/supabase';
 import { StageManifest } from '@/lib/types';
 
 const DEMO_FALLBACK_STAGES: StageManifest[] = [
@@ -44,25 +44,27 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    try {
-      const supabaseAdmin = getSupabaseAdmin();
-      const { data: dbStages, error: stageErr } = await supabaseAdmin
-        .from('stages')
-        .select('stage_number, title, is_password_protected, allowed_copy_filename, points')
-        .order('stage_number', { ascending: true });
+    if (isSupabaseConfigured) {
+      try {
+        const supabaseAdmin = getSupabaseAdmin();
+        const { data: dbStages, error: stageErr } = await supabaseAdmin
+          .from('stages')
+          .select('stage_number, title, is_password_protected, allowed_copy_filename, points')
+          .order('stage_number', { ascending: true });
 
-      if (!stageErr && dbStages && dbStages.length > 0) {
-        const manifestList: StageManifest[] = (dbStages as any[]).map((s: any) => ({
-          stageNumber: s.stage_number,
-          title: s.title,
-          isPasswordProtected: Boolean(s.is_password_protected),
-          allowedCopyFilename: s.allowed_copy_filename || '',
-          points: s.points || 100,
-        }));
-        return NextResponse.json({ stages: manifestList });
+        if (!stageErr && dbStages && dbStages.length > 0) {
+          const manifestList: StageManifest[] = (dbStages as any[]).map((s: any) => ({
+            stageNumber: s.stage_number,
+            title: s.title,
+            isPasswordProtected: Boolean(s.is_password_protected),
+            allowedCopyFilename: s.allowed_copy_filename || '',
+            points: s.points || 100,
+          }));
+          return NextResponse.json({ stages: manifestList });
+        }
+      } catch {
+        // Supabase connection or table error fallback
       }
-    } catch {
-      // Supabase connection or table error fallback
     }
 
     return NextResponse.json({ stages: DEMO_FALLBACK_STAGES });

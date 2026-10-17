@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyParticipantToken } from '@/lib/auth';
-import { getSupabaseAdmin } from '@/lib/supabase';
+import { getSupabaseAdmin, isSupabaseConfigured } from '@/lib/supabase';
+import { recordLocalTelemetryPing } from '@/lib/local-telemetry';
 
 export async function POST(req: NextRequest) {
   try {
@@ -21,6 +22,19 @@ export async function POST(req: NextRequest) {
     }
 
     const stageNum = Number(stageNumber);
+    if (!Number.isInteger(stageNum) || stageNum < 1) {
+      return NextResponse.json({ ok: false }, { status: 400 });
+    }
+
+    if (!['tab_switch', 'fullscreen_exit', 'multi_monitor_detected'].includes(type)) {
+      return NextResponse.json({ ok: false }, { status: 400 });
+    }
+
+    if (!isSupabaseConfigured) {
+      recordLocalTelemetryPing(user, stageNum, type);
+      return NextResponse.json({ ok: true, storage: 'local-demo' });
+    }
+
     const supabaseAdmin = getSupabaseAdmin();
 
     // Query current telemetry record to increment safely

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyParticipantToken } from '@/lib/auth';
-import { getSupabaseAdmin } from '@/lib/supabase';
+import { getSupabaseAdmin, isSupabaseConfigured } from '@/lib/supabase';
 import { createParticipantDownloadUrl } from '@/lib/storage';
 import { SanitizedQuizQuestion } from '@/lib/types';
 import { getContestSettings } from '@/lib/contest';
@@ -55,14 +55,19 @@ export async function POST(req: NextRequest) {
     }
 
     const stageNum = Number(stageNumber);
-    const supabaseAdmin = getSupabaseAdmin();
-
     // 2. Fetch stage details
-    const { data: stage, error: stageErr } = await supabaseAdmin
-      .from('stages')
-      .select('stage_number, title, storage_path, s3_key, is_password_protected, allowed_copy_filename, points, quiz_questions')
-      .eq('stage_number', stageNum)
-      .single();
+    let stage: any = null;
+    let stageErr: any = null;
+    if (isSupabaseConfigured) {
+      const supabaseAdmin = getSupabaseAdmin();
+      const result = await supabaseAdmin
+        .from('stages')
+        .select('stage_number, title, storage_path, s3_key, is_password_protected, allowed_copy_filename, points, quiz_questions')
+        .eq('stage_number', stageNum)
+        .single();
+      stage = result.data;
+      stageErr = result.error;
+    }
 
     if (stageErr || !stage) {
       // Fallback for local preview & testing with generated demo archives

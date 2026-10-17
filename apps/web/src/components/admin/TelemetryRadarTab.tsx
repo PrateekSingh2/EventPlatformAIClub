@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { supabase } from '@/lib/supabase';
+import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 import { StageTelemetry } from '@/lib/types';
 import {
   Radar,
@@ -171,42 +171,16 @@ export function TelemetryRadarTab({ adminSecret }: TelemetryRadarTabProps) {
   const fetchTelemetry = async () => {
     try {
       setTelemetryError(null);
-      const { data, error } = await supabase
-        .from('stage_telemetry')
-        .select(`
-          id,
-          user_id,
-          stage_number,
-          started_at,
-          completed_at,
-          duration_seconds,
-          tab_switches,
-          fullscreen_exits,
-          multi_monitor_detected,
-          flagged_too_fast,
-          flag_reason,
-          created_at,
-          updated_at,
-          users (
-            name,
-            email,
-            total_score,
-            current_stage,
-            is_flagged
-          )
-        `)
-        .order('updated_at', { ascending: false });
-
-      if (error) throw error;
-
-      const formatted: StageTelemetry[] = (data || []).map((row: any) => ({
-        ...row,
-        user: Array.isArray(row.users) ? row.users[0] : row.users,
-      }));
-      setTelemetryRecords(formatted);
+      const res = await fetch('/api/admin/telemetry', {
+        headers: { 'x-admin-secret': adminSecret },
+        cache: 'no-store',
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to load live telemetry');
+      setTelemetryRecords((data.records || []) as StageTelemetry[]);
     } catch (err) {
       console.error('Failed to load telemetry records', err);
-      setTelemetryError('Could not load live telemetry. Check the database connection and permissions.');
+      setTelemetryError(err instanceof Error ? err.message : 'Could not load live telemetry.');
       setTelemetryRecords([]);
     } finally {
       setLoading(false);
@@ -221,22 +195,24 @@ export function TelemetryRadarTab({ adminSecret }: TelemetryRadarTabProps) {
     const refreshInterval = window.setInterval(fetchTelemetry, 5000);
 
     // Subscribe to real-time telemetry changes
-    const channel = supabase
-      .channel('admin-telemetry-channel')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'stage_telemetry' },
-        () => {
-          fetchTelemetry();
-        }
-      )
-      .subscribe();
+    const channel = isSupabaseConfigured
+      ? supabase
+          .channel('admin-telemetry-channel')
+          .on(
+            'postgres_changes',
+            { event: '*', schema: 'public', table: 'stage_telemetry' },
+            () => {
+              fetchTelemetry();
+            }
+          )
+          .subscribe()
+      : null;
 
     return () => {
       window.clearInterval(refreshInterval);
-      supabase.removeChannel(channel);
+      if (channel) supabase.removeChannel(channel);
     };
-  }, []);
+  }, [adminSecret]);
 
   // Admin action: Clear Flag
   const handleClearFlag = async (telemetryId: string, userId: string) => {
