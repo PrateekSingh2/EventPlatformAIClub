@@ -32,6 +32,7 @@ export function AntiCheatWrapper({
   const [isMultiMonitorViolation, setIsMultiMonitorViolation] = useState(false);
   const [multiMonitorViolationReason, setMultiMonitorViolationReason] = useState<string>('');
   const hasReportedMultiMonitorRef = useRef(false);
+  const isDevToolsDetectedRef = useRef(false);
 
   // Send silent background telemetry beacon
   const sendTelemetryPing = useCallback(
@@ -89,45 +90,108 @@ export function AntiCheatWrapper({
     const screen = window.screen as any;
     const isExtended = Boolean(screen?.isExtended);
 
-    const winX = window.screenX ?? (window as any).screenLeft ?? 0;
-    const winY = window.screenY ?? (window as any).screenTop ?? 0;
+    const winX = window.screenX !== undefined ? window.screenX : (window as any).screenLeft ?? 0;
+    const winY = window.screenY !== undefined ? window.screenY : (window as any).screenTop ?? 0;
     const winW = window.outerWidth;
     const winH = window.outerHeight;
 
     const availLeft = typeof screen.availLeft === 'number' ? screen.availLeft : 0;
     const availTop = typeof screen.availTop === 'number' ? screen.availTop : 0;
-    const availWidth = screen.availWidth || screen.width || window.innerWidth;
-    const availHeight = screen.availHeight || screen.height || window.innerHeight;
+    const screenWidth = screen.width || window.innerWidth;
+    const screenHeight = screen.height || window.innerHeight;
+    const availWidth = screen.availWidth || screenWidth;
+    const availHeight = screen.availHeight || screenHeight;
 
-    // 20px tolerance for native OS window borders, drop-shadows, and DPI scaling
-    const TOLERANCE = 20;
+    // Tolerance for native OS resizing borders (drop-shadows, 8px DWM border)
+    const TOLERANCE = 15;
 
-    // 1. Boundary Check: window dragged across multiple monitors
-    const isOutsideLeft = winX < availLeft - TOLERANCE;
-    const isOutsideRight = winX + winW > availLeft + availWidth + TOLERANCE;
-    const isOutsideTop = winY < availTop - TOLERANCE;
-    const isOutsideBottom = winY + winH > availTop + availHeight + TOLERANCE;
+    // 1. Boundary Check: window dragged across multiple monitors or off-screen
+    // A. Detect if window is placed on a secondary monitor (non-zero availLeft or availTop)
+    const isOnSecondaryMonitor = availLeft !== 0 || availTop !== 0;
+
+    // B. Detect if window boundary extends outside the screen limits
+    const isOutsideLeft = winX < -TOLERANCE;
+    const isOutsideRight = winX + winW > screenWidth + TOLERANCE;
+    const isOutsideTop = winY < -TOLERANCE;
+    const isOutsideBottom = winY + winH > screenHeight + TOLERANCE;
+
+    // C. Detect if window spans multiple monitors (larger than single monitor available space)
     const isSpanningDisplays = winW > availWidth + TOLERANCE || winH > availHeight + TOLERANCE;
 
-    const isDraggedAcrossMonitors =
-      isOutsideLeft || isOutsideRight || isOutsideTop || isOutsideBottom || isSpanningDisplays;
+    // D. Relative boundary check
+    const isRelativeOutside =
+      winX < availLeft - TOLERANCE ||
+      winX + winW > availLeft + availWidth + TOLERANCE ||
+      winY < availTop - TOLERANCE ||
+      winY + winH > availTop + availHeight + TOLERANCE;
 
-    if (isDraggedAcrossMonitors) {
+    // E. Screen Details API: if extended displays are active and window is moved
+    const isExtendedMove = isExtended && (isOnSecondaryMonitor || winX !== 0 || winY !== 0 || isOutsideLeft || isOutsideRight);
+
+    if (
+      isOnSecondaryMonitor ||
+      isOutsideLeft ||
+      isOutsideRight ||
+      isOutsideTop ||
+      isOutsideBottom ||
+      isSpanningDisplays ||
+      isRelativeOutside ||
+      isExtendedMove
+    ) {
       return {
         isViolating: true,
-        reason: isExtended
-          ? 'Window dragged across multiple monitors detected (Screen Details API).'
-          : 'Window boundary violation: browser window dragged outside primary display area.',
+        reason: isExtended || isOnSecondaryMonitor
+          ? 'Multi-display / extended screen drag detected (Screen Details API).'
+          : 'Window boundary anomaly: browser window dragged across or beyond display limits.',
       };
     }
 
     // 2. Detached DevTools Detection Heuristics
-    let devtoolsOpen = false;
+    // A. Persistent getter trigger
+    if (isDevToolsDetectedRef.current) {
+      return {
+        isViolating: true,
+        reason: 'DevTools opened in a detached window.',
+      };
+    }
+
+    // B. Docked DevTools dimension check
+    const widthDiff = window.outerWidth - window.innerWidth;
+    const heightDiff = window.outerHeight - window.innerHeight;
+    const isDocked = widthDiff > 160 || heightDiff > 160;
+    const devtoolsOpen = isDevToolsDetectedRef.current || isDocked;
+    if (isDocked) {
+      return {
+        isViolating: true,
+        reason: 'Developer Tools inspection panel detected.',
+      };
+    }
+
+    // C. Active debugger timing check (triggers when DevTools is open, docked OR detached)
+    const t0 = performance.now();
+    // eslint-disable-next-line no-debugger
+    debugger;
+    const t1 = performance.now();
+    if (t1 - t0 > 100) {
+      isDevToolsDetectedRef.current = true;
+      return {
+        isViolating: true,
+        reason: 'DevTools opened in a detached window (active debugger detected).',
+      };
+    }
+
+    // D. Console getter evaluation test
     try {
       const detector = new Image();
       Object.defineProperty(detector, 'id', {
         get: () => {
-          devtoolsOpen = true;
+          isDevToolsDetectedRef.current = true;
+          setIsMultiMonitorViolation(true);
+          setMultiMonitorViolationReason('DevTools opened in a detached window.');
+          if (!hasReportedMultiMonitorRef.current) {
+            sendTelemetryPing('multi_monitor_detected');
+            hasReportedMultiMonitorRef.current = true;
+          }
           return '';
         },
       });
@@ -136,20 +200,8 @@ export function AntiCheatWrapper({
       // Ignore evaluation errors
     }
 
-    const widthDiff = window.outerWidth - window.innerWidth;
-    const heightDiff = window.outerHeight - window.innerHeight;
-    const isDocked = widthDiff > 160 || heightDiff > 160;
-
-    // If DevTools is open in a detached window (or opened during active arena)
-    if (devtoolsOpen && !isDocked) {
-      return {
-        isViolating: true,
-        reason: 'DevTools opened in a detached window.',
-      };
-    }
-
     return { isViolating: false, reason: '' };
-  }, []);
+  }, [sendTelemetryPing]);
 
   // Continuous monitoring: Screen Details API, window boundary tracking, and detached DevTools
   useEffect(() => {
@@ -170,12 +222,15 @@ export function AntiCheatWrapper({
     // Run initial inspection
     runCheck();
 
-    // Heartbeat check every 750ms to catch detached windows or multi-screen drags
-    const intervalId = setInterval(runCheck, 750);
+    // Responsive heartbeat check every 250ms
+    const intervalId = setInterval(runCheck, 250);
 
     // Event listeners
     window.addEventListener('resize', runCheck);
     window.addEventListener('mousemove', runCheck);
+    window.addEventListener('blur', runCheck);
+    window.addEventListener('focus', runCheck);
+    document.addEventListener('visibilitychange', runCheck);
 
     if (window.screen && (window.screen as any).addEventListener) {
       (window.screen as any).addEventListener('change', runCheck);
@@ -195,6 +250,9 @@ export function AntiCheatWrapper({
       clearInterval(intervalId);
       window.removeEventListener('resize', runCheck);
       window.removeEventListener('mousemove', runCheck);
+      window.removeEventListener('blur', runCheck);
+      window.removeEventListener('focus', runCheck);
+      document.removeEventListener('visibilitychange', runCheck);
       if (window.screen && (window.screen as any).removeEventListener) {
         (window.screen as any).removeEventListener('change', runCheck);
       }
@@ -203,6 +261,7 @@ export function AntiCheatWrapper({
 
   // Handler to clear multi-monitor lock once participant re-aligns to primary display
   const handleResolveMultiMonitor = async () => {
+    isDevToolsDetectedRef.current = false;
     const result = inspectDisplayAndWindowBounds();
     if (!result.isViolating) {
       setIsMultiMonitorViolation(false);
@@ -252,6 +311,12 @@ export function AntiCheatWrapper({
       // 1. Block F12
       if (e.key === 'F12') {
         e.preventDefault();
+        setIsMultiMonitorViolation(true);
+        setMultiMonitorViolationReason('DevTools shortcut attempt detected (F12).');
+        if (!hasReportedMultiMonitorRef.current) {
+          sendTelemetryPing('multi_monitor_detected');
+          hasReportedMultiMonitorRef.current = true;
+        }
         return false;
       }
 
@@ -263,6 +328,12 @@ export function AntiCheatWrapper({
           (e.shiftKey && ['i', 'I', 'j', 'J', 'c', 'C', 'k', 'K'].includes(e.key)))
       ) {
         e.preventDefault();
+        setIsMultiMonitorViolation(true);
+        setMultiMonitorViolationReason('DevTools shortcut attempt detected.');
+        if (!hasReportedMultiMonitorRef.current) {
+          sendTelemetryPing('multi_monitor_detected');
+          hasReportedMultiMonitorRef.current = true;
+        }
         return false;
       }
 
@@ -298,7 +369,7 @@ export function AntiCheatWrapper({
       window.removeEventListener('copy', handleCopy);
       window.removeEventListener('cut', handleCut);
     };
-  }, [isCopyPermitted]);
+  }, [isCopyPermitted, sendTelemetryPing]);
 
   // Combined lock state: active if either multi-monitor violation is detected or fullscreen is exited
   const isBlurredArenaLocked =
