@@ -603,16 +603,6 @@ export function InBrowserIDE({
                   Source
                 </button>
               </div>
-
-              {isPrompt && (
-                <button
-                  onClick={handleCopyPrompt}
-                  className="flex items-center space-x-1.5 px-3 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer bg-emerald-500 text-slate-950 hover:bg-emerald-400 shadow-[0_2px_8px_rgba(16,185,129,0.3)] active:scale-95"
-                >
-                  {copied ? <Check className="w-3.5 h-3.5 text-slate-950" /> : <Copy className="w-3.5 h-3.5 text-slate-950" />}
-                  <span>{copied ? 'Copied!' : 'Copy Prompt'}</span>
-                </button>
-              )}
             </div>
           </div>
 
