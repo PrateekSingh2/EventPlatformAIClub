@@ -117,6 +117,12 @@ export interface StageTelemetry {
   tab_switches: number;
   fullscreen_exits: number;
   multi_monitor_detected?: number;
+  devtools_timing_flags?: number;
+  devtools_probe_latency_ms?: number | null;
+  window_size_discrepancies?: number;
+  password_failed_attempts?: number;
+  password_cooldown_until?: string | null;
+  excessive_password_guesses?: number;
   flagged_too_fast: boolean;
   flag_reason: string | null;
   created_at: string;
@@ -189,7 +195,13 @@ export interface AccessZipResponse {
 export interface TelemetryPingRequest {
   accessToken: string;
   stageNumber: number;
-  type: 'tab_switch' | 'fullscreen_exit' | 'multi_monitor_detected';
+  type:
+    | 'tab_switch'
+    | 'fullscreen_exit'
+    | 'multi_monitor_detected'
+    | 'devtools_timing'
+    | 'window_size_discrepancy';
+  latencyMs?: number;
 }
 
 export interface StageSubmitRequest {

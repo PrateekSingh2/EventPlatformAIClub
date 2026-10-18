@@ -7,6 +7,9 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const { accessToken, stageNumber, type } = body;
+    const latencyMs = Number.isFinite(body.latencyMs)
+      ? Math.min(10000, Math.max(0, Number(body.latencyMs)))
+      : undefined;
 
     if (!accessToken || !stageNumber || !type) {
       return NextResponse.json({ ok: false }, { status: 400 });
@@ -26,12 +29,19 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false }, { status: 400 });
     }
 
-    if (!['tab_switch', 'fullscreen_exit', 'multi_monitor_detected'].includes(type)) {
+    const supportedTypes = [
+      'tab_switch',
+      'fullscreen_exit',
+      'multi_monitor_detected',
+      'devtools_timing',
+      'window_size_discrepancy',
+    ];
+    if (!supportedTypes.includes(type)) {
       return NextResponse.json({ ok: false }, { status: 400 });
     }
 
     if (!isSupabaseConfigured) {
-      recordLocalTelemetryPing(user, stageNum, type);
+      recordLocalTelemetryPing(user, stageNum, type, latencyMs);
       return NextResponse.json({ ok: true, storage: 'local-demo' });
     }
 
@@ -40,7 +50,7 @@ export async function POST(req: NextRequest) {
     // Query current telemetry record to increment safely
     const { data: telemetry } = await supabaseAdmin
       .from('stage_telemetry')
-      .select('id, tab_switches, fullscreen_exits, multi_monitor_detected')
+      .select('id, tab_switches, fullscreen_exits, multi_monitor_detected, devtools_timing_flags, devtools_probe_latency_ms, window_size_discrepancies')
       .eq('user_id', user.id)
       .eq('stage_number', stageNum)
       .maybeSingle();
@@ -57,6 +67,13 @@ export async function POST(req: NextRequest) {
       } else if (type === 'multi_monitor_detected') {
         updates.multi_monitor_detected = ((telemetry as any).multi_monitor_detected || 0) + 1;
         updates.flag_reason = 'Anti-Cheat Alert: Multi-monitor or detached window activity detected';
+      } else if (type === 'devtools_timing') {
+        updates.devtools_timing_flags = ((telemetry as any).devtools_timing_flags || 0) + 1;
+        if (latencyMs !== undefined) updates.devtools_probe_latency_ms = latencyMs;
+        updates.flag_reason = 'Heuristic signal: DevTools console getter was evaluated';
+      } else if (type === 'window_size_discrepancy') {
+        updates.window_size_discrepancies = ((telemetry as any).window_size_discrepancies || 0) + 1;
+        updates.flag_reason = 'Heuristic signal: Browser outer/inner width difference exceeded 160px';
       }
 
       const { error: updateError } = await supabaseAdmin
@@ -65,12 +82,17 @@ export async function POST(req: NextRequest) {
         .eq('id', telemetry.id);
 
       // Fallback in case multi_monitor_detected column is pending DB migration
-      if (updateError && type === 'multi_monitor_detected') {
+      if (updateError && ['multi_monitor_detected', 'devtools_timing', 'window_size_discrepancy'].includes(type)) {
+        const fallbackFlagReason = type === 'multi_monitor_detected'
+          ? 'Anti-Cheat Alert: Multi-monitor or detached window activity detected'
+          : type === 'devtools_timing'
+            ? 'Heuristic signal: DevTools console getter was evaluated'
+            : 'Heuristic signal: Browser outer/inner width difference exceeded 160px';
         await supabaseAdmin
           .from('stage_telemetry')
           .update({
             updated_at: new Date().toISOString(),
-            flag_reason: 'Anti-Cheat Alert: Multi-monitor or detached window activity detected',
+            flag_reason: fallbackFlagReason,
           })
           .eq('id', telemetry.id);
       }
@@ -88,13 +110,29 @@ export async function POST(req: NextRequest) {
         newRecord.multi_monitor_detected = 1;
         newRecord.flag_reason = 'Anti-Cheat Alert: Multi-monitor or detached window activity detected';
       }
+      if (type === 'devtools_timing') {
+        newRecord.devtools_timing_flags = 1;
+        if (latencyMs !== undefined) newRecord.devtools_probe_latency_ms = latencyMs;
+        newRecord.flag_reason = 'Heuristic signal: DevTools console getter was evaluated';
+      }
+      if (type === 'window_size_discrepancy') {
+        newRecord.window_size_discrepancies = 1;
+        newRecord.flag_reason = 'Heuristic signal: Browser outer/inner width difference exceeded 160px';
+      }
 
       const { error: insertError } = await supabaseAdmin
         .from('stage_telemetry')
         .insert(newRecord);
 
-      if (insertError && type === 'multi_monitor_detected') {
+      if (insertError && ['multi_monitor_detected', 'devtools_timing', 'window_size_discrepancy'].includes(type)) {
         delete newRecord.multi_monitor_detected;
+        delete newRecord.devtools_timing_flags;
+        delete newRecord.window_size_discrepancies;
+        newRecord.flag_reason = type === 'multi_monitor_detected'
+          ? 'Anti-Cheat Alert: Multi-monitor or detached window activity detected'
+          : type === 'devtools_timing'
+            ? 'Heuristic signal: DevTools console getter was evaluated'
+            : 'Heuristic signal: Browser outer/inner width difference exceeded 160px';
         await supabaseAdmin.from('stage_telemetry').insert(newRecord);
       }
     }

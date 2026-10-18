@@ -58,8 +58,9 @@ export async function POST(req: NextRequest) {
     // 2. Fetch stage details
     let stage: any = null;
     let stageErr: any = null;
+    let supabaseAdmin: ReturnType<typeof getSupabaseAdmin> | null = null;
     if (isSupabaseConfigured) {
-      const supabaseAdmin = getSupabaseAdmin();
+      supabaseAdmin = getSupabaseAdmin();
       const result = await supabaseAdmin
         .from('stages')
         .select('stage_number, title, storage_path, s3_key, is_password_protected, allowed_copy_filename, points, quiz_questions')
@@ -118,7 +119,7 @@ export async function POST(req: NextRequest) {
 
     // 3. Silently initialize started_at in stage_telemetry with ON CONFLICT DO NOTHING
     // This ensures page refreshes or multiple GET requests do not reset the participant clock
-    const { error: telemetryErr } = await supabaseAdmin
+    const { error: telemetryErr } = await supabaseAdmin!
       .from('stage_telemetry')
       .upsert(
         {

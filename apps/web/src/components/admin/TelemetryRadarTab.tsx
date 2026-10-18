@@ -246,7 +246,10 @@ export function TelemetryRadarTab({ adminSecret }: TelemetryRadarTabProps) {
       rec.flagged_too_fast ||
       rec.tab_switches > 2 ||
       rec.fullscreen_exits > 1 ||
-      ((rec.multi_monitor_detected ?? 0) > 0);
+      ((rec.multi_monitor_detected ?? 0) > 0) ||
+      ((rec.devtools_timing_flags ?? 0) > 0) ||
+      ((rec.window_size_discrepancies ?? 0) > 0) ||
+      ((rec.excessive_password_guesses ?? 0) > 0);
     if (filterOnlyFlagged && !isSuspicious) return false;
 
     if (!search.trim()) return true;
@@ -262,7 +265,10 @@ export function TelemetryRadarTab({ adminSecret }: TelemetryRadarTabProps) {
       r.flagged_too_fast ||
       r.tab_switches > 2 ||
       r.fullscreen_exits > 1 ||
-      ((r.multi_monitor_detected ?? 0) > 0)
+      ((r.multi_monitor_detected ?? 0) > 0) ||
+      ((r.devtools_timing_flags ?? 0) > 0) ||
+      ((r.window_size_discrepancies ?? 0) > 0) ||
+      ((r.excessive_password_guesses ?? 0) > 0)
   ).length;
 
   return (
@@ -387,6 +393,9 @@ export function TelemetryRadarTab({ adminSecret }: TelemetryRadarTabProps) {
                 <th className="px-4 py-3">Tab Switches</th>
                 <th className="px-4 py-3">Fullscreen Exits</th>
                 <th className="px-4 py-3">Multi-Monitor</th>
+                <th className="px-4 py-3">DevTools Probe</th>
+                <th className="px-4 py-3">Window Width Δ</th>
+                <th className="px-4 py-3">Password Guesses</th>
                 <th className="px-4 py-3">Anti-Cheat Status</th>
                 <th className="px-4 py-3 text-right">Actions</th>
               </tr>
@@ -394,24 +403,37 @@ export function TelemetryRadarTab({ adminSecret }: TelemetryRadarTabProps) {
             <tbody className="divide-y divide-slate-800/60 bg-slate-950/60">
               {loading ? (
                 <tr>
-                  <td colSpan={8} className="py-8 text-center text-slate-500">
+                  <td colSpan={11} className="py-8 text-center text-slate-500">
                     <Loader2 className="w-5 h-5 animate-spin mx-auto mb-2 text-rose-400" />
                     Connecting to live telemetry stream...
                   </td>
                 </tr>
               ) : filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="py-8 text-center text-slate-500">
+                  <td colSpan={11} className="py-8 text-center text-slate-500">
                     {telemetryError || 'No telemetry records found yet.'}
                   </td>
                 </tr>
               ) : (
                 filtered.map((rec) => {
+                  const excessivePasswordGuesses = (rec.excessive_password_guesses ?? 0) > 0;
                   const isRedFlag =
                     rec.flagged_too_fast ||
                     rec.tab_switches > 2 ||
                     rec.fullscreen_exits > 1 ||
-                    ((rec.multi_monitor_detected ?? 0) > 0);
+                    ((rec.multi_monitor_detected ?? 0) > 0) ||
+                    ((rec.devtools_timing_flags ?? 0) > 0) ||
+                    ((rec.window_size_discrepancies ?? 0) > 0) ||
+                    excessivePasswordGuesses;
+                  const isHeuristicOnly =
+                    (rec.devtools_timing_flags ?? 0) > 0 ||
+                    (rec.window_size_discrepancies ?? 0) > 0
+                      ? !rec.flagged_too_fast &&
+                        rec.tab_switches <= 2 &&
+                        rec.fullscreen_exits <= 1 &&
+                        (rec.multi_monitor_detected ?? 0) === 0 &&
+                        !excessivePasswordGuesses
+                      : false;
 
                   const isDisqualified =
                     rec.user?.role === 'disqualified' ||
@@ -423,8 +445,10 @@ export function TelemetryRadarTab({ adminSecret }: TelemetryRadarTabProps) {
                       className={`transition-colors ${
                         isDisqualified
                           ? 'bg-rose-950/40 border-l-2 border-l-rose-500'
-                          : isRedFlag
+                          : (isRedFlag && !isHeuristicOnly) || excessivePasswordGuesses
                           ? 'bg-rose-950/20 hover:bg-rose-950/30'
+                          : isHeuristicOnly
+                          ? 'bg-amber-950/10 hover:bg-amber-950/20'
                           : 'hover:bg-slate-900/40'
                         }`}
                     >
@@ -491,6 +515,32 @@ export function TelemetryRadarTab({ adminSecret }: TelemetryRadarTabProps) {
                       </td>
 
                       <td className="px-4 py-3">
+                        <span className={(rec.devtools_timing_flags ?? 0) > 0 ? 'text-amber-400 font-bold' : 'text-slate-400'}>
+                          {rec.devtools_timing_flags ?? 0}
+                          {rec.devtools_probe_latency_ms != null && (
+                            <span className="ml-1 text-[10px] text-slate-500" title="Most recent console getter evaluation latency">
+                              ({Number(rec.devtools_probe_latency_ms).toFixed(1)}ms)
+                            </span>
+                          )}
+                        </span>
+                      </td>
+
+                      <td className="px-4 py-3">
+                        <span className={(rec.window_size_discrepancies ?? 0) > 0 ? 'text-amber-400 font-bold' : 'text-slate-400'}>
+                          {rec.window_size_discrepancies ?? 0}
+                        </span>
+                      </td>
+
+                      <td className="px-4 py-3">
+                        <span className={excessivePasswordGuesses ? 'text-rose-400 font-bold' : 'text-slate-400'}>
+                          {rec.password_failed_attempts ?? 0}
+                        </span>
+                        {excessivePasswordGuesses && (
+                          <span className="ml-1 text-[9px] text-rose-400 font-bold">FLAGGED</span>
+                        )}
+                      </td>
+
+                      <td className="px-4 py-3">
                         {isDisqualified ? (
                           <div className="flex flex-col gap-0.5">
                             <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 bg-rose-950 text-rose-300 border border-rose-500 rounded-full w-fit">
@@ -503,9 +553,9 @@ export function TelemetryRadarTab({ adminSecret }: TelemetryRadarTabProps) {
                           </div>
                         ) : isRedFlag ? (
                           <div className="flex flex-col gap-0.5">
-                            <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 bg-rose-500/20 text-rose-300 border border-rose-500/40 rounded-full w-fit">
+                            <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full w-fit ${isHeuristicOnly && !excessivePasswordGuesses ? 'bg-amber-500/10 text-amber-300 border border-amber-500/30' : 'bg-rose-500/20 text-rose-300 border border-rose-500/40'}`}>
                               <ShieldAlert className="w-3 h-3" />
-                              SUSPICIOUS
+                              {isHeuristicOnly && !excessivePasswordGuesses ? 'REVIEW' : 'SUSPICIOUS'}
                             </span>
                             {rec.flag_reason && (
                               <span className="text-[10px] text-rose-400 font-sans max-w-[200px] truncate" title={rec.flag_reason}>

@@ -57,6 +57,12 @@ export async function GET(req: NextRequest) {
           tab_switches,
           fullscreen_exits,
           multi_monitor_detected,
+          devtools_timing_flags,
+          devtools_probe_latency_ms,
+          window_size_discrepancies,
+          password_failed_attempts,
+          password_cooldown_until,
+          excessive_password_guesses,
           flagged_too_fast,
           flag_reason,
           created_at,
@@ -171,6 +177,11 @@ export async function GET(req: NextRequest) {
       'Tab Switches',
       'Fullscreen Exits',
       'Multi-Monitor Detections',
+      'DevTools Timing Probe Signals',
+      'Latest DevTools Getter Latency (ms)',
+      'Window Width Discrepancies',
+      'Incorrect Password Attempts',
+      'Excessive Password Guess Flags',
       'Flag Reasons',
     ];
 
@@ -191,13 +202,18 @@ export async function GET(req: NextRequest) {
       const tabSwitches = rec.tab_switches ?? 0;
       const fullscreenExits = rec.fullscreen_exits ?? 0;
       const multiMonitorDetections = rec.multi_monitor_detected ?? 0;
+      const devtoolsTimingFlags = rec.devtools_timing_flags ?? 0;
+      const devtoolsProbeLatencyMs = rec.devtools_probe_latency_ms ?? '';
+      const windowSizeDiscrepancies = rec.window_size_discrepancies ?? 0;
+      const passwordFailedAttempts = rec.password_failed_attempts ?? 0;
+      const excessivePasswordGuesses = rec.excessive_password_guesses ?? 0;
 
       let flagReason = rec.flag_reason || '';
       if (!flagReason) {
         if (rec.flagged_too_fast) {
           flagReason = `Flagged: Completed under minimum expected time of ${timeThreshold}`;
-        } else if (tabSwitches > 2 || fullscreenExits > 1 || multiMonitorDetections > 0) {
-          flagReason = `Flagged: Excessive violation beacons (${tabSwitches} tabs, ${fullscreenExits} fullscreen exits, ${multiMonitorDetections} multi-monitor)`;
+        } else if (tabSwitches > 2 || fullscreenExits > 1 || multiMonitorDetections > 0 || devtoolsTimingFlags > 0 || windowSizeDiscrepancies > 0 || excessivePasswordGuesses > 0) {
+          flagReason = `Telemetry (${tabSwitches} tabs, ${fullscreenExits} fullscreen exits, ${multiMonitorDetections} multi-monitor, ${devtoolsTimingFlags} DevTools probes, ${windowSizeDiscrepancies} window-width discrepancies, ${passwordFailedAttempts} incorrect passwords)`;
         } else {
           flagReason = 'Clean';
         }
@@ -213,6 +229,11 @@ export async function GET(req: NextRequest) {
           escapeCsvCell(tabSwitches),
           escapeCsvCell(fullscreenExits),
           escapeCsvCell(multiMonitorDetections),
+          escapeCsvCell(devtoolsTimingFlags),
+          escapeCsvCell(devtoolsProbeLatencyMs),
+          escapeCsvCell(windowSizeDiscrepancies),
+          escapeCsvCell(passwordFailedAttempts),
+          escapeCsvCell(excessivePasswordGuesses),
           escapeCsvCell(flagReason),
         ].join(',')
       );

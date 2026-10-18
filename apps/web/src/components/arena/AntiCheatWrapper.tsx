@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useState, useCallback, useRef } from 'react';
+import { enqueueTelemetryPing, flushOfflineTelemetryQueue } from '@/lib/offline-telemetry-queue';
 import {
   ShieldAlert,
   Maximize2,
@@ -11,58 +12,90 @@ import {
 
 interface AntiCheatWrapperProps {
   children: React.ReactNode;
-  activeFilename: string;
-  allowedCopyFilename: string;
-  activeFileContent?: string;
   accessToken: string;
   stageNumber: number;
 }
 
 export function AntiCheatWrapper({
   children,
-  activeFilename,
-  allowedCopyFilename,
-  activeFileContent,
   accessToken,
   stageNumber,
 }: AntiCheatWrapperProps) {
   const [isFullscreen, setIsFullscreen] = useState(true);
   const [fullscreenWarningDismissed, setFullscreenWarningDismissed] = useState(false);
+  const [showClipboardNotice, setShowClipboardNotice] = useState(false);
+  const clipboardNoticeTimeoutRef = useRef<number | null>(null);
 
   // Multi-Monitor & Window Boundary Violation States
   const [isMultiMonitorViolation, setIsMultiMonitorViolation] = useState(false);
   const [multiMonitorViolationReason, setMultiMonitorViolationReason] = useState<string>('');
   const hasReportedMultiMonitorRef = useRef(false);
-  const isDevToolsDetectedRef = useRef(false);
+  const hasReportedDevToolsTimingRef = useRef(false);
+  const hasReportedWindowSizeRef = useRef(false);
 
   // Window Switching (Alt+Tab / Win+Tab / Focus Loss) States
   const [isWindowSwitchViolation, setIsWindowSwitchViolation] = useState(false);
   const [windowSwitchViolationReason, setWindowSwitchViolationReason] = useState<string>('');
   const lastWindowSwitchTimestampRef = useRef<number>(0);
 
+  const notifyClipboardBlocked = useCallback(() => {
+    setShowClipboardNotice(true);
+    if (clipboardNoticeTimeoutRef.current !== null) {
+      window.clearTimeout(clipboardNoticeTimeoutRef.current);
+    }
+    clipboardNoticeTimeoutRef.current = window.setTimeout(() => {
+      setShowClipboardNotice(false);
+      clipboardNoticeTimeoutRef.current = null;
+    }, 2400);
+  }, []);
+
   // Send silent background telemetry beacon
   const sendTelemetryPing = useCallback(
-    (type: 'tab_switch' | 'fullscreen_exit' | 'multi_monitor_detected') => {
+    (type: 'tab_switch' | 'fullscreen_exit' | 'multi_monitor_detected' | 'devtools_timing' | 'window_size_discrepancy', latencyMs?: number) => {
       if (!accessToken || !stageNumber) return;
-      try {
-        const payload = JSON.stringify({ accessToken, stageNumber, type });
-        if (navigator.sendBeacon) {
-          const blob = new Blob([payload], { type: 'application/json' });
-          navigator.sendBeacon('/api/stage/telemetry-ping', blob);
-        } else {
+      const payload = {
+        accessToken,
+        stageNumber,
+        type,
+        ...(latencyMs === undefined ? {} : { latencyMs }),
+      };
+      void enqueueTelemetryPing(payload)
+        .then(flushOfflineTelemetryQueue)
+        .catch(() => {
+          // If browser storage is unavailable, try a direct delivery while online.
           fetch('/api/stage/telemetry-ping', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: payload,
+            body: JSON.stringify(payload),
             keepalive: true,
           }).catch(() => {});
-        }
-      } catch {
-        // Silent failure to avoid revealing telemetry mechanisms
-      }
+        });
     },
     [accessToken, stageNumber]
   );
+
+  // Flush queued telemetry after reconnect, when the arena becomes visible, and periodically.
+  useEffect(() => {
+    const flush = () => {
+      void flushOfflineTelemetryQueue();
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') flush();
+    };
+    const retryInterval = window.setInterval(flush, 15000);
+
+    window.addEventListener('online', flush);
+    window.addEventListener('pageshow', flush);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    flush();
+
+    return () => {
+      window.clearInterval(retryInterval);
+      window.removeEventListener('online', flush);
+      window.removeEventListener('pageshow', flush);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, []);
 
   // Trigger window switch violation (Alt+Tab / Win+Tab / window blur)
   const triggerWindowSwitchViolation = useCallback(
@@ -81,14 +114,6 @@ export function AntiCheatWrapper({
     [sendTelemetryPing]
   );
 
-  // Check if current active file matches the whitelisted copy filename
-  const isCopyPermitted = React.useMemo(() => {
-    if (!allowedCopyFilename || !activeFilename) return false;
-    const cleanActive = activeFilename.split('/').pop()?.trim().toLowerCase();
-    const cleanAllowed = allowedCopyFilename.trim().toLowerCase();
-    return Boolean(cleanActive && cleanActive === cleanAllowed);
-  }, [activeFilename, allowedCopyFilename]);
-
   // Request fullscreen mode
   const enterFullscreen = async () => {
     try {
@@ -103,7 +128,7 @@ export function AntiCheatWrapper({
     }
   };
 
-  // Inspect Screen Details API (window.screen.isExtended), window boundaries, and detached DevTools
+  // Inspect screen details and window boundaries for multi-display movement.
   const inspectDisplayAndWindowBounds = useCallback((): {
     isViolating: boolean;
     reason: string;
@@ -169,64 +194,10 @@ export function AntiCheatWrapper({
       };
     }
 
-    // 2. Detached DevTools Detection Heuristics
-    // A. Persistent getter trigger
-    if (isDevToolsDetectedRef.current) {
-      return {
-        isViolating: true,
-        reason: 'DevTools opened in a detached window.',
-      };
-    }
-
-    // B. Docked DevTools dimension check
-    const widthDiff = window.outerWidth - window.innerWidth;
-    const heightDiff = window.outerHeight - window.innerHeight;
-    const isDocked = widthDiff > 160 || heightDiff > 160;
-    const devtoolsOpen = isDevToolsDetectedRef.current || isDocked;
-    if (isDocked) {
-      return {
-        isViolating: true,
-        reason: 'Developer Tools inspection panel detected.',
-      };
-    }
-
-    // C. Active debugger timing check (triggers when DevTools is open, docked OR detached)
-    const t0 = performance.now();
-    // eslint-disable-next-line no-debugger
-    debugger;
-    const t1 = performance.now();
-    if (t1 - t0 > 100) {
-      isDevToolsDetectedRef.current = true;
-      return {
-        isViolating: true,
-        reason: 'DevTools opened in a detached window (active debugger detected).',
-      };
-    }
-
-    // D. Console getter evaluation test
-    try {
-      const detector = new Image();
-      Object.defineProperty(detector, 'id', {
-        get: () => {
-          isDevToolsDetectedRef.current = true;
-          setIsMultiMonitorViolation(true);
-          setMultiMonitorViolationReason('DevTools opened in a detached window.');
-          if (!hasReportedMultiMonitorRef.current) {
-            sendTelemetryPing('multi_monitor_detected');
-            hasReportedMultiMonitorRef.current = true;
-          }
-          return '';
-        },
-      });
-      console.debug(detector);
-    } catch {
-      // Ignore evaluation errors
-    }
-
     return { isViolating: false, reason: '' };
   }, [sendTelemetryPing]);
 
-  // Continuous monitoring: Screen Details API, window boundary tracking, and detached DevTools
+  // Continuous monitoring: Screen Details API and window boundary tracking.
   useEffect(() => {
     const runCheck = () => {
       const result = inspectDisplayAndWindowBounds();
@@ -276,6 +247,49 @@ export function AntiCheatWrapper({
     };
   }, [inspectDisplayAndWindowBounds, sendTelemetryPing]);
 
+  // Heuristic DevTools probes. These emit telemetry only; they never lock a participant.
+  useEffect(() => {
+    let probeLoggedAt = performance.now();
+
+    try {
+      const probe: Record<string, unknown> = {};
+      Object.defineProperty(probe, 'devtoolsProbe', {
+        enumerable: true,
+        get: () => {
+          const getterLatencyMs = performance.now() - probeLoggedAt;
+          if (!hasReportedDevToolsTimingRef.current) {
+            hasReportedDevToolsTimingRef.current = true;
+            sendTelemetryPing('devtools_timing', getterLatencyMs);
+          }
+          return `probe evaluated after ${getterLatencyMs.toFixed(1)}ms`;
+        },
+      });
+      probeLoggedAt = performance.now();
+      console.log('[Arena diagnostic probe]', probe);
+    } catch {
+      // Console probing is best-effort and must not affect the arena.
+    }
+
+    const inspectWindowSize = () => {
+      const widthDifference = window.outerWidth - window.innerWidth;
+      if (widthDifference > 160 && !hasReportedWindowSizeRef.current) {
+        hasReportedWindowSizeRef.current = true;
+        sendTelemetryPing('window_size_discrepancy');
+      } else if (widthDifference <= 160) {
+        hasReportedWindowSizeRef.current = false;
+      }
+    };
+
+    inspectWindowSize();
+    const resizeInterval = window.setInterval(inspectWindowSize, 1000);
+    window.addEventListener('resize', inspectWindowSize);
+
+    return () => {
+      window.clearInterval(resizeInterval);
+      window.removeEventListener('resize', inspectWindowSize);
+    };
+  }, [sendTelemetryPing]);
+
   // Window Focus & Switching (Alt+Tab, Win+Tab, Task Switch) Detection
   useEffect(() => {
     const handleWindowBlur = () => {
@@ -299,7 +313,6 @@ export function AntiCheatWrapper({
 
   // Handler to clear multi-monitor lock once participant re-aligns to primary display
   const handleResolveMultiMonitor = async () => {
-    isDevToolsDetectedRef.current = false;
     const result = inspectDisplayAndWindowBounds();
     if (!result.isViolating) {
       setIsMultiMonitorViolation(false);
@@ -388,39 +401,69 @@ export function AntiCheatWrapper({
         triggerWindowSwitchViolation('Operating system task switch key detected (Windows key).');
       }
 
-      // 4. Block Ctrl+C / Cmd+C / Ctrl+X unless copying is authorized on this exact file
+      // 4. Block keyboard copy and cut shortcuts throughout the arena.
       if ((e.ctrlKey || e.metaKey) && (e.key === 'c' || e.key === 'C' || e.key === 'x' || e.key === 'X')) {
-        if (!isCopyPermitted) {
-          e.preventDefault();
-          return false;
-        }
+        e.preventDefault();
+        notifyClipboardBlocked();
+        return false;
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Insert') {
+        e.preventDefault();
+        notifyClipboardBlocked();
+        return false;
+      }
+      if (e.shiftKey && e.key === 'Delete') {
+        e.preventDefault();
+        notifyClipboardBlocked();
+        return false;
       }
     };
 
     const handleCopy = (e: ClipboardEvent) => {
-      if (!isCopyPermitted) {
-        e.preventDefault();
-      }
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      notifyClipboardBlocked();
     };
 
     const handleCut = (e: ClipboardEvent) => {
-      if (!isCopyPermitted) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      notifyClipboardBlocked();
+    };
+
+    const handlePaste = (e: ClipboardEvent) => {
+      const target = e.target;
+      const isPasswordField =
+        target instanceof HTMLInputElement &&
+        (target.type === 'password' || target.dataset.pasteAllowed === 'true');
+
+      if (!isPasswordField) {
         e.preventDefault();
+        e.stopImmediatePropagation();
+        notifyClipboardBlocked();
       }
     };
 
     window.addEventListener('contextmenu', handleContextMenu);
     window.addEventListener('keydown', handleKeyDown);
-    window.addEventListener('copy', handleCopy);
-    window.addEventListener('cut', handleCut);
+    window.addEventListener('copy', handleCopy, true);
+    window.addEventListener('cut', handleCut, true);
+    window.addEventListener('paste', handlePaste, true);
 
     return () => {
       window.removeEventListener('contextmenu', handleContextMenu);
       window.removeEventListener('keydown', handleKeyDown);
-      window.removeEventListener('copy', handleCopy);
-      window.removeEventListener('cut', handleCut);
+      window.removeEventListener('copy', handleCopy, true);
+      window.removeEventListener('cut', handleCut, true);
+      window.removeEventListener('paste', handlePaste, true);
     };
-  }, [isCopyPermitted, sendTelemetryPing, triggerWindowSwitchViolation]);
+  }, [notifyClipboardBlocked, sendTelemetryPing, triggerWindowSwitchViolation]);
+
+  useEffect(() => () => {
+    if (clipboardNoticeTimeoutRef.current !== null) {
+      window.clearTimeout(clipboardNoticeTimeoutRef.current);
+    }
+  }, []);
 
   // Combined lock state: active if either multi-monitor violation, window switch violation, or fullscreen exit
   const isBlurredArenaLocked =
@@ -434,10 +477,20 @@ export function AntiCheatWrapper({
       <div
         className={`w-full h-full transition-all duration-300 ${
           isBlurredArenaLocked ? 'filter blur-xl pointer-events-none' : ''
-        } ${isCopyPermitted ? 'select-allowed' : 'select-lock'}`}
+        } select-lock`}
       >
         {children}
       </div>
+
+      {showClipboardNotice && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed bottom-6 left-1/2 z-[100] -translate-x-1/2 rounded-xl border border-amber-500/40 bg-slate-950/95 px-4 py-3 text-center text-xs font-medium text-amber-200 shadow-2xl backdrop-blur-md"
+        >
+          Copying is disabled. Pasting is disabled except in password fields.
+        </div>
+      )}
 
       {/* 1. Multi-Monitor & Detached Window Blurred Arena Lock Modal */}
       {isMultiMonitorViolation && (
