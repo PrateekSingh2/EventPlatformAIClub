@@ -19,8 +19,6 @@ import {
   Unlock,
   KeyRound,
   Terminal,
-  Copy,
-  Check,
   CheckSquare,
   Square,
   ChevronRight,
@@ -39,6 +37,7 @@ import {
   Maximize2,
   FileQuestion,
   Pause,
+  Check,
   CheckCircle2,
   Megaphone,
   Search,
@@ -97,7 +96,6 @@ export function InBrowserIDE({
   onOpenBroadcastDrawer,
 }: InBrowserIDEProps) {
   const [terminalOpen, setTerminalOpen] = useState(true);
-  const [copied, setCopied] = useState(false);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [sidebarVisible, setSidebarVisible] = useState(true);
@@ -406,19 +404,6 @@ export function InBrowserIDE({
     }, 2500);
   };
 
-  const handleCopyPrompt = async () => {
-    if (!activeFile?.content) return;
-    try {
-      await navigator.clipboard.writeText(activeFile.content);
-      setCopied(true);
-      showToast(`Copied ${activeFile.name} to clipboard`);
-      addLog('success', `Copied authorized prompt content from '${activeFile.name}'`);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      showToast('Clipboard copy failed');
-    }
-  };
-
   // Determine Badge Type
   const getFileBadge = (file: ParsedFile) => {
     if (file.isCopyAllowed) return { label: 'PROMPT', color: 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30' };
@@ -431,11 +416,6 @@ export function InBrowserIDE({
   const getFileIcon = (file: ParsedFile) => {
     return <FileExtensionIcon filename={file.name} className="w-3.5 h-3.5 shrink-0" />;
   };
-
-  const isCopyPermitted =
-    activeFile &&
-    allowedCopyFilename &&
-    activeFile.name.toLowerCase() === allowedCopyFilename.toLowerCase();
 
   // Syntax highlighter for code and directives with high contrast and legible typography
   const renderHighlightedLine = (line: string, filename: string): React.ReactNode => {
@@ -731,23 +711,13 @@ export function InBrowserIDE({
               {lines.length} lines
             </span>
 
-            {isPrompt ? (
-              <button
-                onClick={handleCopyPrompt}
-                className="flex items-center space-x-1.5 px-3 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer bg-emerald-500 text-slate-950 hover:bg-emerald-400 shadow-[0_2px_8px_rgba(16,185,129,0.3)] active:scale-95"
-              >
-                {copied ? <Check className="w-3.5 h-3.5 text-slate-950" /> : <Copy className="w-3.5 h-3.5 text-slate-950" />}
-                <span>{copied ? 'Copied!' : 'Copy Prompt'}</span>
-              </button>
-            ) : (
-              <span
-                className="flex items-center space-x-1 px-1.5 py-0.5 text-slate-500 text-[10px]"
-                title="Anti-cheat: Content copy disabled"
-              >
-                <Lock className="w-2.5 h-2.5" />
-                <span className="hidden sm:inline">Protected</span>
-              </span>
-            )}
+            <span
+              className="flex items-center space-x-1 px-1.5 py-0.5 text-slate-500 text-[10px]"
+              title="Anti-cheat: Content copy disabled"
+            >
+              <Lock className="w-2.5 h-2.5" />
+              <span className="hidden sm:inline">Copy Disabled</span>
+            </span>
           </div>
         </div>
 

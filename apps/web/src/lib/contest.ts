@@ -1,4 +1,4 @@
-import { getSupabaseAdmin, supabase } from './supabase';
+import { getSupabaseAdmin, isSupabaseConfigured, supabase } from './supabase';
 import { ContestSettings, ContestStatus, Contest, Stage } from './types';
 import { generateContestTokenBatch } from './tokens';
 import fs from 'fs';
@@ -82,31 +82,33 @@ function writeLocalCache(settings: ContestSettings): void {
 export async function getContestSettings(): Promise<ContestSettings> {
   const cached = readLocalCache();
 
-  try {
-    const supabaseAdmin = getSupabaseAdmin();
-    const { data, error } = await supabaseAdmin
-      .from('contest_settings')
-      .select('*')
-      .eq('id', 'default')
-      .maybeSingle();
+  if (isSupabaseConfigured) {
+    try {
+      const supabaseAdmin = getSupabaseAdmin();
+      const { data, error } = await supabaseAdmin
+        .from('contest_settings')
+        .select('*')
+        .eq('id', 'default')
+        .maybeSingle();
 
-    if (!error && data) {
-      const state: ContestSettings = {
-        id: data.id || 'default',
-        status: (data.status as ContestStatus) || 'DRAFT',
-        title: data.title || 'AI Club Contest',
-        start_time: data.start_time || null,
-        end_time: data.end_time || null,
-        freeze_time: data.freeze_time || null,
-        updated_by: data.updated_by || 'admin',
-        created_at: data.created_at || new Date().toISOString(),
-        updated_at: data.updated_at || new Date().toISOString(),
-      };
-      writeLocalCache(state);
-      return state;
+      if (!error && data) {
+        const state: ContestSettings = {
+          id: data.id || 'default',
+          status: (data.status as ContestStatus) || 'DRAFT',
+          title: data.title || 'AI Club Contest',
+          start_time: data.start_time || null,
+          end_time: data.end_time || null,
+          freeze_time: data.freeze_time || null,
+          updated_by: data.updated_by || 'admin',
+          created_at: data.created_at || new Date().toISOString(),
+          updated_at: data.updated_at || new Date().toISOString(),
+        };
+        writeLocalCache(state);
+        return state;
+      }
+    } catch {
+      // Supabase unavailable or table not yet migrated, fall back to cache
     }
-  } catch {
-    // Supabase unavailable or table not yet migrated, fall back to cache
   }
 
   if (cached) {
@@ -161,26 +163,28 @@ export async function updateContestSettings(
   };
 
   // 1. Try to persist to Supabase
-  try {
-    const supabaseAdmin = getSupabaseAdmin();
-    const { error } = await supabaseAdmin
-      .from('contest_settings')
-      .upsert({
-        id: 'default',
-        status: updated.status,
-        title: updated.title,
-        start_time: updated.start_time,
-        end_time: updated.end_time,
-        freeze_time: updated.freeze_time,
-        updated_by: updated.updated_by,
-        updated_at: updated.updated_at,
-      });
+  if (isSupabaseConfigured) {
+    try {
+      const supabaseAdmin = getSupabaseAdmin();
+      const { error } = await supabaseAdmin
+        .from('contest_settings')
+        .upsert({
+          id: 'default',
+          status: updated.status,
+          title: updated.title,
+          start_time: updated.start_time,
+          end_time: updated.end_time,
+          freeze_time: updated.freeze_time,
+          updated_by: updated.updated_by,
+          updated_at: updated.updated_at,
+        });
 
-    if (error) {
-      console.warn('[updateContestSettings] Supabase upsert error, falling back to local cache:', error.message);
+      if (error) {
+        console.warn('[updateContestSettings] Supabase upsert error, falling back to local cache:', error.message);
+      }
+    } catch (err: any) {
+      console.warn('[updateContestSettings] Supabase unavailable, cached locally:', err.message);
     }
-  } catch (err: any) {
-    console.warn('[updateContestSettings] Supabase unavailable, cached locally:', err.message);
   }
 
   // 2. Persist to local cache

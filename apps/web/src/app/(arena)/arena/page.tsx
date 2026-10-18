@@ -469,9 +469,6 @@ function ArenaContent() {
       />
 
       <AntiCheatWrapper
-        activeFilename={activeFile?.name || ''}
-        allowedCopyFilename={allowedCopyFilename}
-        activeFileContent={activeFile?.content || ''}
         accessToken={token}
         stageNumber={selectedStageNumber}
       >

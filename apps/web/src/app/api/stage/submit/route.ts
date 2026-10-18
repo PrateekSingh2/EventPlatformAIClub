@@ -3,6 +3,11 @@ import { verifyParticipantToken } from '@/lib/auth';
 import { getSupabaseAdmin } from '@/lib/supabase';
 import { QuizQuestion } from '@/lib/types';
 import { getContestSettings } from '@/lib/contest';
+import {
+  clearPasswordAttemptState,
+  getPasswordAttemptState,
+  registerPasswordFailure,
+} from '@/lib/password-attempts';
 
 export async function POST(req: NextRequest) {
   try {
@@ -54,11 +59,26 @@ export async function POST(req: NextRequest) {
     }
 
     const stageNum = Number(stageNumber);
+    if (!Number.isInteger(stageNum) || stageNum < 1) {
+      return NextResponse.json({ error: 'Invalid stage number' }, { status: 400 });
+    }
     const nextStageNum = stageNum + 1;
     const supabaseAdmin = getSupabaseAdmin();
 
     // 2. Validate Next Stage Password if unlocking via password
+    if (typeof nextStagePassword !== 'string' || !nextStagePassword.trim()) {
+      return NextResponse.json({ success: false, error: 'Stage password is required.' }, { status: 400 });
+    }
     if (nextStagePassword) {
+      const attemptState = await getPasswordAttemptState(user, stageNum);
+      if (attemptState.cooldownSeconds > 0) {
+        return NextResponse.json({
+          success: false,
+          error: `Too many incorrect passwords. Try again in ${attemptState.cooldownSeconds} seconds.`,
+          ...attemptState,
+        }, { status: 429 });
+      }
+
       const cleanPassword = nextStagePassword.trim();
       let isPasswordValid = false;
 
@@ -87,14 +107,27 @@ export async function POST(req: NextRequest) {
       }
 
       if (!isPasswordValid) {
+        const failedAttempt = await registerPasswordFailure(user, stageNum);
+        if (failedAttempt.blocked) {
+          return NextResponse.json({
+            success: false,
+            error: `Too many incorrect passwords. Try again in ${failedAttempt.cooldownSeconds} seconds.`,
+            ...failedAttempt,
+          }, { status: 429 });
+        }
         return NextResponse.json(
           {
             success: false,
-            message: 'Wrong password, try to figure it out once again.',
+            error: failedAttempt.cooldownSeconds > 0
+              ? `Wrong password. Try again in ${failedAttempt.cooldownSeconds} seconds.`
+              : 'Wrong password, try to figure it out once again.',
+            ...failedAttempt,
           },
           { status: 400 }
         );
       }
+
+      await clearPasswordAttemptState(user, stageNum);
     }
 
     // 3. Fetch current stage details including min_expected_seconds

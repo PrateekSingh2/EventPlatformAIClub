@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { extractZipInBrowser } from '@/lib/zip-engine';
 import confetti from 'canvas-confetti';
 import { KeyRound, Eye, EyeOff, X } from 'lucide-react';
@@ -36,6 +36,15 @@ export function UnlockNextStageModal({
   const [validating, setValidating] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [cooldownSeconds, setCooldownSeconds] = useState(0);
+
+  useEffect(() => {
+    if (cooldownSeconds <= 0) return;
+    const timer = window.setInterval(() => {
+      setCooldownSeconds((seconds) => Math.max(0, seconds - 1));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [cooldownSeconds]);
 
   if (!isOpen) return null;
 
@@ -52,6 +61,17 @@ export function UnlockNextStageModal({
     setSuccessMessage(null);
 
     try {
+      const statusRes = await fetch('/api/stage/password-attempt', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ accessToken, stageNumber: currentStageNumber, action: 'status' }),
+      });
+      const statusData = await statusRes.json();
+      if (!statusRes.ok) {
+        setCooldownSeconds(statusData.cooldownSeconds || 0);
+        throw new Error(statusData.error || 'Unable to verify password attempt limit.');
+      }
+
       // 1. Fetch access credentials and presigned download URL for next stage
       const accessRes = await fetch('/api/stage/access-zip', {
         method: 'POST',
@@ -78,8 +98,14 @@ export function UnlockNextStageModal({
       try {
         await extractZipInBrowser(zipBlob, cleanPassword, accessData.allowedCopyFilename);
       } catch (zipErr: any) {
-        setErrorMessage('Invalid stage key. Verification failed.');
-        setValidating(false);
+        const attemptRes = await fetch('/api/stage/password-attempt', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ accessToken, stageNumber: currentStageNumber, action: 'failed' }),
+        });
+        const attemptData = await attemptRes.json();
+        setCooldownSeconds(attemptData.cooldownSeconds || 0);
+        setErrorMessage(attemptData.error || 'Invalid stage key. Verification failed.');
         return;
       }
 
@@ -96,6 +122,10 @@ export function UnlockNextStageModal({
       });
 
       const submitData = await submitRes.json();
+      if (!submitRes.ok || !submitData.success) {
+        setCooldownSeconds(submitData.cooldownSeconds || 0);
+        throw new Error(submitData.error || submitData.message || 'Stage key verification failed.');
+      }
       const pointsAwarded = submitData.scoreAwarded || points;
 
       // 5. Fire celebratory confetti
@@ -180,6 +210,7 @@ export function UnlockNextStageModal({
               <input
                 id={`stage-key-input-${nextStageNumber}`}
                 name="stageKeyPassword"
+                data-paste-allowed="true"
                 type={showPassword ? 'text' : 'password'}
                 value={password}
                 onChange={(e) => {
@@ -188,7 +219,7 @@ export function UnlockNextStageModal({
                 }}
                 placeholder="e.g. cyber2026"
                 autoFocus
-                disabled={validating}
+                disabled={validating || cooldownSeconds > 0}
                 className="w-full bg-app-bg border border-app-border rounded-xl px-3 pr-9 py-2.5 text-xs text-app-text shadow-inner focus:border-app-accent focus:outline-none transition-colors placeholder:text-app-subtext/40 font-mono"
               />
               <button
@@ -216,10 +247,10 @@ export function UnlockNextStageModal({
             </button>
             <button
               type="submit"
-              disabled={validating || !password.trim()}
+              disabled={validating || cooldownSeconds > 0 || !password.trim()}
               className="px-4 py-1.5 rounded-xl bg-app-accent text-app-bg text-xs font-semibold hover:opacity-95 active:scale-[0.98] shadow-sm transition-all cursor-pointer disabled:opacity-50"
             >
-              {validating ? 'Verifying...' : 'Verify & Progress'}
+              {validating ? 'Verifying...' : cooldownSeconds > 0 ? `Retry in ${cooldownSeconds}s` : 'Verify & Progress'}
             </button>
           </div>
         </form>

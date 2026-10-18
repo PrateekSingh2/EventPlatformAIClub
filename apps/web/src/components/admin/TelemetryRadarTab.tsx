@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { supabase } from '@/lib/supabase';
+import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 import { StageTelemetry } from '@/lib/types';
 import {
   Radar,
@@ -28,6 +28,7 @@ interface TelemetryRadarTabProps {
 export function TelemetryRadarTab({ adminSecret }: TelemetryRadarTabProps) {
   const [telemetryRecords, setTelemetryRecords] = useState<StageTelemetry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [telemetryError, setTelemetryError] = useState<string | null>(null);
   const [filterOnlyFlagged, setFilterOnlyFlagged] = useState(false);
   const [search, setSearch] = useState('');
 
@@ -169,155 +170,49 @@ export function TelemetryRadarTab({ adminSecret }: TelemetryRadarTabProps) {
 
   const fetchTelemetry = async () => {
     try {
-      setLoading(true);
-      const { data, error } = await supabase
-        .from('stage_telemetry')
-        .select(`
-          id,
-          user_id,
-          stage_number,
-          started_at,
-          completed_at,
-          duration_seconds,
-          tab_switches,
-          fullscreen_exits,
-          flagged_too_fast,
-          flag_reason,
-          created_at,
-          updated_at,
-          users (
-            name,
-            email,
-            total_score,
-            current_stage,
-            is_flagged
-          )
-        `)
-        .order('updated_at', { ascending: false });
-
-      if (error) throw error;
-
-      const formatted: StageTelemetry[] = (data || []).map((row: any) => ({
-        ...row,
-        user: Array.isArray(row.users) ? row.users[0] : row.users,
-      }));
-
-      if (formatted.length > 0) {
-        setTelemetryRecords(formatted);
-        return;
-      }
+      setTelemetryError(null);
+      const res = await fetch('/api/admin/telemetry', {
+        headers: { 'x-admin-secret': adminSecret },
+        cache: 'no-store',
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to load live telemetry');
+      setTelemetryRecords((data.records || []) as StageTelemetry[]);
     } catch (err) {
-      // Fallback to sample telemetry records for preview
+      console.error('Failed to load telemetry records', err);
+      setTelemetryError(err instanceof Error ? err.message : 'Could not load live telemetry.');
+      setTelemetryRecords([]);
+    } finally {
+      setLoading(false);
     }
-
-    setTelemetryRecords([
-      {
-        id: 't-0',
-        user_id: '00000000-0000-0000-0000-000000000001',
-        stage_number: 1,
-        started_at: new Date(Date.now() - 180000).toISOString(),
-        completed_at: new Date(Date.now() - 40000).toISOString(),
-        duration_seconds: 22,
-        tab_switches: 3,
-        fullscreen_exits: 2,
-        flagged_too_fast: true,
-        flag_reason: 'Suspicious Telemetry: Multiple tab switches during active stage',
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-        user: {
-          name: 'Alex Mercer (Contestant)',
-          email: 'alex.mercer@aiclub.org',
-          total_score: 150,
-          current_stage: 1,
-          is_flagged: true,
-        },
-      },
-      {
-        id: 't-1',
-        user_id: 'u-1',
-        stage_number: 1,
-        started_at: new Date(Date.now() - 120000).toISOString(),
-        completed_at: new Date(Date.now() - 102000).toISOString(),
-        duration_seconds: 18,
-        tab_switches: 4,
-        fullscreen_exits: 2,
-        flagged_too_fast: true,
-        flag_reason: 'Speed-Run Alert: Completed Stage 1 in 18s (Admin threshold: 60s)',
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-        user: {
-          name: 'Devin Thorne',
-          email: 'devin@ai-labs.org',
-          total_score: 100,
-          current_stage: 2,
-          is_flagged: true,
-        },
-      },
-      {
-        id: 't-2',
-        user_id: 'u-2',
-        stage_number: 2,
-        started_at: new Date(Date.now() - 360000).toISOString(),
-        completed_at: new Date(Date.now() - 210000).toISOString(),
-        duration_seconds: 150,
-        tab_switches: 1,
-        fullscreen_exits: 0,
-        flagged_too_fast: false,
-        flag_reason: null,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-        user: {
-          name: 'Marcus Vance',
-          email: 'marcus.v@berkeley.edu',
-          total_score: 350,
-          current_stage: 3,
-          is_flagged: false,
-        },
-      },
-      {
-        id: 't-3',
-        user_id: 'u-3',
-        stage_number: 1,
-        started_at: new Date(Date.now() - 600000).toISOString(),
-        completed_at: new Date(Date.now() - 520000).toISOString(),
-        duration_seconds: 80,
-        tab_switches: 0,
-        fullscreen_exits: 0,
-        flagged_too_fast: false,
-        flag_reason: null,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-        user: {
-          name: 'Elena Rostova',
-          email: 'erostova@stanford.edu',
-          total_score: 300,
-          current_stage: 3,
-          is_flagged: false,
-        },
-      },
-    ]);
-    setLoading(false);
   };
 
   useEffect(() => {
     fetchTelemetry();
 
+    // Reconcile missed realtime events and keep the live view fresh if realtime
+    // is unavailable or disconnected.
+    const refreshInterval = window.setInterval(fetchTelemetry, 5000);
+
     // Subscribe to real-time telemetry changes
-    const channel = supabase
-      .channel('admin-telemetry-channel')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'stage_telemetry' },
-        () => {
-          fetchTelemetry();
-        }
-      )
-      .subscribe();
+    const channel = isSupabaseConfigured
+      ? supabase
+          .channel('admin-telemetry-channel')
+          .on(
+            'postgres_changes',
+            { event: '*', schema: 'public', table: 'stage_telemetry' },
+            () => {
+              fetchTelemetry();
+            }
+          )
+          .subscribe()
+      : null;
 
     return () => {
-      supabase.removeChannel(channel);
+      window.clearInterval(refreshInterval);
+      if (channel) supabase.removeChannel(channel);
     };
-  }, []);
+  }, [adminSecret]);
 
   // Admin action: Clear Flag
   const handleClearFlag = async (telemetryId: string, userId: string) => {
@@ -348,7 +243,13 @@ export function TelemetryRadarTab({ adminSecret }: TelemetryRadarTabProps) {
   // Filter records
   const filtered = telemetryRecords.filter((rec) => {
     const isSuspicious =
-      rec.flagged_too_fast || rec.tab_switches > 2 || rec.fullscreen_exits > 1;
+      rec.flagged_too_fast ||
+      rec.tab_switches > 2 ||
+      rec.fullscreen_exits > 1 ||
+      ((rec.multi_monitor_detected ?? 0) > 0) ||
+      ((rec.devtools_timing_flags ?? 0) > 0) ||
+      ((rec.window_size_discrepancies ?? 0) > 0) ||
+      ((rec.excessive_password_guesses ?? 0) > 0);
     if (filterOnlyFlagged && !isSuspicious) return false;
 
     if (!search.trim()) return true;
@@ -360,7 +261,14 @@ export function TelemetryRadarTab({ adminSecret }: TelemetryRadarTabProps) {
   });
 
   const totalFlagged = telemetryRecords.filter(
-    (r) => r.flagged_too_fast || r.tab_switches > 2 || r.fullscreen_exits > 1
+    (r) =>
+      r.flagged_too_fast ||
+      r.tab_switches > 2 ||
+      r.fullscreen_exits > 1 ||
+      ((r.multi_monitor_detected ?? 0) > 0) ||
+      ((r.devtools_timing_flags ?? 0) > 0) ||
+      ((r.window_size_discrepancies ?? 0) > 0) ||
+      ((r.excessive_password_guesses ?? 0) > 0)
   ).length;
 
   return (
@@ -484,6 +392,10 @@ export function TelemetryRadarTab({ adminSecret }: TelemetryRadarTabProps) {
                 <th className="px-4 py-3">Duration</th>
                 <th className="px-4 py-3">Tab Switches</th>
                 <th className="px-4 py-3">Fullscreen Exits</th>
+                <th className="px-4 py-3">Multi-Monitor</th>
+                <th className="px-4 py-3">DevTools Probe</th>
+                <th className="px-4 py-3">Window Width Δ</th>
+                <th className="px-4 py-3">Password Guesses</th>
                 <th className="px-4 py-3">Anti-Cheat Status</th>
                 <th className="px-4 py-3 text-right">Actions</th>
               </tr>
@@ -491,23 +403,37 @@ export function TelemetryRadarTab({ adminSecret }: TelemetryRadarTabProps) {
             <tbody className="divide-y divide-slate-800/60 bg-slate-950/60">
               {loading ? (
                 <tr>
-                  <td colSpan={7} className="py-8 text-center text-slate-500">
+                  <td colSpan={11} className="py-8 text-center text-slate-500">
                     <Loader2 className="w-5 h-5 animate-spin mx-auto mb-2 text-rose-400" />
                     Connecting to live telemetry stream...
                   </td>
                 </tr>
               ) : filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="py-8 text-center text-slate-500">
-                    No telemetry records found.
+                  <td colSpan={11} className="py-8 text-center text-slate-500">
+                    {telemetryError || 'No telemetry records found yet.'}
                   </td>
                 </tr>
               ) : (
                 filtered.map((rec) => {
+                  const excessivePasswordGuesses = (rec.excessive_password_guesses ?? 0) > 0;
                   const isRedFlag =
                     rec.flagged_too_fast ||
                     rec.tab_switches > 2 ||
-                    rec.fullscreen_exits > 1;
+                    rec.fullscreen_exits > 1 ||
+                    ((rec.multi_monitor_detected ?? 0) > 0) ||
+                    ((rec.devtools_timing_flags ?? 0) > 0) ||
+                    ((rec.window_size_discrepancies ?? 0) > 0) ||
+                    excessivePasswordGuesses;
+                  const isHeuristicOnly =
+                    (rec.devtools_timing_flags ?? 0) > 0 ||
+                    (rec.window_size_discrepancies ?? 0) > 0
+                      ? !rec.flagged_too_fast &&
+                        rec.tab_switches <= 2 &&
+                        rec.fullscreen_exits <= 1 &&
+                        (rec.multi_monitor_detected ?? 0) === 0 &&
+                        !excessivePasswordGuesses
+                      : false;
 
                   const isDisqualified =
                     rec.user?.role === 'disqualified' ||
@@ -519,8 +445,10 @@ export function TelemetryRadarTab({ adminSecret }: TelemetryRadarTabProps) {
                       className={`transition-colors ${
                         isDisqualified
                           ? 'bg-rose-950/40 border-l-2 border-l-rose-500'
-                          : isRedFlag
+                          : (isRedFlag && !isHeuristicOnly) || excessivePasswordGuesses
                           ? 'bg-rose-950/20 hover:bg-rose-950/30'
+                          : isHeuristicOnly
+                          ? 'bg-amber-950/10 hover:bg-amber-950/20'
                           : 'hover:bg-slate-900/40'
                         }`}
                     >
@@ -577,6 +505,42 @@ export function TelemetryRadarTab({ adminSecret }: TelemetryRadarTabProps) {
                       </td>
 
                       <td className="px-4 py-3">
+                        <span
+                          className={
+                            (rec.multi_monitor_detected ?? 0) > 0 ? 'text-rose-400 font-bold' : 'text-slate-400'
+                          }
+                        >
+                          {rec.multi_monitor_detected ?? 0}
+                        </span>
+                      </td>
+
+                      <td className="px-4 py-3">
+                        <span className={(rec.devtools_timing_flags ?? 0) > 0 ? 'text-amber-400 font-bold' : 'text-slate-400'}>
+                          {rec.devtools_timing_flags ?? 0}
+                          {rec.devtools_probe_latency_ms != null && (
+                            <span className="ml-1 text-[10px] text-slate-500" title="Most recent console getter evaluation latency">
+                              ({Number(rec.devtools_probe_latency_ms).toFixed(1)}ms)
+                            </span>
+                          )}
+                        </span>
+                      </td>
+
+                      <td className="px-4 py-3">
+                        <span className={(rec.window_size_discrepancies ?? 0) > 0 ? 'text-amber-400 font-bold' : 'text-slate-400'}>
+                          {rec.window_size_discrepancies ?? 0}
+                        </span>
+                      </td>
+
+                      <td className="px-4 py-3">
+                        <span className={excessivePasswordGuesses ? 'text-rose-400 font-bold' : 'text-slate-400'}>
+                          {rec.password_failed_attempts ?? 0}
+                        </span>
+                        {excessivePasswordGuesses && (
+                          <span className="ml-1 text-[9px] text-rose-400 font-bold">FLAGGED</span>
+                        )}
+                      </td>
+
+                      <td className="px-4 py-3">
                         {isDisqualified ? (
                           <div className="flex flex-col gap-0.5">
                             <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 bg-rose-950 text-rose-300 border border-rose-500 rounded-full w-fit">
@@ -589,9 +553,9 @@ export function TelemetryRadarTab({ adminSecret }: TelemetryRadarTabProps) {
                           </div>
                         ) : isRedFlag ? (
                           <div className="flex flex-col gap-0.5">
-                            <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 bg-rose-500/20 text-rose-300 border border-rose-500/40 rounded-full w-fit">
+                            <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full w-fit ${isHeuristicOnly && !excessivePasswordGuesses ? 'bg-amber-500/10 text-amber-300 border border-amber-500/30' : 'bg-rose-500/20 text-rose-300 border border-rose-500/40'}`}>
                               <ShieldAlert className="w-3 h-3" />
-                              SUSPICIOUS
+                              {isHeuristicOnly && !excessivePasswordGuesses ? 'REVIEW' : 'SUSPICIOUS'}
                             </span>
                             {rec.flag_reason && (
                               <span className="text-[10px] text-rose-400 font-sans max-w-[200px] truncate" title={rec.flag_reason}>
