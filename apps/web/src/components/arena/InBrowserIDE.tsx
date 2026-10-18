@@ -41,6 +41,7 @@ import {
   Pause,
   CheckCircle2,
   Megaphone,
+  Search,
 } from 'lucide-react';
 
 interface InBrowserIDEProps {
@@ -436,17 +437,17 @@ export function InBrowserIDE({
     allowedCopyFilename &&
     activeFile.name.toLowerCase() === allowedCopyFilename.toLowerCase();
 
-  // Syntax highlighter for code and directives
+  // Syntax highlighter for code and directives with high contrast and legible typography
   const renderHighlightedLine = (line: string, filename: string): React.ReactNode => {
     if (!line) return <span>&nbsp;</span>;
 
     const ext = filename.split('.').pop()?.toLowerCase();
 
-    // Python code highlighting
+    // Python code highlighting (High contrast OneDark / TokyoNight palette)
     if (ext === 'py') {
       const trimmed = line.trimStart();
       if (trimmed.startsWith('#')) {
-        return <span className="text-slate-500 italic">{line}</span>;
+        return <span className="text-slate-400 italic font-mono">{line}</span>;
       }
 
       const tokenRegex = /(#[^\n]*)|("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')|(\b(?:def|class|import|from|return|if|elif|else|while|for|in|try|except|finally|with|as|lambda|pass|break|continue|raise|yield|assert|async|await)\b)|(\b(?:True|False|None|self)\b)|(\b\d+(?:\.\d+)?\b)|(\b[A-Za-z_][A-Za-z0-9_]*(?=\s*\())/g;
@@ -460,17 +461,17 @@ export function InBrowserIDE({
         }
         const [full, comment, str, kw, builtin, num, fn] = match;
         if (comment) {
-          elements.push(<span key={match.index} className="text-slate-500 italic">{comment}</span>);
+          elements.push(<span key={match.index} className="text-slate-400 italic font-mono">{comment}</span>);
         } else if (str) {
-          elements.push(<span key={match.index} className="text-emerald-400">{str}</span>);
+          elements.push(<span key={match.index} className="text-emerald-300 font-mono">{str}</span>);
         } else if (kw) {
-          elements.push(<span key={match.index} className="text-purple-400 font-semibold">{kw}</span>);
+          elements.push(<span key={match.index} className="text-purple-400 font-semibold font-mono">{kw}</span>);
         } else if (builtin) {
-          elements.push(<span key={match.index} className="text-sky-400 font-medium">{builtin}</span>);
+          elements.push(<span key={match.index} className="text-sky-300 font-medium font-mono">{builtin}</span>);
         } else if (num) {
-          elements.push(<span key={match.index} className="text-amber-400">{num}</span>);
+          elements.push(<span key={match.index} className="text-amber-300 font-mono">{num}</span>);
         } else if (fn) {
-          elements.push(<span key={match.index} className="text-yellow-300">{fn}</span>);
+          elements.push(<span key={match.index} className="text-yellow-300 font-medium font-mono">{fn}</span>);
         }
         lastIndex = tokenRegex.lastIndex;
       }
@@ -493,13 +494,13 @@ export function InBrowserIDE({
         }
         const [full, key, str, boolNull, num] = match;
         if (key) {
-          elements.push(<span key={match.index} className="text-sky-400 font-medium">{key}</span>);
+          elements.push(<span key={match.index} className="text-sky-300 font-medium font-mono">{key}</span>);
         } else if (str) {
-          elements.push(<span key={match.index} className="text-emerald-400">{str}</span>);
+          elements.push(<span key={match.index} className="text-emerald-300 font-mono">{str}</span>);
         } else if (boolNull) {
-          elements.push(<span key={match.index} className="text-amber-400 font-semibold">{boolNull}</span>);
+          elements.push(<span key={match.index} className="text-amber-300 font-semibold font-mono">{boolNull}</span>);
         } else if (num) {
-          elements.push(<span key={match.index} className="text-amber-400">{num}</span>);
+          elements.push(<span key={match.index} className="text-amber-300 font-mono">{num}</span>);
         }
         lastIndex = tokenRegex.lastIndex;
       }
@@ -509,9 +510,15 @@ export function InBrowserIDE({
       return elements.length > 0 ? elements : line;
     }
 
-    // Prompt & Text Directives highlighting (e.g. ai_prompt.txt, .env, .txt)
-    if (ext === 'txt' || ext === 'prompt' || ext === 'env' || ext === 'sh') {
-      const tokenRegex = /(^[A-Za-z0-9_\-\s]{2,35}:)|(#[^\n]*)|(https?:\/\/[^\s]+)|(\b(?:PASSWORD|DIRECTIVE|STAGE|FLAG|TOKEN|SECRET|KEY|SYSTEM|INSTRUCTION|HINT|TARGET|ANOMALY|MODEL|CLUSTER|[A-Z0-9_]{4,})\b)/gi;
+    // Prompt & Text Directives (e.g. ai_prompt.txt, .env, .txt, .md)
+    if (ext === 'txt' || ext === 'prompt' || ext === 'env' || ext === 'sh' || ext === 'md') {
+      const trimmed = line.trimStart();
+      if (trimmed.startsWith('#')) {
+        return <span className="text-slate-400 italic font-mono">{line}</span>;
+      }
+
+      // Syntax highlight headers, strings, URLs, and key labels WITHOUT ANY BOXES OR BORDERS
+      const tokenRegex = /(^[A-Za-z0-9_\-\s]{2,35}:)|(#[^\n]*)|(https?:\/\/[^\s]+)|("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')|(\b(?:PASSWORD|FLAG|SECRET|TOKEN|KEY)\b)/gi;
       const elements: React.ReactNode[] = [];
       let lastIndex = 0;
       let match;
@@ -520,44 +527,36 @@ export function InBrowserIDE({
         if (match.index > lastIndex) {
           elements.push(line.slice(lastIndex, match.index));
         }
-        const [full, header, comment, url, keyword] = match;
+        const [full, header, comment, url, str, secKey] = match;
         if (header) {
+          // Pure text styling - NO BOX, NO BORDER, NO BACKGROUND PILL
           elements.push(
-            <span
-              key={match.index}
-              className="text-emerald-400 font-bold bg-emerald-500/15 border border-emerald-500/30 px-1 py-0.5 rounded"
-            >
+            <span key={match.index} className="text-emerald-400 font-semibold font-mono">
               {header}
             </span>
           );
         } else if (comment) {
           elements.push(
-            <span
-              key={match.index}
-              className="text-slate-500 italic"
-            >
+            <span key={match.index} className="text-slate-400 italic font-mono">
               {comment}
             </span>
           );
         } else if (url) {
           elements.push(
-            <span
-              key={match.index}
-              className="text-cyan-400 underline"
-            >
+            <span key={match.index} className="text-cyan-400 underline underline-offset-2 hover:text-cyan-300">
               {url}
             </span>
           );
-        } else if (
-          keyword &&
-          /^(PASSWORD|DIRECTIVE|STAGE|FLAG|TOKEN|SECRET|KEY|SYSTEM|INSTRUCTION|HINT|TARGET|ANOMALY)/i.test(keyword)
-        ) {
+        } else if (str) {
           elements.push(
-            <span
-              key={match.index}
-              className="text-amber-400 font-semibold"
-            >
-              {keyword}
+            <span key={match.index} className="text-emerald-300 font-mono">
+              {str}
+            </span>
+          );
+        } else if (secKey) {
+          elements.push(
+            <span key={match.index} className="text-amber-400 font-bold font-mono">
+              {secKey}
             </span>
           );
         } else {
@@ -580,20 +579,36 @@ export function InBrowserIDE({
       return <SheetViewer sheets={file.sheets} filename={file.name} />;
     }
 
+    const isPrompt = allowedCopyFilename && file.name.toLowerCase() === allowedCopyFilename.toLowerCase();
+    const lines = (file.content || '').split('\n');
+
+    // File type label for status bar
+    const fileTypeLabel =
+      file.type === 'markdown'
+        ? 'Markdown'
+        : file.name.endsWith('.py')
+        ? 'Python 3'
+        : file.name.endsWith('.json')
+        ? 'JSON'
+        : isPrompt
+        ? 'AI Prompt Directive'
+        : 'Plain Text';
+
     if (file.type === 'markdown' && markdownMode === 'preview') {
       return (
         <div className="flex-1 flex flex-col h-full bg-app-bg overflow-hidden select-text">
           {/* Markdown Breadcrumb & Mode Switcher */}
-          <div className="h-8 bg-app-surface/85 backdrop-blur-md border-b border-white/[0.08] px-3 flex items-center justify-between text-xs select-none shrink-0 gap-2 font-sans">
+          <div className="h-9 bg-app-surface/90 backdrop-blur-md border-b border-white/[0.08] px-3 flex items-center justify-between text-xs select-none shrink-0 gap-2 font-sans">
             <div className="flex items-center space-x-1.5 min-w-0">
               <Folder className="w-3.5 h-3.5 text-app-subtext shrink-0" />
               <span className="text-app-subtext truncate">Stage {file.stageNumber || selectedStageNumber}</span>
               <span className="text-app-subtext/60">/</span>
               <FileExtensionIcon filename={file.name} className="w-3.5 h-3.5 shrink-0" />
-              <span className="font-semibold text-app-text truncate">{file.name}</span>
-              <span className="text-[10px] text-app-subtext hidden sm:inline">• Markdown Document</span>
+              <span className="font-semibold text-slate-100 truncate">{file.name}</span>
+              <span className="text-[10px] text-slate-400 hidden sm:inline">• Markdown Document</span>
             </div>
-            <div className="flex items-center space-x-1.5 text-xs">
+            <div className="flex items-center space-x-2 text-xs">
+              {/* Preview vs Source Toggle */}
               <div className="flex items-center bg-app-bg/80 border border-white/10 rounded-lg p-0.5 text-[11px] shadow-[inset_0_1px_3px_rgba(0,0,0,0.3)]">
                 <button
                   onClick={() => setMarkdownMode('preview')}
@@ -608,15 +623,54 @@ export function InBrowserIDE({
                   Source
                 </button>
               </div>
+
+              {isPrompt && (
+                <button
+                  onClick={handleCopyPrompt}
+                  className="flex items-center space-x-1.5 px-3 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer bg-emerald-500 text-slate-950 hover:bg-emerald-400 shadow-[0_2px_8px_rgba(16,185,129,0.3)] active:scale-95"
+                >
+                  {copied ? <Check className="w-3.5 h-3.5 text-slate-950" /> : <Copy className="w-3.5 h-3.5 text-slate-950" />}
+                  <span>{copied ? 'Copied!' : 'Copy Prompt'}</span>
+                </button>
+              )}
             </div>
           </div>
-          <div className="flex-1 p-4 sm:p-6 overflow-y-auto">
+
+          {/* Markdown Content Canvas */}
+          <div className="flex-1 p-5 sm:p-7 overflow-y-auto">
             <div
-              className="max-w-3xl mx-auto prose prose-invert prose-headings:text-app-text prose-p:text-app-text prose-pre:bg-app-surface/90 prose-pre:border prose-pre:border-white/10 prose-pre:rounded-xl prose-pre:shadow-lg"
+              className="max-w-4xl mx-auto prose prose-invert prose-headings:text-white prose-h1:text-2xl prose-h1:font-bold prose-h1:border-b prose-h1:border-white/10 prose-h1:pb-2.5 prose-h1:mb-5 prose-h2:text-xl prose-h2:font-bold prose-h2:text-emerald-400 prose-h2:mt-7 prose-h2:mb-3 prose-h3:text-lg prose-h3:font-semibold prose-h3:text-cyan-300 prose-p:text-slate-100 prose-p:text-[14.5px] sm:prose-p:text-[15px] prose-p:leading-relaxed prose-strong:text-white prose-strong:font-bold prose-code:text-cyan-300 prose-code:bg-white/[0.08] prose-code:border prose-code:border-white/10 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-[13px] prose-code:before:content-none prose-code:after:content-none prose-pre:bg-[#16181d] prose-pre:border prose-pre:border-white/10 prose-pre:rounded-xl prose-pre:p-4 prose-pre:shadow-lg prose-pre:text-[13.5px] prose-blockquote:border-l-4 prose-blockquote:border-cyan-500 prose-blockquote:bg-cyan-950/20 prose-blockquote:px-4 prose-blockquote:py-2.5 prose-blockquote:rounded-r-lg prose-blockquote:text-slate-200 prose-blockquote:italic prose-table:border prose-table:border-white/10 prose-th:bg-white/[0.06] prose-th:text-slate-200 prose-th:p-3 prose-td:border-t prose-td:border-white/10 prose-td:p-3 prose-td:text-slate-300"
             >
               <ReactMarkdown remarkPlugins={[remarkGfm]}>
                 {file.content || ''}
               </ReactMarkdown>
+            </div>
+          </div>
+
+          {/* Editor Status Bar */}
+          <div className="h-6 bg-app-surface/90 border-t border-white/[0.08] px-3 flex items-center justify-between text-[11px] text-slate-400 select-none shrink-0 font-mono">
+            <div className="flex items-center space-x-3">
+              <span>Markdown Preview</span>
+              <span className="hidden sm:inline text-slate-600">|</span>
+              <span className="hidden sm:inline">{lines.length} lines</span>
+              <span className="hidden md:inline text-slate-600">|</span>
+              <span className="hidden md:inline">UTF-8</span>
+            </div>
+            <div className="flex items-center space-x-3">
+              <span className="hidden sm:inline font-sans text-[10px] text-slate-400 uppercase tracking-wider font-semibold">
+                {fileTypeLabel}
+              </span>
+              {isPrompt ? (
+                <span className="flex items-center space-x-1 text-emerald-400 font-semibold font-sans text-[10px]">
+                  <Check className="w-3 h-3" />
+                  <span>Copy Allowed</span>
+                </span>
+              ) : (
+                <span className="flex items-center space-x-1 text-slate-500 font-sans text-[10px]">
+                  <Lock className="w-2.5 h-2.5" />
+                  <span>Protected</span>
+                </span>
+              )}
             </div>
           </div>
         </div>
@@ -624,19 +678,16 @@ export function InBrowserIDE({
     }
 
     // Monospace Row-by-Row Code / Text Viewport (Perfect line number alignment)
-    const lines = (file.content || '').split('\n');
-    const isPrompt = allowedCopyFilename && file.name.toLowerCase() === allowedCopyFilename.toLowerCase();
-
     return (
-      <div className="flex-1 flex flex-col h-full bg-app-bg overflow-hidden font-mono text-xs select-text">
+      <div className="flex-1 flex flex-col h-full bg-app-bg overflow-hidden font-mono select-text">
         {/* Editor Toolbar & Breadcrumb */}
-        <div className="h-8 bg-app-surface/85 backdrop-blur-md border-b border-white/[0.08] px-3 flex items-center justify-between text-xs select-none shrink-0 gap-2 font-sans">
+        <div className="h-9 bg-app-surface/90 backdrop-blur-md border-b border-white/[0.08] px-3 flex items-center justify-between text-xs select-none shrink-0 gap-2 font-sans">
           <div className="flex items-center space-x-1.5 min-w-0">
             <Folder className="w-3.5 h-3.5 text-app-subtext shrink-0" />
             <span className="text-app-subtext truncate">Stage {file.stageNumber || selectedStageNumber}</span>
             <span className="text-app-subtext/60">/</span>
             <FileExtensionIcon filename={file.name} className="w-3.5 h-3.5 shrink-0" />
-            <span className="font-semibold text-app-text truncate">{file.name}</span>
+            <span className="font-semibold text-slate-100 truncate">{file.name}</span>
             {isPrompt && (
               <span
                 className="text-[9px] px-1.5 py-0.5 rounded-md font-bold uppercase tracking-wider shrink-0 ml-1 border bg-emerald-500/15 text-emerald-400 border-emerald-500/30"
@@ -669,28 +720,28 @@ export function InBrowserIDE({
               className={`px-2.5 py-0.5 rounded-lg text-[10px] font-medium border transition-all cursor-pointer shadow-[0_2px_6px_rgba(0,0,0,0.15),_inset_0_1px_0_rgba(255,255,255,0.08)] ${
                 wordWrap
                   ? 'bg-app-accentBg text-app-accent border-app-accentBorder'
-                  : 'border-white/10 hover:bg-white/5 text-app-subtext'
+                  : 'border-white/10 hover:bg-white/5 text-slate-400'
               }`}
               title={wordWrap ? 'Word Wrap: ON (Click to disable)' : 'Word Wrap: OFF (Click to enable)'}
             >
               {wordWrap ? 'Wrap: On' : 'Wrap: Off'}
             </button>
 
-            <span className="text-app-subtext/70 hidden sm:inline font-mono text-[11px]">
+            <span className="text-slate-400 hidden sm:inline font-mono text-[11px]">
               {lines.length} lines
             </span>
 
             {isPrompt ? (
               <button
                 onClick={handleCopyPrompt}
-                className="flex items-center space-x-1 px-2.5 py-0.5 rounded-lg text-[11px] font-semibold transition-all cursor-pointer bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 border border-emerald-500/30"
+                className="flex items-center space-x-1.5 px-3 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer bg-emerald-500 text-slate-950 hover:bg-emerald-400 shadow-[0_2px_8px_rgba(16,185,129,0.3)] active:scale-95"
               >
-                {copied ? <Check className="w-3 h-3 text-current" /> : <Copy className="w-3 h-3 text-current" />}
+                {copied ? <Check className="w-3.5 h-3.5 text-slate-950" /> : <Copy className="w-3.5 h-3.5 text-slate-950" />}
                 <span>{copied ? 'Copied!' : 'Copy Prompt'}</span>
               </button>
             ) : (
               <span
-                className="flex items-center space-x-1 px-1.5 py-0.5 text-app-subtext/50 text-[10px]"
+                className="flex items-center space-x-1 px-1.5 py-0.5 text-slate-500 text-[10px]"
                 title="Anti-cheat: Content copy disabled"
               >
                 <Lock className="w-2.5 h-2.5" />
@@ -710,21 +761,23 @@ export function InBrowserIDE({
               <div
                 key={lineNum}
                 onClick={() => setSelectedLine(lineNum)}
-                className={`group flex items-start hover:bg-app-hover/30 transition-colors ${
-                  isSelected ? 'bg-app-accentBg/60 border-l-2 border-app-accent' : 'border-l-2 border-transparent'
+                className={`group flex items-start hover:bg-white/[0.03] transition-colors ${
+                  isSelected ? 'bg-white/[0.05] border-l-2 border-cyan-400' : 'border-l-2 border-transparent'
                 }`}
               >
                 {/* Line Number Gutter */}
                 <div
-                  className="w-12 sm:w-14 shrink-0 pr-3 text-right select-none text-app-subtext/40 group-hover:text-app-subtext border-app-border/40 font-mono text-xs leading-6 border-r tabular-nums cursor-pointer select-none"
+                  className={`w-12 sm:w-14 shrink-0 pr-3 text-right select-none border-r border-white/[0.08] font-mono text-[12px] leading-relaxed sm:leading-[1.75] tabular-nums cursor-pointer transition-colors ${
+                    isSelected ? 'text-cyan-400 font-bold bg-white/[0.04]' : 'text-slate-500 group-hover:text-slate-300'
+                  }`}
                   title={`Line ${lineNum}`}
                 >
                   {lineNum}
                 </div>
 
-                {/* Line Content */}
+                {/* Line Content with Clean Unboxed Text */}
                 <div
-                  className={`pl-4 pr-6 flex-1 text-app-text font-mono text-xs leading-6 min-h-[24px] ${
+                  className={`pl-4 pr-6 flex-1 text-slate-100 font-mono text-[13.5px] sm:text-[14px] leading-relaxed sm:leading-[1.75] min-h-[26px] ${
                     wordWrap ? 'whitespace-pre-wrap break-words' : 'whitespace-pre overflow-x-visible'
                   }`}
                 >
@@ -733,6 +786,33 @@ export function InBrowserIDE({
               </div>
             );
           })}
+        </div>
+
+        {/* Editor Bottom Status Bar */}
+        <div className="h-6 bg-app-surface/90 border-t border-white/[0.08] px-3 flex items-center justify-between text-[11px] text-slate-400 select-none shrink-0 font-mono">
+          <div className="flex items-center space-x-3">
+            <span>Ln {selectedLine || 1}, Col 1</span>
+            <span className="hidden sm:inline text-slate-600">|</span>
+            <span className="hidden sm:inline">{lines.length} lines</span>
+            <span className="hidden md:inline text-slate-600">|</span>
+            <span className="hidden md:inline">UTF-8</span>
+          </div>
+          <div className="flex items-center space-x-3">
+            <span className="hidden sm:inline font-sans text-[10px] text-slate-400 uppercase tracking-wider font-semibold">
+              {fileTypeLabel}
+            </span>
+            {isPrompt ? (
+              <span className="flex items-center space-x-1 text-emerald-400 font-semibold font-sans text-[10px]">
+                <Check className="w-3 h-3" />
+                <span>Copy Allowed</span>
+              </span>
+            ) : (
+              <span className="flex items-center space-x-1 text-slate-500 font-sans text-[10px]">
+                <Lock className="w-2.5 h-2.5" />
+                <span>Protected</span>
+              </span>
+            )}
+          </div>
         </div>
       </div>
     );
@@ -974,7 +1054,7 @@ export function InBrowserIDE({
 
               return (
                 <div key={stage.stageNumber} className="select-none">
-                  {/* Stage Folder Row as a VS Code Tree Link */}
+                  {/* Stage Folder Row as a clean VS Code Tree Link */}
                   <a
                     href={`#stage-${stage.stageNumber}`}
                     onClick={(e) => {
@@ -984,7 +1064,7 @@ export function InBrowserIDE({
                         onSelectStage(stage.stageNumber);
                       }
                     }}
-                    className={`w-full flex items-center justify-between px-2.5 py-1 cursor-pointer transition-colors text-xs select-none no-underline group ${
+                    className={`w-full flex items-center justify-between px-2.5 py-1.5 cursor-pointer transition-colors text-xs select-none no-underline group ${
                       isSelected
                         ? 'bg-[#37373d]/90 text-white font-medium'
                         : 'text-slate-300 hover:bg-white/[0.04] hover:text-white'
@@ -1043,7 +1123,7 @@ export function InBrowserIDE({
                     </div>
                   </a>
 
-                  {/* Expanded Stage Folder Contents (VS Code Indented Tree Branch) */}
+                  {/* Expanded Stage Folder Contents */}
                   {isExpanded && (
                     <div className="py-0.5 space-y-0.5">
                       {!isUnlocked ? (

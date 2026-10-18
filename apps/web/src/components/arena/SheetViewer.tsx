@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { SheetData } from '@/lib/types';
 import { Search, FileSpreadsheet, ArrowUp, ArrowDown } from 'lucide-react';
@@ -14,9 +14,11 @@ interface SheetViewerProps {
 const ROW_H = 28;
 const COL_W = 140;
 const ROWNUM_W = 56;
+const MIN_SPREADSHEET_COLS = 26; // Columns A to Z
+const MIN_SPREADSHEET_ROWS = 100; // Rows 1 to 100
 
 type SortState = { col: number; dir: 'asc' | 'desc' } | null;
-type ActiveCell = { row: number; col: number } | null; // row = ORIGINAL row index
+type ActiveCell = { row: number; col: number } | null; // row = visual row index
 
 // 0 -> 'A', 25 -> 'Z', 26 -> 'AA'
 function getColumnLabel(index: number): string {
@@ -43,24 +45,104 @@ export function SheetViewer({ sheets, filename }: SheetViewerProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [sort, setSort] = useState<SortState>(null);
   const [active, setActive] = useState<ActiveCell>(null);
+  const [columnWidths, setColumnWidths] = useState<Record<number, number>>({});
+  const resizingColRef = useRef<{ colIdx: number; startX: number; startWidth: number } | null>(null);
   const parentRef = useRef<HTMLDivElement>(null);
+  const [containerSize, setContainerSize] = useState<{ width: number; height: number }>({ width: 0, height: 0 });
+
+  useEffect(() => {
+    if (!parentRef.current) return;
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        setContainerSize({
+          width: entry.contentRect.width,
+          height: entry.contentRect.height,
+        });
+      }
+    });
+    observer.observe(parentRef.current);
+    return () => observer.disconnect();
+  }, []);
 
   const activeSheet = sheets?.[activeSheetIndex] || sheets?.[0];
-  const maxCols = activeSheet?.columnCount || 0;
-  const totalWidth = ROWNUM_W + maxCols * COL_W;
+  const actualDataColsCount = activeSheet?.columnCount || 0;
+  const actualDataRowsCount = activeSheet?.data?.length || 0;
 
-  // Optional: if the parser stores formulas, show them (see note below the code)
+  // Calculate total columns: fill at least A-Z, plus enough to cover wide viewports
+  const colsToFillViewport = containerSize.width > 0
+    ? Math.ceil((containerSize.width - ROWNUM_W) / COL_W) + 2
+    : MIN_SPREADSHEET_COLS;
+  const totalCols = useMemo(() => {
+    return Math.max(actualDataColsCount, MIN_SPREADSHEET_COLS, colsToFillViewport);
+  }, [actualDataColsCount, colsToFillViewport]);
+
+  const getColWidth = (colIdx: number) => columnWidths[colIdx] || COL_W;
+
+  const totalWidth = useMemo(() => {
+    let w = ROWNUM_W;
+    for (let i = 0; i < totalCols; i++) {
+      w += getColWidth(i);
+    }
+    return w;
+  }, [totalCols, columnWidths]);
+
+  // Optional: if the parser stores formulas, show them
   const formulas = (activeSheet as (SheetData & { formulas?: unknown[][] }) | undefined)?.formulas;
 
+  // Draggable column width resizer (Excel / Google Sheets style)
+  const handleMouseDownResize = (colIdx: number, e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    resizingColRef.current = {
+      colIdx,
+      startX: e.clientX,
+      startWidth: getColWidth(colIdx),
+    };
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      if (!resizingColRef.current) return;
+      const delta = moveEvent.clientX - resizingColRef.current.startX;
+      const newWidth = Math.max(65, resizingColRef.current.startWidth + delta);
+      setColumnWidths((prev) => ({
+        ...prev,
+        [resizingColRef.current!.colIdx]: newWidth,
+      }));
+    };
+
+    const handleMouseUp = () => {
+      resizingColRef.current = null;
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+  };
+
+  const rowsToFillViewport = containerSize.height > 0
+    ? Math.ceil(containerSize.height / ROW_H) + 10
+    : MIN_SPREADSHEET_ROWS;
+  const minRows = Math.max(MIN_SPREADSHEET_ROWS, rowsToFillViewport);
+
+type CellValue = string | number | boolean | null;
+
   const rows = useMemo(() => {
-    if (!activeSheet?.data) return [];
-    let r = activeSheet.data.map((row, origIdx) => ({ row, origIdx }));
+    if (!activeSheet?.data) {
+      // Return empty padded rows
+      return Array.from({ length: minRows }).map((_, i) => ({
+        row: [] as CellValue[],
+        origIdx: -1,
+      }));
+    }
 
     const q = searchQuery.trim().toLowerCase();
+    let r = activeSheet.data.map((row, origIdx) => ({ row, origIdx }));
+
     if (q) {
       r = r.filter(({ row }) =>
         row.some((cell) => !isEmpty(cell) && String(cell).toLowerCase().includes(q))
       );
+      return r;
     }
 
     if (sort) {
@@ -75,8 +157,18 @@ export function SheetViewer({ sheets, filename }: SheetViewerProps) {
         return compareCells(a, b) * mult;
       });
     }
+
+    // Pad with empty rows to simulate Excel/Google Sheets full canvas
+    if (r.length < minRows) {
+      const padded = [...r];
+      for (let i = r.length; i < minRows; i++) {
+        padded.push({ row: [] as CellValue[], origIdx: -1 });
+      }
+      return padded;
+    }
+
     return r;
-  }, [activeSheet, searchQuery, sort]);
+  }, [activeSheet, searchQuery, sort, minRows]);
 
   const rowVirtualizer = useVirtualizer({
     count: rows.length,
@@ -91,6 +183,7 @@ export function SheetViewer({ sheets, filename }: SheetViewerProps) {
         ? { col, dir: prev.dir === 'asc' ? 'desc' : 'asc' }
         : { col, dir: 'asc' }
     );
+    setActive(null);
     parentRef.current?.scrollTo({ top: 0 });
   };
 
@@ -99,6 +192,7 @@ export function SheetViewer({ sheets, filename }: SheetViewerProps) {
     setSort(null);
     setActive(null);
     setSearchQuery('');
+    setColumnWidths({});
   };
 
   if (!sheets || sheets.length === 0) {
@@ -111,15 +205,19 @@ export function SheetViewer({ sheets, filename }: SheetViewerProps) {
   }
 
   // Formula bar content
-  const activeRaw = active ? activeSheet.data?.[active.row]?.[active.col] : undefined;
-  const activeFormula = active ? formulas?.[active.row]?.[active.col] : undefined;
+  const activeCellVal = active ? rows[active.row]?.row?.[active.col] : undefined;
+  const activeOrigIdx = active ? rows[active.row]?.origIdx : undefined;
+  const activeFormula = (active && activeOrigIdx !== undefined && activeOrigIdx >= 0)
+    ? formulas?.[activeOrigIdx]?.[active.col]
+    : undefined;
+
   let barText = '';
   if (active) {
     if (!isEmpty(activeFormula)) {
       const f = String(activeFormula);
       barText = f.startsWith('=') ? f : `=${f}`;
     } else {
-      barText = isEmpty(activeRaw) ? '' : String(activeRaw);
+      barText = isEmpty(activeCellVal) ? '' : String(activeCellVal);
     }
   }
   const cellName = active ? `${getColumnLabel(active.col)}${active.row + 1}` : '';
@@ -135,7 +233,9 @@ export function SheetViewer({ sheets, filename }: SheetViewerProps) {
           <span className="text-app-border">/</span>
           <span className="text-app-subtext truncate max-w-[100px] sm:max-w-none">{activeSheet.sheetName}</span>
           <span className="px-1.5 py-0.5 ml-1 text-[10px] bg-app-bg text-app-subtext rounded border border-app-border shrink-0">
-            {rows.length.toLocaleString()} rows &bull; {maxCols} cols
+            {searchQuery
+              ? `${rows.filter((r) => r.origIdx >= 0).length.toLocaleString()} matching rows`
+              : `${actualDataRowsCount.toLocaleString()} rows \u2022 ${actualDataColsCount} cols`}
           </span>
         </div>
 
@@ -169,56 +269,71 @@ export function SheetViewer({ sheets, filename }: SheetViewerProps) {
           className="flex-1 min-w-0 px-2 py-1 font-mono bg-app-bg border border-app-border rounded truncate text-app-text"
           title={barText}
         >
-          {barText || <span className="text-app-subtext/60">Select a cell</span>}
+          {barText || <span className="text-app-subtext/60">{active ? '' : 'Select a cell'}</span>}
         </div>
       </div>
 
       {/* Virtualized grid */}
-      <div ref={parentRef} className="flex-1 overflow-auto relative">
+      <div ref={parentRef} className="flex-1 overflow-auto relative bg-app-bg">
         <div style={{ width: totalWidth, minWidth: '100%' }}>
           {/* Sticky header */}
           <div className="sticky top-0 z-20 flex bg-app-surface shadow-xs" style={{ width: totalWidth, height: ROW_H }}>
             <div
-              className="sticky left-0 z-30 shrink-0 flex items-center justify-center bg-app-surface border-b border-r border-app-border text-app-subtext text-xs"
+              className="sticky left-0 z-30 shrink-0 flex items-center justify-center bg-app-surface border-b border-r border-app-border text-slate-400 text-xs font-mono font-semibold"
               style={{ width: ROWNUM_W }}
             >
               #
             </div>
-            {Array.from({ length: maxCols }).map((_, colIdx) => {
+            {Array.from({ length: totalCols }).map((_, colIdx) => {
               const isSorted = sort?.col === colIdx;
+              const colW = getColWidth(colIdx);
               return (
-                <button
+                <div
                   key={colIdx}
-                  onClick={() => toggleSort(colIdx)}
-                  className="shrink-0 flex items-center justify-center gap-1 bg-app-surface border-b border-r border-app-border text-app-subtext hover:text-app-text hover:bg-app-hover text-xs font-semibold uppercase tracking-wider cursor-pointer"
-                  style={{ width: COL_W }}
-                  title="Click to sort"
+                  className="relative shrink-0 flex items-center bg-app-surface border-b border-r border-app-border text-slate-300 hover:text-white hover:bg-app-hover text-xs font-semibold uppercase tracking-wider select-none group"
+                  style={{ width: colW }}
                 >
-                  {getColumnLabel(colIdx)}
-                  {isSorted &&
-                    (sort!.dir === 'asc' ? (
-                      <ArrowUp className="w-3 h-3 text-app-accent" />
-                    ) : (
-                      <ArrowDown className="w-3 h-3 text-app-accent" />
-                    ))}
-                </button>
+                  <button
+                    onClick={() => toggleSort(colIdx)}
+                    className="flex-1 h-full flex items-center justify-center gap-1 cursor-pointer overflow-hidden px-1"
+                    title="Click to sort"
+                  >
+                    <span className="truncate">{getColumnLabel(colIdx)}</span>
+                    {isSorted &&
+                      (sort!.dir === 'asc' ? (
+                        <ArrowUp className="w-3.5 h-3.5 text-app-accent shrink-0" />
+                      ) : (
+                        <ArrowDown className="w-3.5 h-3.5 text-app-accent shrink-0" />
+                      ))}
+                  </button>
+
+                  {/* Excel / Google Sheets Draggable Column Resize Handle */}
+                  <div
+                    onMouseDown={(e) => handleMouseDownResize(colIdx, e)}
+                    className="absolute right-0 top-0 bottom-0 w-2.5 cursor-col-resize hover:bg-cyan-400/70 active:bg-cyan-400 transition-colors z-20 flex items-center justify-center"
+                    title="Drag to resize column width"
+                  >
+                    <div className="w-0.5 h-3.5 bg-white/20 group-hover:bg-cyan-300" />
+                  </div>
+                </div>
               );
             })}
           </div>
 
           {/* Body */}
           {rows.length === 0 ? (
-            <div className="py-12 text-center text-app-subtext italic text-xs">
+            <div className="py-12 text-center text-slate-400 italic text-sm">
               No matching cells found for &quot;{searchQuery}&quot;
             </div>
           ) : (
             <div style={{ height: rowVirtualizer.getTotalSize(), position: 'relative', width: totalWidth }}>
               {rowVirtualizer.getVirtualItems().map((vRow) => {
-                const { row, origIdx } = rows[vRow.index];
+                const rowItem = rows[vRow.index];
+                const rowData = rowItem?.row || [];
                 return (
                   <div
-                    key={origIdx}
-                    className="absolute top-0 left-0 flex hover:bg-app-hover group text-xs"
+                    key={vRow.index}
+                    className="absolute top-0 left-0 flex hover:bg-white/[0.04] group text-[13px]"
                     style={{
                       height: ROW_H,
                       width: totalWidth,
@@ -226,24 +341,25 @@ export function SheetViewer({ sheets, filename }: SheetViewerProps) {
                     }}
                   >
                     <div
-                      className="sticky left-0 z-10 shrink-0 flex items-center justify-center bg-app-surface group-hover:bg-app-hover border-r border-b border-app-border text-app-subtext select-none text-[11px] font-medium"
+                      className="sticky left-0 z-10 shrink-0 flex items-center justify-center bg-app-surface group-hover:bg-app-hover border-r border-b border-app-border text-slate-400 select-none text-xs font-mono font-medium"
                       style={{ width: ROWNUM_W }}
                     >
-                      {origIdx + 1}
+                      {vRow.index + 1}
                     </div>
-                    {Array.from({ length: maxCols }).map((_, colIdx) => {
-                      const cellVal = row[colIdx];
+                    {Array.from({ length: totalCols }).map((_, colIdx) => {
+                      const cellVal = rowData[colIdx];
                       const isHighlighted =
                         q && !isEmpty(cellVal) && String(cellVal).toLowerCase().includes(q);
-                      const isActive = active?.row === origIdx && active?.col === colIdx;
+                      const isActive = active?.row === vRow.index && active?.col === colIdx;
+                      const colW = getColWidth(colIdx);
                       return (
                         <div
                           key={colIdx}
-                          onClick={() => setActive({ row: origIdx, col: colIdx })}
-                          className={`shrink-0 flex items-center px-3 border-r border-b border-app-border/40 truncate cursor-cell ${
-                            isHighlighted ? 'bg-app-accentBg text-app-text font-bold' : 'text-app-text'
-                          } ${isActive ? 'outline outline-2 -outline-offset-2 outline-app-accent' : ''}`}
-                          style={{ width: COL_W }}
+                          onClick={() => setActive({ row: vRow.index, col: colIdx })}
+                          className={`shrink-0 flex items-center px-3 border-r border-b border-app-border/40 truncate cursor-cell transition-colors text-[13px] ${
+                            isHighlighted ? 'bg-app-accentBg text-emerald-300 font-bold' : 'text-slate-100'
+                          } ${isActive ? 'outline outline-2 -outline-offset-2 outline-cyan-400 bg-cyan-950/20' : ''}`}
+                          style={{ width: colW }}
                           title={isEmpty(cellVal) ? '' : String(cellVal)}
                         >
                           <span className="truncate">{isEmpty(cellVal) ? '' : String(cellVal)}</span>
