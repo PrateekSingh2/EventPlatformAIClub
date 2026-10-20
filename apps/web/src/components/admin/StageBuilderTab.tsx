@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { Stage, Contest, PreflightValidationResult } from '@/lib/types';
 import { validateArchiveDecryption } from '@/lib/zip-engine';
 import { downloadTokensFile } from '@/lib/tokens';
+import { supabase } from '@/lib/supabase';
 import {
   Upload,
   Plus,
@@ -225,14 +226,57 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
 
       setUploadProgress('Uploading archive directly to Supabase Storage...');
 
-      const uploadRes = await fetch(presignData.uploadUrl, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/zip' },
-        body: uploadFile,
-      });
+      let uploadSuccess = false;
+      let lastErrMsg = '';
 
-      if (!uploadRes.ok) {
-        throw new Error(`Storage upload failed with status ${uploadRes.status}`);
+      // 1. Primary: Official Supabase Storage SDK uploadToSignedUrl (handles multipart/form-data & tokens)
+      try {
+        const targetPath = presignData.storagePath || presignData.s3Key;
+        const { error: uploadErr } = await supabase.storage
+          .from('stages')
+          .uploadToSignedUrl(targetPath, presignData.token, uploadFile);
+
+        if (!uploadErr) {
+          uploadSuccess = true;
+        } else {
+          lastErrMsg = uploadErr.message;
+        }
+      } catch (sdkErr: any) {
+        lastErrMsg = sdkErr.message || 'SDK upload error';
+      }
+
+      // 2. Fallback: Direct fetch with FormData (standard Supabase storage-api endpoint)
+      if (!uploadSuccess && presignData.uploadUrl) {
+        try {
+          const formData = new FormData();
+          formData.append('', uploadFile);
+          formData.append('cacheControl', '3600');
+
+          const uploadRes = await fetch(presignData.uploadUrl, {
+            method: 'PUT',
+            body: formData,
+          });
+
+          if (uploadRes.ok) {
+            uploadSuccess = true;
+          } else {
+            // 3. Fallback: Raw binary PUT
+            const rawUploadRes = await fetch(presignData.uploadUrl, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/zip' },
+              body: uploadFile,
+            });
+            if (rawUploadRes.ok) {
+              uploadSuccess = true;
+            } else {
+              throw new Error(lastErrMsg || `Storage upload failed with status ${uploadRes.status}`);
+            }
+          }
+        } catch (fetchErr: any) {
+          if (!uploadSuccess) {
+            throw new Error(lastErrMsg || fetchErr.message || 'Storage upload failed');
+          }
+        }
       }
 
       const savedPath = presignData.storagePath || presignData.s3Key;

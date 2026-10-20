@@ -19,7 +19,7 @@ export async function ensureStagesBucketExists(): Promise<void> {
     if (!bucketExists) {
       const { error: createError } = await supabaseAdmin.storage.createBucket(STAGES_BUCKET, {
         public: false,
-        fileSizeLimit: 104857600, // 100MB limit per stage ZIP
+        fileSizeLimit: 52428800, // 50MB limit per stage ZIP
         allowedMimeTypes: ['application/zip', 'application/x-zip-compressed'],
       });
       if (createError) {
@@ -75,7 +75,7 @@ export async function createParticipantDownloadUrl(
   const expiresIn = 60; // 60 seconds
 
   // Clean path in case it was stored with a leading prefix or bucket name
-  const cleanPath = storagePath.replace(/^stages\//, '');
+  const cleanPath = storagePath.replace(/^stages\//, '').replace(/^\/+/, '');
 
   const { data, error } = await supabaseAdmin.storage
     .from(STAGES_BUCKET)
