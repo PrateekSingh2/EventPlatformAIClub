@@ -226,27 +226,36 @@ CREATE OR REPLACE FUNCTION complete_stage_and_award_points(
     p_user_id UUID,
     p_stage_number INT,
     p_points INT,
-    p_is_flagged BOOLEAN
+    p_is_flagged BOOLEAN,
+    p_completed_at TIMESTAMPTZ DEFAULT NULL,
+    p_duration_seconds INT DEFAULT NULL
 )
 RETURNS VOID
 LANGUAGE plpgsql
 SECURITY DEFINER
 AS $$
+DECLARE
+    v_completed_at TIMESTAMPTZ := COALESCE(p_completed_at, NOW());
+    v_duration INT := COALESCE(
+        p_duration_seconds,
+        GREATEST(1, EXTRACT(EPOCH FROM (v_completed_at - (SELECT started_at FROM stage_telemetry WHERE user_id = p_user_id AND stage_number = p_stage_number)))::INT),
+        30
+    );
 BEGIN
-    -- 1. Advance participant stage, add points, update flag status
+    -- 1. Advance participant stage, add points, and set updated_at to exact completion timestamp (leaderboard tie-breaker)
     UPDATE users
     SET 
         total_score = total_score + p_points,
         current_stage = GREATEST(current_stage, p_stage_number + 1),
         is_flagged = is_flagged OR p_is_flagged,
-        updated_at = NOW()
+        updated_at = v_completed_at
     WHERE id = p_user_id;
 
-    -- 2. Seal telemetry record with completion time and computed duration
+    -- 2. Seal telemetry record with exact completion time and computed duration
     UPDATE stage_telemetry
     SET
-        completed_at = NOW(),
-        duration_seconds = EXTRACT(EPOCH FROM (NOW() - started_at))::INT,
+        completed_at = v_completed_at,
+        duration_seconds = v_duration,
         updated_at = NOW()
     WHERE user_id = p_user_id AND stage_number = p_stage_number;
 END;

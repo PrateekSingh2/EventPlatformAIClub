@@ -5,8 +5,12 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { ParsedFile, StageManifest, ContestStatus } from '@/lib/types';
 import { SheetViewer } from './SheetViewer';
+import { subscribeProgressSyncStatus, flushOfflineProgressQueue, ProgressSyncStatus } from '@/lib/offline-progress-queue';
 import { FileExtensionIcon } from './FileIcon';
 import {
+  WifiOff,
+  CloudLightning,
+  Loader2,
   FileText,
   FileSpreadsheet,
   FileCode,
@@ -102,6 +106,33 @@ export function InBrowserIDE({
 
   // Navbar Dropdown States
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+  const [isOnline, setIsOnline] = useState<boolean>(true);
+  const [syncStatus, setSyncStatus] = useState<ProgressSyncStatus>({
+    pendingCount: 0,
+    isSyncing: false,
+  });
+
+  useEffect(() => {
+    setIsOnline(typeof navigator !== 'undefined' ? navigator.onLine : true);
+    const handleOnline = () => {
+      setIsOnline(true);
+      void flushOfflineProgressQueue();
+    };
+    const handleOffline = () => setIsOnline(false);
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    const unsubscribe = subscribeProgressSyncStatus((status) => {
+      setSyncStatus(status);
+    });
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+      unsubscribe();
+    };
+  }, []);
 
   // VS Code Explorer Stage Folders Expansion State
   const [expandedStages, setExpandedStages] = useState<Record<number, boolean>>(() => ({
@@ -875,6 +906,44 @@ export function InBrowserIDE({
               </span>
             ) : null}
           </button>
+
+                    {/* Offline / Progress Beacon Queue Status Indicator */}
+          {(!isOnline || syncStatus.pendingCount > 0 || syncStatus.isSyncing) && (
+            <button
+              onClick={() => flushOfflineProgressQueue()}
+              title={
+                !isOnline
+                  ? `Offline mode: ${syncStatus.pendingCount} completion(s) queued in IndexedDB. Will sync when online.`
+                  : syncStatus.isSyncing
+                  ? 'Syncing offline stage progress to server...'
+                  : `${syncStatus.pendingCount} completion(s) queued. Click to sync now.`
+              }
+              className={`hidden sm:flex items-center space-x-1.5 px-2.5 py-1.5 rounded-xl text-xs font-mono border transition-all cursor-pointer shadow-xs ${
+                !isOnline
+                  ? 'bg-amber-500/10 text-amber-500 border-amber-500/25 hover:bg-amber-500/20'
+                  : syncStatus.isSyncing
+                  ? 'bg-cyan-500/10 text-cyan-400 border-cyan-500/25 animate-pulse'
+                  : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/25 hover:bg-emerald-500/20'
+              }`}
+            >
+              {!isOnline ? (
+                <>
+                  <WifiOff className="w-3.5 h-3.5 shrink-0 text-amber-500" />
+                  <span>Offline {syncStatus.pendingCount > 0 ? `(${syncStatus.pendingCount})` : ''}</span>
+                </>
+              ) : syncStatus.isSyncing ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0 text-cyan-400" />
+                  <span>Syncing...</span>
+                </>
+              ) : (
+                <>
+                  <CloudLightning className="w-3.5 h-3.5 shrink-0 text-emerald-400" />
+                  <span>Sync ({syncStatus.pendingCount})</span>
+                </>
+              )}
+            </button>
+          )}
 
           {/* 3. Leaderboard Simple Logo-like Button */}
           <button

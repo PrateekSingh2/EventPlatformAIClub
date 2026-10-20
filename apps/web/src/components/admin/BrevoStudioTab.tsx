@@ -6,6 +6,9 @@ import {
   Mail,
   Send,
   Eye,
+  Trash2,
+  Search,
+  Copy,
   CheckCircle2,
   AlertCircle,
   Loader2,
@@ -99,6 +102,21 @@ export function BrevoStudioTab({ adminSecret }: BrevoStudioTabProps) {
     errors?: string[];
   } | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  // Dedicated Queue Modal State & Search
+  const [isQueueModalOpen, setIsQueueModalOpen] = useState(false);
+  const [queueSearch, setQueueSearch] = useState('');
+  const [copiedToken, setCopiedToken] = useState<string | null>(null);
+
+  const handleCopyToken = async (tok: string) => {
+    try {
+      await navigator.clipboard.writeText(tok);
+      setCopiedToken(tok);
+      setTimeout(() => setCopiedToken(null), 2000);
+    } catch {
+      // ignore
+    }
+  };
 
   // Batch Recipients Import Dialog State
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
@@ -235,17 +253,8 @@ export function BrevoStudioTab({ adminSecret }: BrevoStudioTabProps) {
         updated_at: new Date().toISOString(),
       }));
 
-      // Merge avoiding duplicate emails
-      setParticipants((prev) => {
-        const emailMap = new Map<string, User>();
-        newUsers.forEach((u) => emailMap.set(u.email, u));
-        prev.forEach((u) => {
-          if (!emailMap.has(u.email)) {
-            emailMap.set(u.email, u);
-          }
-        });
-        return Array.from(emailMap.values());
-      });
+      // Fetch fresh participant roster directly from database to reflect true saved state
+      await fetchUsers();
 
       setImportSuccessMsg(`Successfully imported ${parsedRecipients.length} batch recipient(s) with unique tokens!`);
       setTimeout(() => {
@@ -259,6 +268,44 @@ export function BrevoStudioTab({ adminSecret }: BrevoStudioTabProps) {
       setErrorMessage(err.message || 'Batch import failed');
     } finally {
       setSavingRecipients(false);
+    }
+  };
+
+  const handleDeleteParticipant = async (id: string, name: string) => {
+    if (!window.confirm(`Are you sure you want to remove ${name} from participants?`)) return;
+    try {
+      const res = await fetch('/api/admin/participants', {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-admin-secret': adminSecret,
+        },
+        body: JSON.stringify({ id, adminSecret }),
+      });
+      if (res.ok) {
+        await fetchUsers();
+      }
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Failed to remove participant');
+    }
+  };
+
+  const handleClearAllParticipants = async () => {
+    if (!window.confirm('Are you sure you want to remove ALL participants? This will clear the tournament roster.')) return;
+    try {
+      const res = await fetch('/api/admin/participants', {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-admin-secret': adminSecret,
+        },
+        body: JSON.stringify({ all: true, adminSecret }),
+      });
+      if (res.ok) {
+        await fetchUsers();
+      }
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Failed to clear participants');
     }
   };
 
@@ -338,6 +385,16 @@ export function BrevoStudioTab({ adminSecret }: BrevoStudioTabProps) {
               <span>{participants.length} Recipient{participants.length === 1 ? '' : 's'}</span>
             </span>
 
+            {/* Dedicated Button to See or Remove Existing Participants */}
+            <button
+              onClick={() => setIsQueueModalOpen(true)}
+              className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-amber-300 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 rounded-xl transition-all cursor-pointer shadow-xs"
+              title="See or remove existing added participants in Brevo queue"
+            >
+              <Eye className="w-3.5 h-3.5 text-amber-400" />
+              <span>See / Remove Participants ({participants.length})</span>
+            </button>
+
             {/* Batch Recipient Import Button */}
             <button
               onClick={() => setIsImportModalOpen(true)}
@@ -409,6 +466,68 @@ export function BrevoStudioTab({ adminSecret }: BrevoStudioTabProps) {
         </div>
       </div>
 
+      {/* Recipients Queue Roster Card */}
+      <div className="p-4 sm:p-5 rounded-2xl bg-app-surface border border-app-border space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-slate-800">
+          <div className="flex items-center gap-2">
+            <Users className="w-4 h-4 text-cyan-400" />
+            <h4 className="text-xs font-bold text-white uppercase tracking-wider">
+              Brevo Recipients Queue ({participants.length})
+            </h4>
+          </div>
+          {participants.length > 0 && (
+            <button
+              onClick={handleClearAllParticipants}
+              className="text-[11px] font-semibold text-rose-400 hover:text-rose-300 hover:underline cursor-pointer"
+            >
+              Clear All Recipients
+            </button>
+          )}
+        </div>
+
+        {participants.length === 0 ? (
+          <div className="p-6 text-center text-slate-400 text-xs space-y-1">
+            <p className="font-semibold text-slate-300">No participants queued</p>
+            <p className="text-[11px] text-slate-500">
+              Click &quot;Add / Import Recipients&quot; above to add contestants with their name, email, and token.
+            </p>
+          </div>
+        ) : (
+          <div className="max-h-56 overflow-y-auto rounded-xl border border-slate-800 bg-slate-950">
+            <table className="w-full text-left text-xs font-mono">
+              <thead className="bg-slate-900 border-b border-slate-800 text-slate-400 sticky top-0 text-[10px] uppercase">
+                <tr>
+                  <th className="p-2.5">#</th>
+                  <th className="p-2.5">Name</th>
+                  <th className="p-2.5">Email</th>
+                  <th className="p-2.5">Token</th>
+                  <th className="p-2.5 text-right">Action</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800/60">
+                {participants.map((p, idx) => (
+                  <tr key={p.id || idx} className="hover:bg-slate-900/40">
+                    <td className="p-2.5 text-slate-500 text-[11px]">{idx + 1}</td>
+                    <td className="p-2.5 text-white font-semibold">{p.name}</td>
+                    <td className="p-2.5 text-slate-300">{p.email}</td>
+                    <td className="p-2.5 text-cyan-400 font-bold">{p.access_token}</td>
+                    <td className="p-2.5 text-right">
+                      <button
+                        onClick={() => handleDeleteParticipant(p.id, p.name)}
+                        className="px-2.5 py-1 text-[11px] text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 rounded-lg transition-colors cursor-pointer"
+                        title="Remove participant"
+                      >
+                        Remove
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
       {/* Editor & Preview Split View */}
       <div className="p-4 sm:p-5 rounded-2xl bg-app-surface border border-app-border space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-slate-800">
@@ -458,6 +577,143 @@ export function BrevoStudioTab({ adminSecret }: BrevoStudioTabProps) {
           </div>
         )}
       </div>
+
+      {/* =========================================================================
+          DEDICATED MODAL TO SEE OR REMOVE EXISTING PARTICIPANTS
+         ========================================================================= */}
+      {isQueueModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-150 text-left">
+          <div className="w-full max-w-3xl bg-slate-900 border border-slate-700 rounded-3xl shadow-2xl p-5 sm:p-6 space-y-4 max-h-[90vh] flex flex-col">
+            {/* Header */}
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3 shrink-0">
+              <div className="flex items-center space-x-2.5">
+                <div className="w-8 h-8 rounded-xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400">
+                  <Users className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white tracking-wide">
+                    Existing Brevo Recipients ({participants.length})
+                  </h3>
+                  <p className="text-[11px] text-slate-400">
+                    See, copy tokens, or remove existing participants queued for Brevo SMTP emails
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsQueueModalOpen(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Search and Quick Actions */}
+            <div className="flex items-center justify-between gap-3 shrink-0">
+              <div className="relative flex-1">
+                <input
+                  type="text"
+                  value={queueSearch}
+                  onChange={(e) => setQueueSearch(e.target.value)}
+                  placeholder="Search by name, email, or token..."
+                  className="w-full px-3 py-2 pl-9 text-xs text-white bg-slate-950 border border-slate-800 rounded-xl focus:outline-none focus:border-cyan-400 font-mono"
+                />
+                <Search className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-3" />
+              </div>
+
+              {participants.length > 0 && (
+                <button
+                  onClick={handleClearAllParticipants}
+                  className="px-3 py-2 text-xs font-semibold text-rose-400 hover:text-rose-300 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 rounded-xl transition-all cursor-pointer shrink-0"
+                >
+                  Clear All
+                </button>
+              )}
+            </div>
+
+            {/* Participants Table */}
+            <div className="flex-1 overflow-y-auto rounded-2xl border border-slate-800 bg-slate-950">
+              {participants.length === 0 ? (
+                <div className="p-8 text-center text-slate-400 text-xs space-y-2">
+                  <Users className="w-8 h-8 text-slate-600 mx-auto" />
+                  <p className="font-semibold text-slate-300">No participants currently added</p>
+                  <p className="text-[11px] text-slate-500">
+                    Click &quot;Add / Import Recipients&quot; to add participant records with name, email, and token.
+                  </p>
+                </div>
+              ) : (
+                <table className="w-full text-left text-xs font-mono">
+                  <thead className="bg-slate-900 border-b border-slate-800 text-slate-400 sticky top-0 text-[10px] uppercase">
+                    <tr>
+                      <th className="p-3">#</th>
+                      <th className="p-3">Name</th>
+                      <th className="p-3">Email</th>
+                      <th className="p-3">Unique Token</th>
+                      <th className="p-3 text-right">Remove</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/60">
+                    {participants
+                      .filter((p) => {
+                        if (!queueSearch.trim()) return true;
+                        const q = queueSearch.toLowerCase();
+                        return (
+                          p.name.toLowerCase().includes(q) ||
+                          p.email.toLowerCase().includes(q) ||
+                          p.access_token.toLowerCase().includes(q)
+                        );
+                      })
+                      .map((p, idx) => (
+                        <tr key={p.id || idx} className="hover:bg-slate-900/50 transition-colors">
+                          <td className="p-3 text-slate-500 text-[11px]">{idx + 1}</td>
+                          <td className="p-3 text-white font-semibold">{p.name}</td>
+                          <td className="p-3 text-slate-300">{p.email}</td>
+                          <td className="p-3">
+                            <button
+                              onClick={() => handleCopyToken(p.access_token)}
+                              className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-cyan-950/60 border border-cyan-500/30 text-cyan-300 text-[11px] font-bold hover:bg-cyan-900/60 transition-colors cursor-pointer"
+                              title="Click to copy token"
+                            >
+                              <span>{p.access_token}</span>
+                              {copiedToken === p.access_token ? (
+                                <Check className="w-3 h-3 text-emerald-400" />
+                              ) : (
+                                <Copy className="w-3 h-3 text-cyan-400 opacity-60" />
+                              )}
+                            </button>
+                          </td>
+                          <td className="p-3 text-right">
+                            <button
+                              onClick={() => handleDeleteParticipant(p.id, p.name)}
+                              className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold text-rose-400 hover:text-white bg-rose-500/10 hover:bg-rose-500/30 border border-rose-500/20 rounded-lg transition-all cursor-pointer"
+                              title="Remove this participant from queue"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                              <span>Remove</span>
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="flex items-center justify-between border-t border-slate-800 pt-3 shrink-0 text-xs">
+              <span className="text-slate-400 font-mono text-[11px]">
+                Showing {participants.length} participant{participants.length === 1 ? '' : 's'} queued for dispatch
+              </span>
+              <button
+                type="button"
+                onClick={() => setIsQueueModalOpen(false)}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-slate-950 bg-cyan-400 hover:bg-cyan-300 transition-all cursor-pointer shadow-neon-cyan"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* =========================================================================
           BATCH RECIPIENTS IMPORT DIALOG MODAL

@@ -15,6 +15,8 @@ import { BroadcastAnnouncementModal } from '@/components/arena/BroadcastAnnounce
 import { BroadcastHistoryDrawer } from '@/components/arena/BroadcastHistoryDrawer';
 import { useContestLifecycle } from '@/hooks/useContestLifecycle';
 import { useAdminBroadcasts } from '@/hooks/useAdminBroadcasts';
+import { initializeProgressQueueListeners } from '@/lib/offline-progress-queue';
+import { saveStageArchive, getCachedStageArchive } from '@/lib/stage-cache';
 import { supabase } from '@/lib/supabase';
 import { Loader2, AlertCircle } from 'lucide-react';
 
@@ -49,6 +51,33 @@ function ArenaContent() {
   const tokenParam = searchParams.get('token');
   const [token, setToken] = useState<string>('');
   const [user, setUser] = useState<User | null>(null);
+
+  // Initialize offline progress queue listeners
+  useEffect(() => {
+    const cleanup = initializeProgressQueueListeners();
+    return cleanup;
+  }, []);
+
+  // Refresh user data on leaderboard sync event
+  useEffect(() => {
+    const handleSyncRefresh = () => {
+      if (!token) return;
+      fetch('/api/auth/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token }),
+      })
+        .then((res) => res.json())
+        .then((data) => {
+          if (data.authenticated && data.user) {
+            setUser(data.user);
+          }
+        })
+        .catch(() => {});
+    };
+    window.addEventListener('leaderboard-refresh', handleSyncRefresh);
+    return () => window.removeEventListener('leaderboard-refresh', handleSyncRefresh);
+  }, [token]);
 
   // Contest Lifecycle & Announcements Hooks
   const { contestState, loading: contestLoading, status } = useContestLifecycle();
@@ -191,6 +220,8 @@ function ArenaContent() {
         if (payload?.payload?.userId === user.id) {
           setIsDisqualified(false);
           setDisqualifyReason(null);
+          setPasswordModalError(null);
+          setUser((prev) => (prev ? { ...prev, is_disqualified: false, role: 'participant', is_flagged: false } : prev));
         }
       })
       .subscribe();
@@ -245,14 +276,58 @@ function ArenaContent() {
 
         setAllowedCopyFilename(accessData.allowedCopyFilename || '');
 
-        // Fetch binary archive directly from Supabase Storage into browser RAM
-        const storageRes = await fetch(accessData.downloadUrl);
-        if (!storageRes.ok) {
-          throw new Error('Failed to download stage archive from storage');
-        }
+        // Fetch binary archive directly from Supabase Storage into browser RAM & cache locally
+        let blob: Blob;
+        try {
+          const storageRes = await fetch(accessData.downloadUrl);
+          if (!storageRes.ok) {
+            throw new Error('Failed to download stage archive from storage');
+          }
+          blob = await storageRes.blob();
+          setActiveZipBlob(blob);
+          void saveStageArchive(stageNum, blob, {
+            title: accessData.title,
+            allowedCopyFilename: accessData.allowedCopyFilename,
+          });
 
-        const blob = await storageRes.blob();
-        setActiveZipBlob(blob);
+          // Background prefetch next stage archive so contestants can play uninterrupted even if connection drops
+          if (typeof navigator !== 'undefined' && navigator.onLine) {
+            const nextStageNum = stageNum + 1;
+            void (async () => {
+              try {
+                const cachedNext = await getCachedStageArchive(nextStageNum);
+                if (!cachedNext) {
+                  const nextRes = await fetch('/api/stage/access-zip', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ accessToken: token, stageNumber: nextStageNum }),
+                  });
+                  if (nextRes.ok) {
+                    const nextData = await nextRes.json();
+                    if (nextData.downloadUrl) {
+                      const nextStoreRes = await fetch(nextData.downloadUrl);
+                      if (nextStoreRes.ok) {
+                        const nextBlob = await nextStoreRes.blob();
+                        await saveStageArchive(nextStageNum, nextBlob, {
+                          title: nextData.title,
+                          allowedCopyFilename: nextData.allowedCopyFilename,
+                        });
+                      }
+                    }
+                  }
+                }
+              } catch {}
+            })();
+          }
+        } catch (downloadErr) {
+          const cached = await getCachedStageArchive(stageNum);
+          if (cached?.blob) {
+            blob = cached.blob;
+            setActiveZipBlob(blob);
+          } else {
+            throw downloadErr;
+          }
+        }
 
         // Decompress strictly in memory
         try {
@@ -553,6 +628,7 @@ function ArenaContent() {
           isOpen={isLeaderboardOpen}
           onClose={() => setIsLeaderboardOpen(false)}
           currentUserId={user?.id}
+          currentUserToken={token}
           contestStatus={status}
         />
 

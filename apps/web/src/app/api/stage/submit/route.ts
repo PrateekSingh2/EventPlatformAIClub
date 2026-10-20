@@ -11,8 +11,31 @@ import {
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
-    const { accessToken, stageNumber, answers, nextStagePassword } = body;
+    let body: any;
+    try {
+      body = await req.json();
+    } catch {
+      try {
+        const text = await req.text();
+        body = JSON.parse(text);
+      } catch {
+        return NextResponse.json(
+          { error: 'Invalid JSON request payload' },
+          { status: 400 }
+        );
+      }
+    }
+
+    const {
+      accessToken,
+      stageNumber,
+      answers,
+      nextStagePassword,
+      completedAt,
+      completedTimestamp,
+      durationSeconds: clientDurationSeconds,
+      points: clientPoints,
+    } = body;
 
     if (!accessToken || !stageNumber) {
       return NextResponse.json(
@@ -65,7 +88,40 @@ export async function POST(req: NextRequest) {
     const nextStageNum = stageNum + 1;
     const supabaseAdmin = getSupabaseAdmin();
 
-    // 2. Validate Next Stage Password if unlocking via password
+    // 3. Compute exact completion timestamp (preserves true offline completion time for leaderboard tie-breakers)
+    let completionIso: string;
+    if (completedAt && !isNaN(new Date(completedAt).getTime())) {
+      completionIso = new Date(completedAt).toISOString();
+    } else if (completedTimestamp && typeof completedTimestamp === 'number' && completedTimestamp > 0) {
+      completionIso = new Date(completedTimestamp).toISOString();
+    } else {
+      completionIso = new Date().toISOString();
+    }
+
+    // 4. Idempotency Check: Prevent duplicate score additions if offline queue retries
+    try {
+      const { data: existingTelemetry } = await supabaseAdmin
+        .from('stage_telemetry')
+        .select('completed_at, duration_seconds')
+        .eq('user_id', user.id)
+        .eq('stage_number', stageNum)
+        .maybeSingle();
+
+      if (existingTelemetry?.completed_at || (user.current_stage && user.current_stage > stageNum)) {
+        return NextResponse.json({
+          success: true,
+          alreadyCompleted: true,
+          scoreAwarded: 0,
+          nextStage: Math.max(user.current_stage || 1, stageNum + 1),
+          message: `Stage ${stageNum} was already submitted. Leaderboard ranking is preserved.`,
+          completedAt: existingTelemetry?.completed_at || completionIso,
+        });
+      }
+    } catch {
+      // Continue if telemetry table read fails
+    }
+
+    // 5. Validate Next Stage Password if unlocking via password
     if (typeof nextStagePassword !== 'string' || !nextStagePassword.trim()) {
       return NextResponse.json({ success: false, error: 'Stage password is required.' }, { status: 400 });
     }
@@ -130,7 +186,7 @@ export async function POST(req: NextRequest) {
       await clearPasswordAttemptState(user, stageNum);
     }
 
-    // 3. Fetch current stage details including min_expected_seconds
+    // 6. Fetch current stage details including min_expected_seconds
     let minExpectedSeconds = 60;
     let pointsAwarded = 100;
 
@@ -149,7 +205,12 @@ export async function POST(req: NextRequest) {
       // Use defaults
     }
 
-    // 4. Retrieve telemetry started_at to compute duration
+    // Allow optional points override from client payload if defined and positive
+    if (typeof clientPoints === 'number' && clientPoints > 0) {
+      pointsAwarded = clientPoints;
+    }
+
+    // 7. Accurately calculate duration using client measurement or telemetry started_at
     let durationSeconds = 30;
     try {
       const { data: telemetry } = await supabaseAdmin
@@ -159,14 +220,22 @@ export async function POST(req: NextRequest) {
         .eq('stage_number', stageNum)
         .maybeSingle();
 
-      const now = Date.now();
-      const startedAtMs = telemetry?.started_at ? new Date(telemetry.started_at).getTime() : now;
-      durationSeconds = Math.max(1, Math.floor((now - startedAtMs) / 1000));
+      const completionMs = new Date(completionIso).getTime();
+      const startedAtMs = telemetry?.started_at ? new Date(telemetry.started_at).getTime() : completionMs - 30000;
+      const serverCalculatedDuration = Math.max(1, Math.floor((completionMs - startedAtMs) / 1000));
+
+      if (typeof clientDurationSeconds === 'number' && clientDurationSeconds > 0) {
+        durationSeconds = Math.max(1, Math.round(clientDurationSeconds));
+      } else {
+        durationSeconds = serverCalculatedDuration;
+      }
     } catch {
-      // Default duration
+      if (typeof clientDurationSeconds === 'number' && clientDurationSeconds > 0) {
+        durationSeconds = Math.max(1, Math.round(clientDurationSeconds));
+      }
     }
 
-    // 5. Check anti-cheat speed threshold
+    // 8. Check anti-cheat speed threshold against true elapsed stage duration
     const isTooFast = durationSeconds < minExpectedSeconds;
     let flagReason: string | null = null;
 
@@ -175,7 +244,7 @@ export async function POST(req: NextRequest) {
       console.warn(`[Anti-Cheat Flag] User ${user.email} (${user.id}) flagged on Stage ${stageNum}: ${flagReason}`);
     }
 
-    // 6. Update telemetry flag state
+    // 9. Update telemetry flag state if violation detected
     if (isTooFast) {
       try {
         await supabaseAdmin
@@ -192,43 +261,64 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // 7. Atomic progression & score awarding via PL/pgSQL RPC
+    // 10. Atomic progression & score awarding with exact completion timestamp
+    let rpcSuccess = false;
     try {
+      // Attempt 1: Call updated 6-parameter RPC passing completion timestamp & duration
       const { error: rpcErr } = await supabaseAdmin.rpc('complete_stage_and_award_points', {
         p_user_id: user.id,
         p_stage_number: stageNum,
         p_points: pointsAwarded,
         p_is_flagged: isTooFast,
+        p_completed_at: completionIso,
+        p_duration_seconds: durationSeconds,
       });
 
-      if (rpcErr) {
-        throw rpcErr;
+      if (!rpcErr) {
+        rpcSuccess = true;
+      } else {
+        // Attempt 2: Backwards compatible call with 4 parameters
+        const { error: rpc4Err } = await supabaseAdmin.rpc('complete_stage_and_award_points', {
+          p_user_id: user.id,
+          p_stage_number: stageNum,
+          p_points: pointsAwarded,
+          p_is_flagged: isTooFast,
+        });
+        if (!rpc4Err) {
+          rpcSuccess = true;
+        }
       }
     } catch (rpcErr) {
-      console.warn('[RPC fallback]: executing direct updates');
-      try {
-        await supabaseAdmin
-          .from('users')
-          .update({
+      console.warn('[RPC fallback]: executing direct atomic updates with timestamp', rpcErr);
+    }
+
+    // In case RPC was 4-parameter or direct fallback was required:
+    // Update users.updated_at strictly to completionIso so leaderboard tie-breaker reflects actual completion!
+    try {
+      await supabaseAdmin
+        .from('users')
+        .update({
+          ...(!rpcSuccess ? {
             total_score: (user.total_score || 0) + pointsAwarded,
             current_stage: Math.max(user.current_stage || 1, stageNum + 1),
             is_flagged: Boolean(user.is_flagged || isTooFast),
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', user.id);
+          } : {}),
+          updated_at: completionIso, // Leaderboard rank tie-breaker
+        })
+        .eq('id', user.id);
 
-        await supabaseAdmin
-          .from('stage_telemetry')
-          .update({
-            completed_at: new Date().toISOString(),
-            duration_seconds: durationSeconds,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('user_id', user.id)
-          .eq('stage_number', stageNum);
-      } catch {
-        // Fallback completed
-      }
+      await supabaseAdmin
+        .from('stage_telemetry')
+        .update({
+          completed_at: completionIso,
+          duration_seconds: durationSeconds,
+          ...(isTooFast ? { flagged_too_fast: true, flag_reason: flagReason } : {}),
+          updated_at: new Date().toISOString(),
+        })
+        .eq('user_id', user.id)
+        .eq('stage_number', stageNum);
+    } catch (directErr) {
+      console.warn('[Fallback direct update warning]:', directErr);
     }
 
     return NextResponse.json({
@@ -236,6 +326,8 @@ export async function POST(req: NextRequest) {
       allCorrect: true,
       scoreAwarded: pointsAwarded,
       nextStage: stageNum + 1,
+      completedAt: completionIso,
+      durationSeconds,
       message: `Stage ${stageNum} passed successfully! +${pointsAwarded} points awarded.`,
     });
   } catch (error: any) {

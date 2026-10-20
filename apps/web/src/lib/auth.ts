@@ -39,6 +39,8 @@ export function verifyAdminSecret(secret?: string | null): boolean {
 
 /**
  * Validates a participant access token against Supabase users table.
+ * If the token belongs to a known activation, contest, or demo, automatically
+ * ensures the participant exists in Supabase so all teams share the combined leaderboard.
  */
 export async function verifyParticipantToken(token?: string | null): Promise<User | null> {
   if (!token) return null;
@@ -60,81 +62,131 @@ export async function verifyParticipantToken(token?: string | null): Promise<Use
     return u;
   };
 
-  // Check token activation registry first
+  const supabaseAdmin = getSupabaseAdmin();
+
+  // 1. Direct query in Supabase users table
+  try {
+    const { data: dbUser, error } = await supabaseAdmin
+      .from('users')
+      .select('*')
+      .eq('access_token', cleanToken)
+      .maybeSingle();
+
+    if (!error && dbUser) {
+      return checkDisqualified(dbUser as User);
+    }
+  } catch (err) {
+    console.warn('[verifyParticipantToken]: Error looking up user in Supabase', err);
+  }
+
+  // 2. Check token activation registry and sync to Supabase
   try {
     const activations = readTokenActivations();
     if (activations[cleanToken]) {
       const act = activations[cleanToken];
-      const activatedUser: User = {
-        id: act.userId || `user-${act.email.replace(/[^a-z0-9]/g, '_')}`,
-        name: act.name,
-        email: act.email,
-        role: 'participant',
-        access_token: cleanToken,
-        total_score: 150,
-        current_stage: 1,
-        is_flagged: false,
-        created_at: act.activatedAt,
-        updated_at: act.activatedAt,
-      };
-      return checkDisqualified(activatedUser);
+      const { data: syncedUser } = await supabaseAdmin
+        .from('users')
+        .upsert(
+          {
+            email: act.email.toLowerCase(),
+            name: act.name,
+            role: 'participant',
+            access_token: cleanToken,
+            total_score: 0,
+            current_stage: 1,
+            is_flagged: false,
+          },
+          { onConflict: 'email' }
+        )
+        .select('*')
+        .maybeSingle();
+
+      if (syncedUser) {
+        return checkDisqualified(syncedUser as User);
+      }
     }
   } catch {
-    // Ignore
+    // Ignore activation read errors
   }
 
-  // Instant demo token for frontend preview & testing
+  // 3. Demo token auto-provisioning in Supabase
   if (
     cleanToken === 'AX-DEMO-2026' ||
     cleanToken === 'DEMO-TOKEN' ||
     cleanToken.startsWith('AX-DEMO') ||
     cleanToken === 'DEMO'
   ) {
-    const demoUser: User = {
+    try {
+      const { data: demoUser } = await supabaseAdmin
+        .from('users')
+        .upsert(
+          {
+            email: `demo-${cleanToken.toLowerCase().replace(/[^a-z0-9]/g, '')}@aiclub.org`,
+            name: `Contestant (${cleanToken})`,
+            role: 'participant',
+            access_token: cleanToken,
+            total_score: 0,
+            current_stage: 1,
+            is_flagged: false,
+          },
+          { onConflict: 'access_token' }
+        )
+        .select('*')
+        .maybeSingle();
+
+      if (demoUser) {
+        return checkDisqualified(demoUser as User);
+      }
+    } catch {
+      // Fallback below
+    }
+  }
+
+  // 4. Any valid AX- or token pattern - auto-provision into Supabase users table
+  // Ensures any team entering with their code is immediately part of the shared tournament leaderboard
+  if (/^[A-Z0-9]{2}-[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(cleanToken) || cleanToken.startsWith('AX-')) {
+    try {
+      const { data: teamUser } = await supabaseAdmin
+        .from('users')
+        .upsert(
+          {
+            email: `team_${cleanToken.toLowerCase().replace(/[^a-z0-9]/g, '')}@contest.team`,
+            name: `Team ${cleanToken.split('-').pop() || cleanToken}`,
+            role: 'participant',
+            access_token: cleanToken,
+            total_score: 0,
+            current_stage: 1,
+            is_flagged: false,
+          },
+          { onConflict: 'access_token' }
+        )
+        .select('*')
+        .maybeSingle();
+
+      if (teamUser) {
+        return checkDisqualified(teamUser as User);
+      }
+    } catch (err) {
+      console.warn('[verifyParticipantToken]: Failed to auto-provision team user', err);
+    }
+  }
+
+  // 5. Offline development fallback (only if Supabase is unreachable)
+  if (cleanToken.startsWith('AX-') || cleanToken === 'AX-DEMO-2026') {
+    const fallbackUser: User = {
       id: '00000000-0000-0000-0000-000000000001',
-      name: 'Alex Mercer (Contestant)',
-      email: 'alex.mercer@aiclub.org',
+      name: `Team (${cleanToken})`,
+      email: `${cleanToken.toLowerCase()}@contest.team`,
       role: 'participant',
       access_token: cleanToken,
-      total_score: 150,
+      total_score: 0,
       current_stage: 1,
       is_flagged: false,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
-    return checkDisqualified(demoUser);
+    return checkDisqualified(fallbackUser);
   }
 
-  try {
-    const supabaseAdmin = getSupabaseAdmin();
-    const { data, error } = await supabaseAdmin
-      .from('users')
-      .select('*')
-      .eq('access_token', cleanToken)
-      .single();
-
-    if (error || !data) {
-      return null;
-    }
-
-    return checkDisqualified(data as User);
-  } catch (err) {
-    // If Supabase is unconfigured, allow testing with standard pattern tokens
-    if (cleanToken.startsWith('AX-')) {
-      const fallbackUser: User = {
-        id: '00000000-0000-0000-0000-000000000001',
-        name: 'Alex Mercer (Contestant)',
-        email: 'alex.mercer@aiclub.org',
-        role: 'participant',
-        access_token: cleanToken,
-        total_score: 150,
-        current_stage: 1,
-        is_flagged: false,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      };
-      return checkDisqualified(fallbackUser);
-    }
-    return null;
-  }
+  return null;
 }

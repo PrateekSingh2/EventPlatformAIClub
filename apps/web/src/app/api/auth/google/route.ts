@@ -4,6 +4,8 @@ import { generateAccessToken } from '@/lib/auth';
 import { validateAndActivateToken } from '@/lib/contest';
 import { User } from '@/lib/types';
 
+export const dynamic = 'force-dynamic';
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
@@ -43,7 +45,38 @@ export async function POST(req: NextRequest) {
     try {
       const supabaseAdmin = getSupabaseAdmin();
 
-      // 2. Check if user already exists with this Google email
+      // 2. Check if user already exists with this token (pre-registered by admin or contest)
+      if (assignedToken) {
+        const { data: userByToken } = await supabaseAdmin
+          .from('users')
+          .select('*')
+          .eq('access_token', assignedToken)
+          .maybeSingle();
+
+        if (userByToken) {
+          // Bind Google account details to this pre-registered team token
+          await supabaseAdmin
+            .from('users')
+            .update({
+              email: cleanEmail,
+              name: cleanName || userByToken.name,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', userByToken.id);
+
+          userByToken.email = cleanEmail;
+          userByToken.name = cleanName || userByToken.name;
+
+          return NextResponse.json({
+            authenticated: true,
+            token: userByToken.access_token,
+            user: userByToken as User,
+            isNewUser: false,
+          });
+        }
+      }
+
+      // 3. Check if user already exists with this Google email
       const { data: existingUser } = await supabaseAdmin
         .from('users')
         .select('*')
@@ -68,7 +101,7 @@ export async function POST(req: NextRequest) {
         });
       }
 
-      // 3. If no token provided, generate a new one
+      // 4. If no token provided, generate a new one
       if (!assignedToken) {
         assignedToken = generateAccessToken();
         await validateAndActivateToken({
@@ -79,7 +112,7 @@ export async function POST(req: NextRequest) {
         });
       }
 
-      // 4. Insert newly registered contestant into participants list
+      // 5. Insert newly registered contestant into participants list in Supabase
       const { data: newUser, error: insertError } = await supabaseAdmin
         .from('users')
         .insert({
@@ -103,18 +136,18 @@ export async function POST(req: NextRequest) {
         });
       }
     } catch (dbErr) {
-      console.warn('[Google Auth DB Warning]: Supabase unconfigured or offline. Utilizing local session.', dbErr);
+      console.warn('[Google Auth DB Warning]: Supabase unconfigured or offline.', dbErr);
     }
 
-    // 4. Safe fallback for local development or unconfigured databases
-    const fallbackToken = 'AX-DEMO-2026';
+    // 6. Safe fallback for local development or unconfigured databases
+    const fallbackToken = assignedToken || 'AX-DEMO-2026';
     const fallbackUser: User = {
       id: uid || '00000000-0000-0000-0000-000000000001',
       name: cleanName,
       email: cleanEmail,
       role: 'participant',
       access_token: fallbackToken,
-      total_score: 150,
+      total_score: 0,
       current_stage: 1,
       is_flagged: false,
       created_at: new Date().toISOString(),

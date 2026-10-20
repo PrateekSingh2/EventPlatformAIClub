@@ -214,29 +214,55 @@ export function TelemetryRadarTab({ adminSecret }: TelemetryRadarTabProps) {
     };
   }, [adminSecret]);
 
-  // Admin action: Clear Flag
+  // Admin action: Clear Flag and resume participant gameplay
   const handleClearFlag = async (telemetryId: string, userId: string) => {
     try {
-      await supabase
-        .from('stage_telemetry')
-        .update({
-          flagged_too_fast: false,
-          flag_reason: null,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', telemetryId);
+      const res = await fetch('/api/admin/telemetry', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-admin-secret': adminSecret,
+        },
+        body: JSON.stringify({
+          action: 'clear_flag',
+          telemetryId,
+          userId,
+          adminSecret,
+        }),
+      });
 
-      await supabase
-        .from('users')
-        .update({
-          is_flagged: false,
-          updated_at: new Date().toISOString(),
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to clear flag');
+      }
+
+      setTelemetryRecords((prev) =>
+        prev.map((rec) => {
+          if (rec.id === telemetryId || rec.user_id === userId) {
+            return {
+              ...rec,
+              flagged_too_fast: false,
+              flag_reason: null,
+              password_failed_attempts: 0,
+              password_cooldown_until: null,
+              user: rec.user
+                ? {
+                    ...rec.user,
+                    is_flagged: false,
+                    is_disqualified: false,
+                    role: 'participant',
+                  }
+                : rec.user,
+            };
+          }
+          return rec;
         })
-        .eq('id', userId);
+      );
 
       fetchTelemetry();
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to clear flag', err);
+      alert(err.message || 'Failed to clear flag');
     }
   };
 
@@ -588,12 +614,14 @@ export function TelemetryRadarTab({ adminSecret }: TelemetryRadarTabProps) {
                           </div>
                         ) : (
                           <div className="flex items-center justify-end gap-1.5">
-                            {isRedFlag && (
+                            {(isRedFlag || rec.user?.is_flagged || Boolean(rec.flag_reason)) && (
                               <button
                                 onClick={() => handleClearFlag(rec.id, rec.user_id)}
-                                className="px-2 py-1 text-[10px] font-semibold text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 rounded border border-slate-700 transition-colors cursor-pointer"
+                                className="px-2 py-1 text-[10px] font-semibold text-emerald-300 hover:text-white bg-emerald-950/60 hover:bg-emerald-900 rounded border border-emerald-700/60 transition-colors cursor-pointer flex items-center gap-1"
+                                title="Clear flags and resume participant gameplay"
                               >
-                                Clear
+                                <CheckCircle className="w-3 h-3 text-emerald-400" />
+                                <span>Clear</span>
                               </button>
                             )}
                             <button

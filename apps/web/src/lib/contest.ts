@@ -344,6 +344,21 @@ export async function createNewContest(params: {
         created_at: newContest.created_at,
         updated_at: newContest.updated_at,
       });
+
+    // Auto-register all generated teams into Supabase users table so all teams share the unified leaderboard
+    const teamRecords = tokens.map((t, idx) => ({
+      name: 'Team ' + (idx + 1),
+      email: 'team' + (idx + 1) + '_' + t.toLowerCase().replace(/[^a-z0-9]/g, '') + '@contest.team',
+      role: 'participant' as const,
+      access_token: t,
+      total_score: 0,
+      current_stage: 1,
+      is_flagged: false,
+    }));
+
+    await supabaseAdmin
+      .from('users')
+      .upsert(teamRecords, { onConflict: 'access_token', ignoreDuplicates: true });
   } catch {
     // Ignore Supabase write failure
   }

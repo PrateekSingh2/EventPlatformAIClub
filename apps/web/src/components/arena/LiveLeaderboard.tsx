@@ -7,9 +7,7 @@ import { User, ContestStatus } from '@/lib/types';
 import {
   Trophy,
   X,
-  Radio,
   Search,
-  Sparkles,
   Flame,
   RotateCw,
   Pause,
@@ -20,6 +18,7 @@ interface LiveLeaderboardProps {
   isOpen: boolean;
   onClose: () => void;
   currentUserId?: string;
+  currentUserToken?: string;
   contestStatus?: ContestStatus;
 }
 
@@ -27,6 +26,7 @@ export function LiveLeaderboard({
   isOpen,
   onClose,
   currentUserId,
+  currentUserToken,
   contestStatus = 'LIVE',
 }: LiveLeaderboardProps) {
   const [users, setUsers] = useState<User[]>([]);
@@ -38,48 +38,53 @@ export function LiveLeaderboard({
   const isFrozen = contestStatus === 'FROZEN';
   const isConcluded = contestStatus === 'CONCLUDED';
 
-  // Initial fetch of leaderboard
+  // Combined fetch of leaderboard across all teams and participants
   const fetchLeaderboard = useCallback(async () => {
     try {
-      const { data } = await supabase
-        .from('users')
-        .select('id, name, email, role, access_token, total_score, current_stage, is_flagged, created_at, updated_at')
-        .eq('role', 'participant')
-        .order('total_score', { ascending: false })
-        .order('updated_at', { ascending: true })
-        .limit(200);
+      // 1. Direct real-time fetch from Supabase users table
+      if (isSupabaseConfigured) {
+        const { data, error } = await supabase
+          .from('users')
+          .select('id, name, email, role, access_token, total_score, current_stage, is_flagged, created_at, updated_at')
+          .eq('role', 'participant')
+          .order('total_score', { ascending: false })
+          .order('updated_at', { ascending: true })
+          .limit(500);
 
-      if (data && data.length > 0) {
-        setUsers(data as User[]);
-        return;
+        if (!error && Array.isArray(data)) {
+          setUsers(data as User[]);
+          return;
+        }
       }
-    } catch {
-      // Fallback to sample contestants for local demo
+
+      // 2. Fallback to server endpoint if direct client query encounters any network issue
+      const res = await fetch('/api/leaderboard');
+      if (res.ok) {
+        const json = await res.json();
+        if (json.success && Array.isArray(json.users)) {
+          setUsers(json.users as User[]);
+          return;
+        }
+      }
+    } catch (err) {
+      console.warn('[LiveLeaderboard]: Failed to fetch unified leaderboard', err);
     }
 
-    // Default sample contestants for local testing
-    setUsers([
-      { id: '1', name: 'CyberKnight_99', email: 'mlin@mit.edu', role: 'participant', access_token: 'AX-9021-3829', total_score: 300, current_stage: 2, is_flagged: false, created_at: '', updated_at: '' },
-      { id: '2', name: 'NullPointerEx', email: 'marcus.v@berkeley.edu', role: 'participant', access_token: 'AX-4820-1940', total_score: 250, current_stage: 2, is_flagged: false, created_at: '', updated_at: '' },
-      { id: '3', name: 'Elena Rostova', email: 'erostova@stanford.edu', role: 'participant', access_token: 'AX-7104-5821', total_score: 200, current_stage: 1, is_flagged: false, created_at: '', updated_at: '' },
-      { id: '00000000-0000-0000-0000-000000000001', name: 'Alex Mercer (You)', email: 'alex.mercer@aiclub.org', role: 'participant', access_token: 'AX-DEMO-2026', total_score: 150, current_stage: 1, is_flagged: false, created_at: '', updated_at: '' },
-      { id: '4', name: 'Devin Thorne', email: 'devin@ai-labs.org', role: 'participant', access_token: 'AX-3819-2049', total_score: 100, current_stage: 1, is_flagged: false, created_at: '', updated_at: '' },
-      { id: '5', name: 'Kavita Rao', email: 'krao@iitb.ac.in', role: 'participant', access_token: 'AX-9481-6721', total_score: 100, current_stage: 1, is_flagged: false, created_at: '', updated_at: '' },
-    ]);
+    // Do NOT show mock sample participants. Reflect true database state.
+    setUsers([]);
   }, []);
 
-  // Hot-reload: Auto-poll every 2.5 seconds + Supabase Realtime channel
+  // Hot-reload: Auto-poll every 3 seconds + Supabase Realtime channel
   useEffect(() => {
     if (!isOpen) return;
 
     fetchLeaderboard();
 
-    // Hot-reload Poller
     const interval = setInterval(() => {
       fetchLeaderboard();
-    }, 2500);
+    }, 3000);
 
-    // Subscribe to real-time postgres updates on users table if configured
+    // Subscribe to real-time postgres updates on users table
     let channel: any = null;
     if (isSupabaseConfigured) {
       channel = supabase
@@ -116,17 +121,29 @@ export function LiveLeaderboard({
 
   if (!isOpen) return null;
 
-  const currentUser = users.find((u) => u.id === currentUserId);
+  const currentUser = users.find(
+    (u) =>
+      (currentUserId && u.id === currentUserId) ||
+      (currentUserToken && u.access_token === currentUserToken)
+  );
   const currentUserStage = currentUser?.current_stage || 1;
 
-  // Filter based on active tab and search
+  // Filter based on active tab and search query
   const filteredUsers = users
     .filter((u) => {
       if (activeTab === 'top5') return true;
       if (activeTab === 'my-stage') return u.current_stage === currentUserStage;
       return true;
     })
-    .filter((u) => u.name.toLowerCase().includes(search.toLowerCase()))
+    .filter((u) => {
+      if (!search.trim()) return true;
+      const q = search.toLowerCase();
+      return (
+        u.name.toLowerCase().includes(q) ||
+        (u.email && u.email.toLowerCase().includes(q)) ||
+        (u.access_token && u.access_token.toLowerCase().includes(q))
+      );
+    })
     .slice(0, activeTab === 'top5' ? 5 : undefined);
 
   return (
@@ -164,7 +181,7 @@ export function LiveLeaderboard({
                     ) : (
                       <span className="flex items-center gap-1 text-emerald-400">
                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping inline-block" />
-                        HOT-SYNC ACTIVE
+                        COMBINED TOURNAMENT SYNC
                       </span>
                     )}
                   </div>
@@ -244,7 +261,7 @@ export function LiveLeaderboard({
                 type="text"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search contestant..."
+                placeholder="Search contestant or team..."
                 className="w-full px-2.5 py-1.5 pl-8 text-xs text-app-text bg-app-bg border border-app-border rounded-xl shadow-inner focus:outline-none focus:border-app-accent transition-colors placeholder:text-app-subtext/50 font-sans"
               />
               <Search className="w-3.5 h-3.5 text-app-subtext/70 absolute left-2.5 top-2.5" />
@@ -254,19 +271,24 @@ export function LiveLeaderboard({
           {/* Animated Reordering Contestant List */}
           <div className="p-2 space-y-1.5 flex-1 overflow-y-auto text-xs">
             {filteredUsers.length === 0 ? (
-              <div className="p-8 text-center text-app-subtext text-xs space-y-1">
-                <p>No contestants found</p>
-                <p className="text-[10px] text-app-subtext/60">Try adjusting your search query</p>
+              <div className="p-8 text-center text-app-subtext text-xs space-y-2">
+                <Trophy className="w-8 h-8 text-amber-500/30 mx-auto" />
+                <p className="font-semibold text-app-text">No contestants ranked yet</p>
+                <p className="text-[10px] text-app-subtext/60">
+                  All contestants and teams across all access codes will appear here dynamically.
+                </p>
               </div>
             ) : (
               <AnimatePresence mode="popLayout">
                 {filteredUsers.map((user, idx) => {
                   const rank = idx + 1;
-                  const isCurrentUser = user.id === currentUserId;
+                  const isCurrentUser =
+                    (currentUserId && user.id === currentUserId) ||
+                    (currentUserToken && user.access_token === currentUserToken);
 
                   return (
                     <motion.div
-                      key={user.id}
+                      key={user.id || user.access_token}
                       layout
                       initial={{ opacity: 0, y: 8, scale: 0.98 }}
                       animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -277,7 +299,7 @@ export function LiveLeaderboard({
                       }}
                       className={`p-2.5 rounded-xl border flex items-center justify-between transition-all backdrop-blur-sm ${
                         isCurrentUser
-                          ? 'border-app-accentBorder/80 bg-app-accentBg/70 shadow-[0_4px_12px_rgba(0,0,0,0.25),_inset_0_1px_0_rgba(255,255,255,0.12)]'
+                          ? 'border-app-accentBorder/80 bg-app-accentBg/70 shadow-[0_4px_12px_rgba(0,0,0,0.25),_inset_0_1px_0_rgba(255,255,255,0.12)] ring-1 ring-app-accent/40'
                           : rank === 1
                           ? 'border-amber-500/30 bg-amber-500/10 shadow-[0_4px_12px_rgba(245,158,11,0.1),_inset_0_1px_0_rgba(255,255,255,0.1)]'
                           : rank === 2
@@ -311,13 +333,13 @@ export function LiveLeaderboard({
                             <span className="truncate">{user.name}</span>
                             {rank === 1 && <Flame className="w-3 h-3 text-amber-400 shrink-0 inline" />}
                             {isCurrentUser && (
-                              <span className="text-[9px] px-1 py-0.2 rounded bg-app-accent/20 text-app-accent font-mono font-bold shrink-0">
+                              <span className="text-[9px] px-1.5 py-0.2 rounded bg-app-accent/20 text-app-accent font-mono font-bold shrink-0">
                                 YOU
                               </span>
                             )}
                           </div>
                           <div className="text-[10px] text-app-subtext truncate font-mono">
-                            Stage {user.current_stage} • {user.email?.split('@')[0] || 'anonymous'}
+                            Stage {user.current_stage || 1} &bull; {user.access_token || user.email?.split('@')[0] || 'active'}
                           </div>
                         </div>
                       </div>
@@ -325,7 +347,7 @@ export function LiveLeaderboard({
                       {/* Points Display */}
                       <div className="text-right shrink-0 pl-2">
                         <span className="text-xs font-bold text-app-text font-mono">
-                          {user.total_score}
+                          {user.total_score || 0}
                         </span>
                         <span className="text-[10px] text-app-subtext ml-0.5">PTS</span>
                       </div>
@@ -340,7 +362,7 @@ export function LiveLeaderboard({
           <div className="p-3 border-t border-white/10 bg-white/[0.02] flex items-center justify-between text-xs text-app-subtext font-mono">
             <span>TOTAL CONTESTANTS</span>
             <span className="text-app-text font-bold bg-app-surface/90 px-2 py-0.5 rounded-lg border border-white/10 shadow-[inset_0_1px_0_rgba(255,255,255,0.1),_0_2px_4px_rgba(0,0,0,0.3)]">
-              {users.length} active
+              {users.length} registered
             </span>
           </div>
         </aside>
