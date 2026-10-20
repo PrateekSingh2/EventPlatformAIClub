@@ -30,41 +30,23 @@ ON CONFLICT (id) DO UPDATE SET
     file_size_limit = 52428800,
     allowed_mime_types = ARRAY['application/zip', 'application/x-zip-compressed'];
 
--- B. Enable Row Level Security on storage.objects
-ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
-
--- C. Storage Policies for 'stages' bucket
+-- B. Storage Policies for 'stages' bucket (safely applied if role has permissions)
 DO $$
 BEGIN
-    -- 1. Service Role full access: Allows Next.js serverless routes to sign & manage objects
-    DROP POLICY IF EXISTS "Service role full access to stages bucket" ON storage.objects;
-    CREATE POLICY "Service role full access to stages bucket" ON storage.objects FOR ALL
-        USING (bucket_id = 'stages' AND auth.role() = 'service_role')
-        WITH CHECK (bucket_id = 'stages' AND auth.role() = 'service_role');
-
-    -- 2. Allow pre-signed downloads: Enables participant browser to fetch archive blobs into memory
-    DROP POLICY IF EXISTS "Allow signed downloads from stages bucket" ON storage.objects;
-    CREATE POLICY "Allow signed downloads from stages bucket" ON storage.objects FOR SELECT
-        USING (bucket_id = 'stages');
-
-    -- 3. Allow pre-signed uploads: Enables admin browser to upload stage ZIPs directly to storage
-    DROP POLICY IF EXISTS "Allow signed uploads to stages bucket" ON storage.objects;
-    CREATE POLICY "Allow signed uploads to stages bucket" ON storage.objects FOR INSERT
-        WITH CHECK (bucket_id = 'stages');
-
-    -- 4. Allow pre-signed updates/upserts
-    DROP POLICY IF EXISTS "Allow signed updates to stages bucket" ON storage.objects;
-    CREATE POLICY "Allow signed updates to stages bucket" ON storage.objects FOR UPDATE
-        USING (bucket_id = 'stages')
-        WITH CHECK (bucket_id = 'stages');
-
-    -- 5. Allow object deletes for admin cleanup
-    DROP POLICY IF EXISTS "Allow deletes from stages bucket" ON storage.objects;
-    CREATE POLICY "Allow deletes from stages bucket" ON storage.objects FOR DELETE
-        USING (bucket_id = 'stages' AND auth.role() = 'service_role');
+    EXECUTE 'ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY';
+    EXECUTE 'DROP POLICY IF EXISTS "Service role full access to stages bucket" ON storage.objects';
+    EXECUTE 'CREATE POLICY "Service role full access to stages bucket" ON storage.objects FOR ALL USING (bucket_id = ''stages'' AND auth.role() = ''service_role'') WITH CHECK (bucket_id = ''stages'' AND auth.role() = ''service_role'')';
+    EXECUTE 'DROP POLICY IF EXISTS "Allow signed downloads from stages bucket" ON storage.objects';
+    EXECUTE 'CREATE POLICY "Allow signed downloads from stages bucket" ON storage.objects FOR SELECT USING (bucket_id = ''stages'')';
+    EXECUTE 'DROP POLICY IF EXISTS "Allow signed uploads to stages bucket" ON storage.objects';
+    EXECUTE 'CREATE POLICY "Allow signed uploads to stages bucket" ON storage.objects FOR INSERT WITH CHECK (bucket_id = ''stages'')';
+    EXECUTE 'DROP POLICY IF EXISTS "Allow signed updates to stages bucket" ON storage.objects';
+    EXECUTE 'CREATE POLICY "Allow signed updates to stages bucket" ON storage.objects FOR UPDATE USING (bucket_id = ''stages'') WITH CHECK (bucket_id = ''stages'')';
+    EXECUTE 'DROP POLICY IF EXISTS "Allow deletes from stages bucket" ON storage.objects';
+    EXECUTE 'CREATE POLICY "Allow deletes from stages bucket" ON storage.objects FOR DELETE USING (bucket_id = ''stages'' AND auth.role() = ''service_role'')';
 EXCEPTION
     WHEN OTHERS THEN
-        NULL;
+        NULL; -- In hosted Supabase, storage.objects is owned by supabase_storage_admin; signed URLs bypass direct RLS
 END $$;
 
 -- ------------------------------------------------------------------------------
