@@ -68,12 +68,12 @@ export async function POST(req: NextRequest) {
 
     // 3. Look up the team's unique archive record
     if (!isSupabaseConfigured) {
-      // Dev fallback: return demo
       return NextResponse.json({
         downloadUrl: '/case-study-archive.zip',
-        stageCount: 1,
+        stageCount: 3,
         expiresIn: 120,
         isTokenArchive: true,
+        archiveKey: 'demo:case-study-archive',
       });
     }
 
@@ -107,13 +107,13 @@ export async function POST(req: NextRequest) {
     }
 
     if (!archiveRecord) {
-      // Fall back to case study archive
-      return NextResponse.json({
-        downloadUrl: '/case-study-archive.zip',
-        stageCount: 12,
-        expiresIn: 120,
-        isTokenArchive: true,
-      });
+      return NextResponse.json(
+        {
+          error: 'NO_TOKEN_ARCHIVE',
+          message: 'No challenge archive is assigned to this team yet. Contact an organizer.',
+        },
+        { status: 404 }
+      );
     }
 
     // 4. Log archive access in stage_telemetry for stage 1 (first access)
@@ -140,11 +140,14 @@ export async function POST(req: NextRequest) {
       archiveRecord.storage_path
     );
 
+    const stageCount = Math.max(1, archiveRecord.stage_count || 1);
+
     return NextResponse.json({
       downloadUrl,
-      stageCount: archiveRecord.stage_count || 12,
+      stageCount,
       expiresIn,
       isTokenArchive: true,
+      archiveKey: archiveRecord.storage_path,
     });
   } catch (error: any) {
     console.error('[API /api/stage/fetch-archive error]:', error);

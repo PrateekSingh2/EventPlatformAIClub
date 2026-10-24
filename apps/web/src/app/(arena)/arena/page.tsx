@@ -3,7 +3,12 @@
 import React, { useEffect, useState, useCallback, useRef, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { ParsedFile, StageManifest, SanitizedQuizQuestion, User } from '@/lib/types';
-import { extractZipInBrowser, extractStageArchiveInBrowser, ZipEngineError } from '@/lib/zip-engine';
+import {
+  extractZipInBrowser,
+  extractStageArchiveInBrowser,
+  ZipEngineError,
+  pickDefaultStageFile,
+} from '@/lib/zip-engine';
 import { AntiCheatWrapper } from '@/components/arena/AntiCheatWrapper';
 import { InBrowserIDE } from '@/components/arena/InBrowserIDE';
 import { UnlockNextStageModal } from '@/components/arena/UnlockNextStageModal';
@@ -19,7 +24,7 @@ import { useContestLifecycle } from '@/hooks/useContestLifecycle';
 import { useAdminBroadcasts } from '@/hooks/useAdminBroadcasts';
 import { initializeProgressQueueListeners } from '@/lib/offline-progress-queue';
 import { saveStageArchive, getCachedStageArchive, saveTokenArchive, getCachedTokenArchive, clearTokenArchive } from '@/lib/stage-cache';
-import { extractInnerZipBlob, listZipEntries } from '@/lib/zip-engine';
+import { extractInnerZipBlob, resolveStageOneBlob, resolveNextStageZipBlob } from '@/lib/zip-engine';
 import { supabase } from '@/lib/supabase';
 import {
   getContestantSession,
@@ -57,6 +62,19 @@ const DEFAULT_STAGES: StageManifest[] = [
     points: 200,
   },
 ];
+
+function buildStagesFromArchiveCount(stageCount: number): StageManifest[] {
+  const count = Math.max(1, stageCount);
+  return Array.from({ length: count }, (_, i) => ({
+    stageNumber: i + 1,
+    title: DEFAULT_STAGES[i]?.title || `Stage ${i + 1}`,
+    isPasswordProtected: i > 0,
+    allowedCopyFilename:
+      DEFAULT_STAGES[i]?.allowedCopyFilename ||
+      (i === 0 ? 'ai_prompt.txt' : `ai_prompt_stage${i + 1}.txt`),
+    points: DEFAULT_STAGES[i]?.points || (i + 1) * 100,
+  }));
+}
 
 function ArenaContent() {
   const searchParams = useSearchParams();
@@ -155,6 +173,7 @@ function ArenaContent() {
   const [isLastStage, setIsLastStage] = useState(false);
   const [isCompleteModalOpen, setIsCompleteModalOpen] = useState(false);
   const nextStageZipBlobsRef = useRef<Record<number, Blob>>({});
+  const [nextStageZipBlobs, setNextStageZipBlobs] = useState<Record<number, Blob>>({});
 
   // Unlock Next Stage Modal State
   const [isUnlockModalOpen, setIsUnlockModalOpen] = useState(false);
@@ -181,6 +200,19 @@ function ArenaContent() {
   const unlockedStagePasswordsRef = useRef<Record<number, string>>(unlockedStagePasswords);
   const fetchTokenArchivePromiseRef = useRef<Promise<Blob | null> | null>(null);
   const loadingStageRef = useRef<number | null>(null);
+
+  const rememberNextStageZip = useCallback((stageNum: number, blob: Blob) => {
+    nextStageZipBlobsRef.current[stageNum] = blob;
+    setNextStageZipBlobs((prev) => ({ ...prev, [stageNum]: blob }));
+  }, []);
+
+  const applyTokenArchiveToSession = useCallback((blob: Blob, stageCount: number) => {
+    tokenArchiveBlobRef.current = blob;
+    setTokenArchiveBlob(blob);
+    setTokenArchiveStageCount(stageCount);
+    setUsingTokenArchive(true);
+    setStages(buildStagesFromArchiveCount(stageCount));
+  }, []);
 
   // 1. Mandatory Login Check & Token Ownership Cross-Verification
   useEffect(() => {
@@ -297,56 +329,54 @@ function ArenaContent() {
 
     const fetchPromise = (async () => {
       try {
-        // Check IndexedDB cache
+        let meta: {
+          downloadUrl?: string;
+          stageCount?: number;
+          archiveKey?: string;
+          isTokenArchive?: boolean;
+          error?: string;
+          message?: string;
+        } | null = null;
+
+        try {
+          const res = await fetch('/api/stage/fetch-archive', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ accessToken: currentToken }),
+          });
+          meta = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            if (meta?.error === 'NO_TOKEN_ARCHIVE') {
+              throw new Error(meta.message || 'No challenge archive is assigned to your team yet.');
+            }
+            throw new Error(meta?.error || meta?.message || 'Failed to fetch archive');
+          }
+        } catch (fetchErr) {
+          const cached = await getCachedTokenArchive(currentToken);
+          if (cached) {
+            applyTokenArchiveToSession(cached.blob, cached.stageCount);
+            return cached.blob;
+          }
+          throw fetchErr;
+        }
+
+        if (!meta?.isTokenArchive || !meta.downloadUrl) return null;
+
+        const stageCount = Math.max(1, meta.stageCount || 1);
+        const archiveKey = meta.archiveKey;
+
         const cached = await getCachedTokenArchive(currentToken);
-        if (cached) {
-          tokenArchiveBlobRef.current = cached.blob;
-          setTokenArchiveBlob(cached.blob);
-          setTokenArchiveStageCount(cached.stageCount);
-          setUsingTokenArchive(true);
+        if (cached && (!archiveKey || cached.archiveKey === archiveKey)) {
+          applyTokenArchiveToSession(cached.blob, cached.stageCount || stageCount);
           return cached.blob;
         }
 
-        // Fetch from server
-        const res = await fetch('/api/stage/fetch-archive', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ accessToken: currentToken }),
-        });
-
-        if (!res.ok) {
-          const data = await res.json().catch(() => ({}));
-          if (data.error === 'NO_TOKEN_ARCHIVE') return null; // fallback to legacy
-          throw new Error(data.error || 'Failed to fetch archive');
-        }
-
-        const data = await res.json();
-        if (!data.isTokenArchive || !data.downloadUrl) return null;
-
-        const storageRes = await fetch(data.downloadUrl);
+        const storageRes = await fetch(meta.downloadUrl);
         if (!storageRes.ok) throw new Error('Failed to download archive from storage');
 
         const blob = await storageRes.blob();
-        const stageCount = data.stageCount || 1;
-
-        // Cache in IndexedDB for offline durability
-        void saveTokenArchive(currentToken, blob, stageCount);
-
-        tokenArchiveBlobRef.current = blob;
-        setTokenArchiveBlob(blob);
-        setTokenArchiveStageCount(stageCount);
-        setUsingTokenArchive(true);
-
-        // Update stages manifest based on archive stage count
-        const generatedStages: import('@/lib/types').StageManifest[] = Array.from({ length: stageCount }, (_, i) => ({
-          stageNumber: i + 1,
-          title: `Stage ${i + 1}`,
-          isPasswordProtected: i > 0,
-          allowedCopyFilename: 'ai_prompt.txt',
-          points: (i + 1) * 100,
-        }));
-        setStages(generatedStages);
-
+        void saveTokenArchive(currentToken, blob, stageCount, archiveKey);
+        applyTokenArchiveToSession(blob, stageCount);
         return blob;
       } finally {
         fetchTokenArchivePromiseRef.current = null;
@@ -355,7 +385,7 @@ function ArenaContent() {
 
     fetchTokenArchivePromiseRef.current = fetchPromise;
     return fetchPromise;
-  }, []);
+  }, [applyTokenArchiveToSession]);
 
   // 2. Fetch stage manifest and download ZIP to RAM
   const loadStage = useCallback(
@@ -373,10 +403,7 @@ function ArenaContent() {
         setPasswordModalError(null);
         setLoading(false);
         // Check if next zip exists for this cached stage
-        if (!nextStageZipBlobsRef.current[stageNum + 1]) {
-          // If no next zip blob stored, it might be the last stage
-          // Check if any stage after this exists in stages list
-        }
+        setIsLastStage(!nextStageZipBlobsRef.current[stageNum + 1] && stageNum >= tokenArchiveStageCount);
         return;
       }
 
@@ -394,35 +421,33 @@ function ArenaContent() {
         let tokenArchive: Blob | null = null;
         try {
           tokenArchive = await fetchTokenArchive(currentToken);
-        } catch {}
-
-        if (!tokenArchive) {
-          // Fallback fetch from public case-study-archive.zip
-          try {
-            const fallbackRes = await fetch('/case-study-archive.zip');
-            if (fallbackRes.ok) {
-              tokenArchive = await fallbackRes.blob();
-              tokenArchiveBlobRef.current = tokenArchive;
-              setTokenArchiveBlob(tokenArchive);
-            }
-          } catch {}
+        } catch (archiveErr: any) {
+          throw archiveErr;
         }
 
         if (tokenArchive) {
           let stageBlob: Blob;
 
           if (stageNum === 1) {
-            stageBlob = tokenArchive;
+            stageBlob = await resolveStageOneBlob(tokenArchive);
             setActiveZipBlob(stageBlob);
 
-            const result = await extractStageArchiveInBrowser(stageBlob);
+            const result = await extractStageArchiveInBrowser(stageBlob, undefined, '', 1);
             const taggedFiles = result.files.map((f) => ({ ...f, stageNumber: 1 }));
             stageFilesMapRef.current[1] = taggedFiles;
             setFiles(taggedFiles);
             setStageFilesMap((prev) => ({ ...prev, [1]: taggedFiles }));
 
-            if (result.hasNextZip && result.nextZipBlob) {
-              nextStageZipBlobsRef.current[2] = result.nextZipBlob;
+            let stageTwoBlob = result.nextZipBlob;
+            if (!stageTwoBlob) {
+              stageTwoBlob =
+                (await resolveNextStageZipBlob(tokenArchive, 2, {
+                  stagePasswords: unlockedStagePasswordsRef.current,
+                })) || undefined;
+            }
+
+            if (stageTwoBlob) {
+              rememberNextStageZip(2, stageTwoBlob);
               setIsLastStage(false);
               setStages((prev) => {
                 const s1 = prev.find((s) => s.stageNumber === 1) || {
@@ -443,16 +468,11 @@ function ArenaContent() {
                 return [s1, s2];
               });
             } else {
-              setIsLastStage(true);
+              setIsLastStage(tokenArchiveStageCount <= 1);
             }
 
-            if (taggedFiles.length > 0) {
-              const defaultFile =
-                taggedFiles.find((f) => f.name.toLowerCase() === 'ai_tutor_prompt.txt') ||
-                taggedFiles.find((f) => f.name.toLowerCase().includes('tutor')) ||
-                taggedFiles.find((f) => f.name === 'START_HERE.md') ||
-                taggedFiles.find((f) => f.name === 'README.md') ||
-                taggedFiles[0];
+            const defaultFile = pickDefaultStageFile(taggedFiles);
+            if (defaultFile) {
               setActiveFile(defaultFile);
               setOpenFiles([defaultFile]);
             }
@@ -466,16 +486,21 @@ function ArenaContent() {
 
             // If not directly present in ref (e.g. page refreshed into Stage N), replay extraction from stage 1
             if (!stageBlob) {
-              let currentBlob = tokenArchive;
-              for (let s = 1; s < stageNum; s++) {
-                const sPass = unlockedStagePasswordsRef.current[s] || (s === 1 ? undefined : '');
-                const sResult = await extractStageArchiveInBrowser(currentBlob, sPass);
-                if (sResult.nextZipBlob) {
-                  currentBlob = sResult.nextZipBlob;
-                  nextStageZipBlobsRef.current[s + 1] = sResult.nextZipBlob;
+              try {
+                stageBlob = await extractInnerZipBlob(tokenArchive, `stage${stageNum}.zip`);
+                rememberNextStageZip(stageNum, stageBlob);
+              } catch {
+                let currentBlob = await resolveStageOneBlob(tokenArchive);
+                for (let s = 1; s < stageNum; s++) {
+                  const sPass = unlockedStagePasswordsRef.current[s] || (s === 1 ? undefined : '');
+                  const sResult = await extractStageArchiveInBrowser(currentBlob, sPass, '', s);
+                  if (sResult.nextZipBlob) {
+                    currentBlob = sResult.nextZipBlob;
+                    rememberNextStageZip(s + 1, sResult.nextZipBlob);
+                  }
                 }
+                stageBlob = currentBlob;
               }
-              stageBlob = currentBlob;
             }
 
             setActiveZipBlob(stageBlob);
@@ -487,7 +512,14 @@ function ArenaContent() {
             }
 
             try {
-              const result = await extractStageArchiveInBrowser(stageBlob, effectivePassword, 'AI_TUTOR_PROMPT.txt');
+              const stageCopyFile =
+                stages.find((s) => s.stageNumber === stageNum)?.allowedCopyFilename || 'ai_prompt.txt';
+              const result = await extractStageArchiveInBrowser(
+                stageBlob,
+                effectivePassword,
+                stageCopyFile,
+                stageNum
+              );
               const taggedFiles = result.files.map((f) => ({ ...f, stageNumber: stageNum }));
               stageFilesMapRef.current[stageNum] = taggedFiles;
               setFiles(taggedFiles);
@@ -502,7 +534,7 @@ function ArenaContent() {
               });
 
               if (result.hasNextZip && result.nextZipBlob) {
-                nextStageZipBlobsRef.current[stageNum + 1] = result.nextZipBlob;
+                rememberNextStageZip(stageNum + 1, result.nextZipBlob);
                 setIsLastStage(false);
 
                 // Add next stage to stages manifest dynamically
@@ -556,13 +588,8 @@ function ArenaContent() {
                 );
               }
 
-              if (taggedFiles.length > 0) {
-                const defaultFile =
-                  taggedFiles.find((f) => f.name.toLowerCase() === 'ai_tutor_prompt.txt') ||
-                  taggedFiles.find((f) => f.name.toLowerCase().includes('tutor')) ||
-                  taggedFiles.find((f) => f.name === 'README.md') ||
-                  taggedFiles.find((f) => f.name === 'START_HERE.md') ||
-                  taggedFiles[0];
+              const defaultFile = pickDefaultStageFile(taggedFiles);
+              if (defaultFile) {
                 setActiveFile(defaultFile);
                 setOpenFiles([defaultFile]);
               }
@@ -590,7 +617,7 @@ function ArenaContent() {
         setLoading(false);
       }
     },
-    [fetchTokenArchive]
+    [fetchTokenArchive, rememberNextStageZip, stages, tokenArchiveStageCount]
   );
 
   // Real-time listener for administrative disqualification & unblock / reinstatement
@@ -624,6 +651,7 @@ function ArenaContent() {
           stageFilesMapRef.current = {};
           setStageFilesMap({});
           nextStageZipBlobsRef.current = {};
+          setNextStageZipBlobs({});
           setActiveFile(null);
           setOpenFiles([]);
 
@@ -688,13 +716,8 @@ function ArenaContent() {
         return next;
       });
 
-      if (taggedFiles.length > 0) {
-        const defaultFile =
-          taggedFiles.find((f) => f.name.toLowerCase() === 'ai_tutor_prompt.txt') ||
-          taggedFiles.find((f) => f.name.toLowerCase().includes('tutor')) ||
-          taggedFiles.find((f) => f.name === 'START_HERE.md') ||
-          taggedFiles.find((f) => f.name === 'README.md') ||
-          taggedFiles[0];
+      const defaultFile = pickDefaultStageFile(taggedFiles);
+      if (defaultFile) {
         setActiveFile(defaultFile);
         setOpenFiles((prev) => {
           if (prev.some((f) => f.path === defaultFile.path)) return prev;
@@ -941,8 +964,9 @@ function ArenaContent() {
           nextStageTitle={`Stage ${selectedStageNumber + 1}`}
           points={selectedStage?.points || 100}
           accessToken={token}
-          nextStageZipBlob={nextStageZipBlobsRef.current[selectedStageNumber + 1] || null}
+          nextStageZipBlob={nextStageZipBlobs[selectedStageNumber + 1] ?? null}
           tokenArchiveBlob={usingTokenArchive ? tokenArchiveBlob : undefined}
+          stagePasswords={unlockedStagePasswords}
           onClose={() => setIsUnlockModalOpen(false)}
           onUnlockSuccess={handleUnlockSuccess}
         />

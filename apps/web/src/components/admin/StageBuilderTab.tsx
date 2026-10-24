@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Stage, Contest, PreflightValidationResult } from '@/lib/types';
-import { validateArchiveDecryption, extractInnerZipBlob } from '@/lib/zip-engine';
+import { validateArchiveDecryption, extractInnerZipBlob, countStagesInOuterArchive } from '@/lib/zip-engine';
 import { downloadTokensFile } from '@/lib/tokens';
 import { supabase } from '@/lib/supabase';
 import {
@@ -256,28 +256,11 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
       setBulkTeamMappings(files.map(() => ''));
     }
 
-    // In-browser RAM inspection: auto-detect total stage count from first archive
     if (files.length > 0) {
       setDetectingStages(true);
       try {
-        const { BlobReader, ZipReader } = await import('@zip.js/zip.js');
-        const reader = new ZipReader(new BlobReader(files[0]));
-        const entries = await reader.getEntries();
-        await reader.close();
-
-        const stageNumbers = new Set<number>([1]);
-        for (const entry of entries) {
-          const zipMatch = entry.filename.match(/stage(\d+)\.zip/i);
-          if (zipMatch) stageNumbers.add(parseInt(zipMatch[1], 10));
-
-          const dirMatch = entry.filename.match(/^stage(\d+)[\/\\]/i);
-          if (dirMatch) stageNumbers.add(parseInt(dirMatch[1], 10));
-        }
-
-        const detected = Math.max(...Array.from(stageNumbers));
-        if (detected > 1) {
-          setBulkStageCount(detected);
-        }
+        const detected = await countStagesInOuterArchive(files[0]);
+        if (detected > 1) setBulkStageCount(detected);
       } catch (err) {
         console.warn('Could not inspect archive header in RAM', err);
       } finally {
@@ -320,17 +303,27 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
       updated[targetIndex] = temp;
       return updated;
     });
+    setBulkTeamMappings((prev) => {
+      const updated = [...prev];
+      while (updated.length < bulkZipFiles.length) updated.push('');
+      const temp = updated[index];
+      updated[index] = updated[targetIndex];
+      updated[targetIndex] = temp;
+      return updated;
+    });
   };
 
   // Sort ZIP files naturally (A-Z or Z-A)
   const handleSortZips = (direction: 'asc' | 'desc') => {
     setBulkZipFiles((prev) => {
-      const sorted = [...prev].sort((a, b) =>
+      const indexed = prev.map((file, i) => ({ file, teamKey: bulkTeamMappings[i] || '' }));
+      indexed.sort((a, b) =>
         direction === 'asc'
-          ? a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
-          : b.name.localeCompare(a.name, undefined, { numeric: true, sensitivity: 'base' })
+          ? a.file.name.localeCompare(b.file.name, undefined, { numeric: true, sensitivity: 'base' })
+          : b.file.name.localeCompare(a.file.name, undefined, { numeric: true, sensitivity: 'base' })
       );
-      return sorted;
+      setBulkTeamMappings(indexed.map((x) => x.teamKey));
+      return indexed.map((x) => x.file);
     });
   };
 
@@ -398,12 +391,21 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
         throw new Error(presignData.error || 'Failed to generate signed upload targets');
       }
 
-      const targets = presignData.uploadTargets;
+      const targets = presignData.uploadTargets as Array<{
+        teamKey: string;
+        storagePath: string;
+        token: string;
+        uploadUrl?: string;
+      }>;
+      const targetByTeamKey = new Map(targets.map((t) => [t.teamKey, t]));
 
       // 2. Upload each ZIP file directly to Supabase Storage
       for (let i = 0; i < teamsToDeploy.length; i++) {
         const { team, file } = teamsToDeploy[i];
-        const target = targets[i];
+        const target = targetByTeamKey.get(team.teamKey);
+        if (!target) {
+          throw new Error(`Missing upload target for team "${team.teamName}"`);
+        }
 
         setBulkUploadProgress(
           `Uploading archive ${i + 1} of ${teamsToDeploy.length}: ${file.name} for team "${team.teamName}" (${team.memberCount} members)...`
@@ -418,15 +420,18 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
         } catch {}
 
         if (!uploaded && target.uploadUrl) {
-          const formData = new FormData();
-          formData.append('file', file);
           const res = await fetch(target.uploadUrl, {
-            method: 'POST',
-            body: formData,
+            method: 'PUT',
+            body: file,
+            headers: { 'Content-Type': file.type || 'application/zip' },
           });
           if (!res.ok) {
             throw new Error(`Failed to upload ${file.name} to storage: ${res.statusText}`);
           }
+          uploaded = true;
+        }
+        if (!uploaded) {
+          throw new Error(`Failed to upload ${file.name} for team "${team.teamName}"`);
         }
       }
 
@@ -438,19 +443,32 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
         body: JSON.stringify({
           action: 'commit',
           adminSecret,
-          archives: teamsToDeploy.map((item, idx) => ({
-            teamKey: item.team.teamKey,
-            teamName: item.team.teamName,
-            tokens: item.team.tokens,
-            storagePath: targets[idx].storagePath,
-            stageCount: bulkStageCount,
-          })),
+          archives: teamsToDeploy.map((item) => {
+            const target = targetByTeamKey.get(item.team.teamKey);
+            if (!target) {
+              throw new Error(`Missing storage path for team "${item.team.teamName}"`);
+            }
+            return {
+              teamKey: item.team.teamKey,
+              teamName: item.team.teamName,
+              tokens: item.team.tokens,
+              storagePath: target.storagePath,
+              stageCount: bulkStageCount,
+            };
+          }),
         }),
       });
 
       const commitData = await commitRes.json();
       if (!commitRes.ok || !commitData.success) {
         throw new Error(commitData.error || 'Failed to commit team archives');
+      }
+
+      const commitErrors = (commitData.errors || []) as Array<{ target: string; error: string }>;
+      if (commitErrors.length > 0) {
+        throw new Error(
+          commitErrors.map((e) => `${e.target}: ${e.error}`).join('; ') || 'Some team archives failed to commit'
+        );
       }
 
       setStatusMessage({

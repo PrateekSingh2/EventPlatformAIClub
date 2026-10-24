@@ -94,7 +94,7 @@ export async function getCachedStageArchive(
 // Once cached, all stage unlocking is done client-side without re-downloading.
 
 const TOKEN_ARCHIVE_STORE = 'token-archive';
-const TOKEN_ARCHIVE_DB_VERSION = 2;
+const TOKEN_ARCHIVE_DB_VERSION = 3;
 
 function openTokenArchiveDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -123,6 +123,7 @@ interface CachedTokenArchiveRecord {
   accessToken: string;
   blob: Blob;
   stageCount: number;
+  archiveKey?: string;
   cachedAt: number;
 }
 
@@ -130,7 +131,8 @@ interface CachedTokenArchiveRecord {
 export async function saveTokenArchive(
   accessToken: string,
   blob: Blob,
-  stageCount: number
+  stageCount: number,
+  archiveKey?: string
 ): Promise<void> {
   if (typeof window === 'undefined') return;
   try {
@@ -141,6 +143,7 @@ export async function saveTokenArchive(
       accessToken,
       blob,
       stageCount,
+      archiveKey,
       cachedAt: Date.now(),
     };
     store.put(record);
@@ -157,7 +160,7 @@ export async function saveTokenArchive(
 /** Retrieves the cached outer archive ZIP blob for a token from IndexedDB. */
 export async function getCachedTokenArchive(
   accessToken: string
-): Promise<{ blob: Blob; stageCount: number } | null> {
+): Promise<{ blob: Blob; stageCount: number; archiveKey?: string } | null> {
   if (typeof window === 'undefined') return null;
   try {
     const db = await openTokenArchiveDb();
@@ -170,7 +173,11 @@ export async function getCachedTokenArchive(
     });
     db.close();
     if (!result) return null;
-    return { blob: result.blob, stageCount: result.stageCount };
+    return {
+      blob: result.blob,
+      stageCount: result.stageCount,
+      archiveKey: result.archiveKey,
+    };
   } catch {
     return null;
   }

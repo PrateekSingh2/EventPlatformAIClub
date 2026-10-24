@@ -1,7 +1,11 @@
 'use client';
 
 import React, { useEffect, useState, useRef } from 'react';
-import { extractZipInBrowser, extractInnerZipBlob, extractStageArchiveInBrowser } from '@/lib/zip-engine';
+import {
+  extractZipInBrowser,
+  extractStageArchiveInBrowser,
+  resolveNextStageZipBlob,
+} from '@/lib/zip-engine';
 import { enqueueStageProgress } from '@/lib/offline-progress-queue';
 import { getCachedStageArchive, saveStageArchive } from '@/lib/stage-cache';
 import confetti from 'canvas-confetti';
@@ -17,6 +21,8 @@ interface UnlockNextStageModalProps {
   accessToken: string;
   /** If provided, uses nested-ZIP in-browser decryption (new token archive system). */
   tokenArchiveBlob?: Blob | null;
+  /** Passwords already verified for prior stages (nested-chain replay). */
+  stagePasswords?: Record<number, string>;
   onClose: () => void;
   onUnlockSuccess: (
     nextStageNumber: number,
@@ -35,6 +41,7 @@ export function UnlockNextStageModal({
   accessToken,
   nextStageZipBlob,
   tokenArchiveBlob,
+  stagePasswords,
   onClose,
   onUnlockSuccess,
 }: UnlockNextStageModalProps) {
@@ -124,6 +131,14 @@ export function UnlockNextStageModal({
     const durationSeconds = Math.max(1, Math.round((completedTimestamp - stageOpenTimeRef.current) / 1000));
     const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
 
+    const resolveTargetZip = async () => {
+      if (!tokenArchiveBlob) return nextStageZipBlob ?? null;
+      return resolveNextStageZipBlob(tokenArchiveBlob, nextStageNumber, {
+        prefetched: nextStageZipBlob,
+        stagePasswords,
+      });
+    };
+
     // Helper to apply local fallback cooldown on wrong attempt
     const applyFailureCooldown = (serverCooldown?: number, errorMsg?: string) => {
       localFailedAttemptsRef.current += 1;
@@ -187,7 +202,7 @@ export function UnlockNextStageModal({
     if (isOffline) {
       try {
         let offlineValid = false;
-        const targetZip = nextStageZipBlob || (tokenArchiveBlob ? await extractInnerZipBlob(tokenArchiveBlob, `stage${nextStageNumber}.zip`).catch(() => null) : null);
+        const targetZip = tokenArchiveBlob ? await resolveTargetZip() : nextStageZipBlob;
         if (targetZip) {
           try {
             await extractStageArchiveInBrowser(targetZip, cleanPassword);
@@ -259,7 +274,7 @@ export function UnlockNextStageModal({
       }
 
       // ── Token Archive Path (nested archive system) ────────────────────────
-      const targetZip = nextStageZipBlob || (tokenArchiveBlob ? await extractInnerZipBlob(tokenArchiveBlob, `stage${nextStageNumber}.zip`).catch(() => null) : null);
+      const targetZip = tokenArchiveBlob ? await resolveTargetZip() : nextStageZipBlob;
       if (targetZip) {
         try {
           await extractStageArchiveInBrowser(targetZip, cleanPassword);

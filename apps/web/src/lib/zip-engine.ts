@@ -45,8 +45,8 @@ export function cleanRelativePath(
     }
   }
 
-  // Strip stage wrapper folder if present (e.g. STAGE_01/, STAGE_02/, BONUS_11/)
-  clean = clean.replace(/^(STAGE_\d+|BONUS_\d+|Stage_\d+|bonus_\d+)[/]/i, '');
+  // Strip stage wrapper folder if present (e.g. STAGE_01/, stage1/, BONUS_11/)
+  clean = clean.replace(/^(STAGE_\d+|BONUS_\d+|Stage_\d+|bonus_\d+|stage\d+)[/\\]/i, '');
 
   const parts = clean.split('/');
   const name = parts.pop() || clean;
@@ -69,7 +69,8 @@ export function cleanRelativePath(
 export async function extractStageArchiveInBrowser(
   zipBlob: Blob,
   password?: string,
-  allowedCopyFilename: string = ''
+  allowedCopyFilename: string = '',
+  currentStageNumber: number = 1
 ): Promise<ExtractedStageResult> {
   try {
     const blobReader = new BlobReader(zipBlob);
@@ -88,14 +89,8 @@ export async function extractStageArchiveInBrowser(
 
     const allPaths = validEntries.map((e) => e.filename);
 
-    // 1. Check for nested next-stage zip archive
-    let nextZipEntry: any = null;
-    for (const entry of validEntries) {
-      if (entry.filename.toLowerCase().endsWith('.zip')) {
-        nextZipEntry = entry;
-        break;
-      }
-    }
+    // 1. Check for nested next-stage zip archive (prefer stage2.zip, stage3.zip, … over arbitrary .zip)
+    const nextZipEntry = pickNextStageZipEntry(validEntries, currentStageNumber);
 
     let nextZipBlob: Blob | undefined;
     let nextZipFilename: string | undefined;
@@ -341,6 +336,107 @@ export async function extractInnerZipBlob(
 /**
  * Lists all file entries inside an outer ZIP blob without extracting.
  */
+function pickNextStageZipEntry(validEntries: { filename: string; directory?: boolean }[], currentStage = 1) {
+  const zips = validEntries.filter((e) => !e.directory && e.filename.toLowerCase().endsWith('.zip'));
+  if (zips.length === 0) return null;
+
+  const numbered = zips
+    .map((entry) => {
+      const base = entry.filename.split('/').pop() || entry.filename;
+      const match = base.match(/^stage(\d+)\.zip$/i);
+      return match ? { entry, stageNum: parseInt(match[1], 10) } : null;
+    })
+    .filter((x): x is { entry: (typeof zips)[0]; stageNum: number } => x !== null)
+    .sort((a, b) => a.stageNum - b.stageNum);
+
+  const explicitNext = numbered.find((x) => x.stageNum > currentStage);
+  if (explicitNext) return explicitNext.entry;
+
+  if (currentStage === 1) {
+    const notStage1 = zips.find((e) => !/stage1\.zip$/i.test(e.filename.split('/').pop() || ''));
+    return notStage1 || zips[0];
+  }
+
+  return zips[0];
+}
+
+/** Count stage slots referenced inside an outer team archive (stage folders + stageN.zip). */
+export async function countStagesInOuterArchive(blob: Blob): Promise<number> {
+  const entries = await listZipEntries(blob);
+  const stageNums = new Set<number>([1]);
+
+  for (const entry of entries) {
+    const zipMatch = entry.filename.match(/stage(\d+)\.zip/i);
+    if (zipMatch) stageNums.add(parseInt(zipMatch[1], 10));
+
+    const dirMatch = entry.filename.match(/^stage(\d+)[/\\]/i);
+    if (dirMatch) stageNums.add(parseInt(dirMatch[1], 10));
+  }
+
+  return Math.max(...stageNums);
+}
+
+/**
+ * Stage 1 blob: prefer embedded stage1.zip; otherwise the outer archive (nested-chain format).
+ */
+export async function resolveStageOneBlob(outerZipBlob: Blob): Promise<Blob> {
+  try {
+    return await extractInnerZipBlob(outerZipBlob, 'stage1.zip');
+  } catch {
+    return outerZipBlob;
+  }
+}
+
+/**
+ * Resolves the ZIP blob for stage N unlock / decryption (bundle `stageN.zip` or nested chain).
+ */
+export async function resolveNextStageZipBlob(
+  outerTokenArchive: Blob,
+  nextStageNumber: number,
+  options?: {
+    prefetched?: Blob | null;
+    stagePasswords?: Record<number, string>;
+  }
+): Promise<Blob | null> {
+  if (options?.prefetched) return options.prefetched;
+  if (nextStageNumber < 2) return null;
+
+  try {
+    return await extractInnerZipBlob(outerTokenArchive, `stage${nextStageNumber}.zip`);
+  } catch {
+    // Nested-chain archives embed the next stage inside the previous stage blob.
+  }
+
+  try {
+    let currentBlob = await resolveStageOneBlob(outerTokenArchive);
+    for (let stage = 1; stage < nextStageNumber; stage++) {
+      const password = stage === 1 ? undefined : options?.stagePasswords?.[stage];
+      const result = await extractStageArchiveInBrowser(currentBlob, password, '', stage);
+      if (!result.nextZipBlob) {
+        return stage === nextStageNumber - 1 ? currentBlob : null;
+      }
+      currentBlob = result.nextZipBlob;
+    }
+    return currentBlob;
+  } catch {
+    return null;
+  }
+}
+
+/** Pick a sensible default file tab after stage extraction. */
+export function pickDefaultStageFile(files: ParsedFile[]): ParsedFile | undefined {
+  if (files.length === 0) return undefined;
+  return (
+    files.find((f) => f.name.toLowerCase() === 'ai_tutor_prompt.txt') ||
+    files.find((f) => f.name.toLowerCase() === 'ai_prompt.txt') ||
+    files.find((f) => f.name.toLowerCase().includes('prompt')) ||
+    files.find((f) => f.name.toLowerCase().includes('tutor')) ||
+    files.find((f) => f.name === 'START_HERE.md') ||
+    files.find((f) => f.name === 'README.md') ||
+    files[0]
+  );
+}
+
 export async function listZipEntries(
   outerZipBlob: Blob
 ): Promise<Array<{ filename: string; directory: boolean; size: number; encrypted: boolean }>> {
