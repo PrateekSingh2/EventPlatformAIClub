@@ -90,11 +90,24 @@ export async function POST(req: NextRequest) {
     if (!isPasswordValid && supabaseAdmin) {
       // Check database token_archives and stage_passwords
       try {
-        const { data: archiveRecord } = await supabaseAdmin
+        let { data: archiveRecord } = await supabaseAdmin
           .from('token_archives')
           .select('id')
           .eq('access_token', accessToken)
           .maybeSingle();
+
+        if (!archiveRecord && user.team_name) {
+          try {
+            const { data: teamArchive } = await supabaseAdmin
+              .from('token_archives')
+              .select('id')
+              .eq('team_name', user.team_name)
+              .order('uploaded_at', { ascending: false })
+              .limit(1)
+              .maybeSingle();
+            if (teamArchive) archiveRecord = teamArchive;
+          } catch {}
+        }
 
         if (archiveRecord) {
           const { data: pwRow } = await supabaseAdmin

@@ -298,3 +298,52 @@ export interface BrevoSendResponse {
   failed: number;
   errors?: string[];
 }
+
+
+// ------------------------------------------------------------------------------
+// Round 1 Rubric Evaluation & Independent Standings
+// ------------------------------------------------------------------------------
+export interface Round1RubricEvaluation {
+  id: string;
+  team_name: string;
+  judge_name: string;
+  theme: string;
+
+  // Criterion Scores (Mandatory)
+  score_prompt_clarity: number; // Max 20
+  score_functional_impl: number; // Max 25
+  score_ui_ux: number; // Max 15
+  score_problem_solving: number; // Max 15
+  score_prompt_iteration: number; // Max 10
+  score_creativity: number; // Max 5
+  score_live_demo: number; // Max 10
+
+  // Total Score (Calculated automatically, Max 100)
+  total_score: number;
+
+  // Criterion Review Fields (Optional comments / evidence)
+  comments_prompt_clarity?: string;
+  comments_functional_impl?: string;
+  comments_ui_ux?: string;
+  comments_problem_solving?: string;
+  comments_prompt_iteration?: string;
+  comments_creativity?: string;
+  comments_live_demo?: string;
+
+  // General Judge Notes (Optional)
+  judge_notes?: string;
+
+  created_at: string;
+  updated_at?: string;
+}
+
+export interface Round1LeaderboardEntry {
+  rank: number;
+  team_name: string;
+  theme: string;
+  total_score: number;
+  judge_name: string;
+  evaluations_count: number;
+  latest_evaluated_at: string;
+  evaluations: Round1RubricEvaluation[];
+}

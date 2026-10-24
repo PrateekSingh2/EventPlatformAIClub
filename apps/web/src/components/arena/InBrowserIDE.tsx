@@ -1,12 +1,38 @@
 'use client';
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import dynamic from 'next/dynamic';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { ParsedFile, StageManifest, ContestStatus } from '@/lib/types';
 import { SheetViewer } from './SheetViewer';
 import { subscribeProgressSyncStatus, flushOfflineProgressQueue, ProgressSyncStatus } from '@/lib/offline-progress-queue';
 import { FileExtensionIcon } from './FileIcon';
+
+// Lazily load Gemini Tutor drawer (KaTeX, remark-math, AI chat) to keep initial arena bundle lightweight
+const GeminiTutorDrawer = dynamic(
+  () => import('./GeminiTutorDrawer').then((m) => m.GeminiTutorDrawer),
+  { ssr: false, loading: () => null }
+);
+
+function GeminiSparkleIcon({ className = 'w-3.5 h-3.5' }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path
+        d="M12 2C12 7.52285 7.52285 12 2 12C7.52285 12 12 16.4771 12 22C12 16.4771 16.4771 12 22 12C16.4771 12 12 7.52285 12 2Z"
+        fill="url(#ide_sparkle_grad)"
+      />
+      <defs>
+        <linearGradient id="ide_sparkle_grad" x1="2" y1="2" x2="22" y2="22" gradientUnits="userSpaceOnUse">
+          <stop stopColor="#4285F4" />
+          <stop offset="0.4" stopColor="#9B72CF" />
+          <stop offset="0.8" stopColor="#D96570" />
+          <stop offset="1" stopColor="#F4B400" />
+        </linearGradient>
+      </defs>
+    </svg>
+  );
+}
 import {
   WifiOff,
   CloudLightning,
@@ -45,6 +71,7 @@ import {
   CheckCircle2,
   Megaphone,
   Search,
+  Copy,
 } from 'lucide-react';
 
 interface InBrowserIDEProps {
@@ -119,6 +146,33 @@ export function InBrowserIDE({
     pendingCount: 0,
     isSyncing: false,
   });
+
+  // Google Gemini AI Tutor Drawer State
+  const [isGeminiDrawerOpen, setIsGeminiDrawerOpen] = useState(false);
+  const [targetTutorFile, setTargetTutorFile] = useState<ParsedFile | null>(null);
+
+  const isTutorPromptFile = useCallback(
+    (f: ParsedFile | null | undefined): boolean => {
+      if (!f) return false;
+      const lower = (f.name || '').toLowerCase();
+      const allowedLower = (allowedCopyFilename || '').toLowerCase();
+      return (
+        lower === 'ai_tutor_prompt.txt' ||
+        lower.includes('tutor') ||
+        lower.includes('prompt') ||
+        (Boolean(allowedLower) && lower === allowedLower) ||
+        Boolean(f.isCopyAllowed)
+      );
+    },
+    [allowedCopyFilename]
+  );
+
+  const activeTutorPromptFile =
+    targetTutorFile && isTutorPromptFile(targetTutorFile)
+      ? targetTutorFile
+      : activeFile && isTutorPromptFile(activeFile)
+      ? activeFile
+      : files.find(isTutorPromptFile) || null;
 
   useEffect(() => {
     setIsOnline(typeof navigator !== 'undefined' ? navigator.onLine : true);
@@ -614,7 +668,8 @@ export function InBrowserIDE({
       return <SheetViewer sheets={file.sheets} filename={file.name} />;
     }
 
-    const isPrompt = allowedCopyFilename && file.name.toLowerCase() === allowedCopyFilename.toLowerCase();
+    const isTutorPrompt = isTutorPromptFile(file);
+    const isPrompt = isTutorPrompt;
     const lines = (file.content || '').split('\n');
 
     // File type label for status bar
@@ -633,7 +688,7 @@ export function InBrowserIDE({
       return (
         <div className="flex-1 flex flex-col h-full bg-app-bg overflow-hidden select-text">
           {/* Markdown Breadcrumb & Mode Switcher */}
-          <div className="h-9 bg-app-surface/90 backdrop-blur-md border-b border-white/[0.08] px-3 flex items-center justify-between text-xs select-none shrink-0 gap-2 font-sans">
+          <div className="h-9 bg-app-surface border-b border-app-border px-3 flex items-center justify-between text-xs select-none shrink-0 gap-2 font-sans">
             <div className="flex items-center space-x-1.5 min-w-0">
               <Folder className="w-3.5 h-3.5 text-app-subtext shrink-0" />
               <span className="text-app-subtext truncate">Stage {file.stageNumber || selectedStageNumber}</span>
@@ -649,11 +704,42 @@ export function InBrowserIDE({
               <span className="text-[10px] text-slate-400 hidden sm:inline">• Markdown Document</span>
             </div>
             <div className="flex items-center space-x-2 text-xs">
+              {isTutorPrompt && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTargetTutorFile(file);
+                    setIsGeminiDrawerOpen(true);
+                  }}
+                  className="flex items-center space-x-1.5 px-3 py-1 rounded-full bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-500 hover:via-indigo-500 hover:to-purple-500 text-white font-semibold text-xs active:scale-95 transition-all cursor-pointer shadow-[0_2px_12px_rgba(79,70,229,0.35)] hover:shadow-[0_4px_16px_rgba(168,85,247,0.45)] border border-white/20 whitespace-nowrap min-h-[28px]"
+                  title="Ask Gemini AI Tutor about this prompt file"
+                >
+                  <GeminiSparkleIcon className="w-3.5 h-3.5" />
+                  <span>Ask Gemini</span>
+                </button>
+              )}
+              {isPrompt && (
+                <button
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(file.content || '');
+                      showToast('Prompt copied to clipboard!');
+                    } catch {
+                      showToast('Failed to copy. Please select manually.');
+                    }
+                  }}
+                  className="flex items-center space-x-1.5 px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-xs cursor-pointer transition-colors shadow-xs"
+                  title="Copy prompt directive to clipboard"
+                >
+                  <Copy className="w-3 h-3" />
+                  <span className="hidden xs:inline">Copy Prompt</span>
+                </button>
+              )}
               {/* Preview vs Source Toggle */}
-              <div className="flex items-center bg-app-bg/80 border border-white/10 rounded-lg p-0.5 text-[11px] shadow-[inset_0_1px_3px_rgba(0,0,0,0.3)]">
+              <div className="flex items-center bg-app-bg border border-app-border rounded-lg p-0.5 text-[11px]">
                 <button
                   onClick={() => setMarkdownMode('preview')}
-                  className="px-2 py-0.5 rounded-md bg-app-accentBg text-app-accent font-medium shadow-[0_1px_4px_rgba(0,0,0,0.2),_inset_0_1px_0_rgba(255,255,255,0.1)] transition-colors cursor-pointer"
+                  className="px-2 py-0.5 rounded-md bg-app-accent text-app-bg font-medium transition-colors cursor-pointer"
                 >
                   Preview
                 </button>
@@ -679,7 +765,7 @@ export function InBrowserIDE({
           </div>
 
           {/* Editor Status Bar */}
-          <div className="h-6 bg-app-surface/90 border-t border-white/[0.08] px-3 flex items-center justify-between text-[11px] text-slate-400 select-none shrink-0 font-mono">
+          <div className="h-6 bg-app-surface border-t border-app-border px-3 flex items-center justify-between text-[11px] text-slate-400 select-none shrink-0 font-mono">
             <div className="flex items-center space-x-3">
               <span>Markdown Preview</span>
               <span className="hidden sm:inline text-slate-600">|</span>
@@ -691,7 +777,20 @@ export function InBrowserIDE({
               <span className="hidden sm:inline font-sans text-[10px] text-slate-400 uppercase tracking-wider font-semibold">
                 {fileTypeLabel}
               </span>
-              {isPrompt ? (
+              {isTutorPrompt ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTargetTutorFile(file);
+                    setIsGeminiDrawerOpen(true);
+                  }}
+                  className="flex items-center space-x-1 text-indigo-400 hover:text-indigo-300 font-semibold font-sans text-[10px] cursor-pointer"
+                  title="Click to open Gemini AI Tutor"
+                >
+                  <GeminiSparkleIcon className="w-3 h-3" />
+                  <span>Ask Gemini Available</span>
+                </button>
+              ) : isPrompt ? (
                 <span className="flex items-center space-x-1 text-emerald-400 font-semibold font-sans text-[10px]">
                   <Check className="w-3 h-3" />
                   <span>Copy Allowed</span>
@@ -712,7 +811,7 @@ export function InBrowserIDE({
     return (
       <div className="flex-1 flex flex-col h-full bg-app-bg overflow-hidden font-mono select-text">
         {/* Editor Toolbar & Breadcrumb */}
-        <div className="h-9 bg-app-surface/90 backdrop-blur-md border-b border-white/[0.08] px-3 flex items-center justify-between text-xs select-none shrink-0 gap-2 font-sans">
+        <div className="h-9 bg-app-surface border-b border-app-border px-3 flex items-center justify-between text-xs select-none shrink-0 gap-2 font-sans">
           <div className="flex items-center space-x-1.5 min-w-0">
             <Folder className="w-3.5 h-3.5 text-app-subtext shrink-0" />
             <span className="text-app-subtext truncate">Stage {file.stageNumber || selectedStageNumber}</span>
@@ -729,8 +828,26 @@ export function InBrowserIDE({
           </div>
 
           <div className="flex items-center space-x-2 text-[11px] shrink-0">
+            {isPrompt && (
+              <button
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(file.content || '');
+                    showToast('Directive copied to clipboard!');
+                  } catch {
+                    showToast('Failed to copy. Please select manually.');
+                  }
+                }}
+                className="flex items-center space-x-1.5 px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-xs cursor-pointer transition-colors shadow-xs"
+                title="Copy prompt directive to clipboard"
+              >
+                <Copy className="w-3 h-3" />
+                <span className="hidden xs:inline">Copy Prompt</span>
+              </button>
+            )}
+
             {file.type === 'markdown' && (
-              <div className="flex items-center bg-app-bg/80 border border-white/10 rounded-lg p-0.5 text-[10px] shadow-[inset_0_1px_3px_rgba(0,0,0,0.3)]">
+              <div className="flex items-center bg-app-bg border border-app-border rounded-lg p-0.5 text-[10px]">
                 <button
                   onClick={() => setMarkdownMode('preview')}
                   className="px-1.5 py-0.5 rounded-md text-app-subtext hover:text-app-text transition-colors cursor-pointer"
@@ -739,7 +856,7 @@ export function InBrowserIDE({
                 </button>
                 <button
                   onClick={() => setMarkdownMode('source')}
-                  className="px-1.5 py-0.5 rounded-md bg-app-accentBg text-app-accent font-medium shadow-[0_1px_4px_rgba(0,0,0,0.2),_inset_0_1px_0_rgba(255,255,255,0.1)] transition-colors cursor-pointer"
+                  className="px-1.5 py-0.5 rounded-md bg-app-accent text-app-bg font-medium transition-colors cursor-pointer"
                 >
                   Source
                 </button>
@@ -748,27 +865,42 @@ export function InBrowserIDE({
 
             <button
               onClick={() => setWordWrap(!wordWrap)}
-              className={`px-2.5 py-0.5 rounded-lg text-[10px] font-medium border transition-all cursor-pointer shadow-[0_2px_6px_rgba(0,0,0,0.15),_inset_0_1px_0_rgba(255,255,255,0.08)] ${
+              className={`px-2.5 py-0.5 rounded-lg text-[10px] font-medium border transition-colors cursor-pointer ${
                 wordWrap
-                  ? 'bg-app-accentBg text-app-accent border-app-accentBorder'
-                  : 'border-white/10 hover:bg-white/5 text-slate-400'
+                  ? 'bg-app-accent text-app-bg border-transparent'
+                  : 'border-app-border hover:bg-app-hover text-app-subtext hover:text-app-text'
               }`}
               title={wordWrap ? 'Word Wrap: ON (Click to disable)' : 'Word Wrap: OFF (Click to enable)'}
             >
               {wordWrap ? 'Wrap: On' : 'Wrap: Off'}
             </button>
 
-            <span className="text-slate-400 hidden sm:inline font-mono text-[11px]">
+            <span className="text-app-subtext hidden sm:inline font-mono text-[11px]">
               {lines.length} lines
             </span>
 
-            <span
-              className="flex items-center space-x-1 px-1.5 py-0.5 text-slate-500 text-[10px]"
-              title="Anti-cheat: Content copy disabled"
-            >
-              <Lock className="w-2.5 h-2.5" />
-              <span className="hidden sm:inline">Copy Disabled</span>
-            </span>
+            {isTutorPrompt ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setTargetTutorFile(file);
+                  setIsGeminiDrawerOpen(true);
+                }}
+                className="flex items-center space-x-1.5 px-3 py-1 rounded-full bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-500 hover:via-indigo-500 hover:to-purple-500 text-white font-semibold text-xs active:scale-95 transition-all cursor-pointer shadow-[0_2px_12px_rgba(79,70,229,0.35)] hover:shadow-[0_4px_16px_rgba(168,85,247,0.45)] border border-white/20 whitespace-nowrap min-h-[28px]"
+                title="Ask Gemini AI Tutor about this prompt file"
+              >
+                <GeminiSparkleIcon className="w-3.5 h-3.5" />
+                <span>Ask Gemini</span>
+              </button>
+            ) : (
+              <span
+                className="flex items-center space-x-1 px-1.5 py-0.5 text-app-subtext/70 text-[10px]"
+                title="Anti-cheat: Content copy disabled"
+              >
+                <Lock className="w-2.5 h-2.5" />
+                <span className="hidden sm:inline">Copy Disabled</span>
+              </span>
+            )}
           </div>
         </div>
 
@@ -788,7 +920,7 @@ export function InBrowserIDE({
               >
                 {/* Line Number Gutter */}
                 <div
-                  className={`w-12 sm:w-14 shrink-0 pr-3 text-right select-none border-r border-white/[0.08] font-mono text-[12px] leading-relaxed sm:leading-[1.75] tabular-nums cursor-pointer transition-colors ${
+                  className={`w-12 sm:w-14 shrink-0 pr-3 text-right select-none border-r border-app-border font-mono text-[12px] leading-relaxed sm:leading-[1.75] tabular-nums cursor-pointer transition-colors ${
                     isSelected ? 'text-cyan-400 font-bold bg-white/[0.04]' : 'text-slate-500 group-hover:text-slate-300'
                   }`}
                   title={`Line ${lineNum}`}
@@ -810,7 +942,7 @@ export function InBrowserIDE({
         </div>
 
         {/* Editor Bottom Status Bar */}
-        <div className="h-6 bg-app-surface/90 border-t border-white/[0.08] px-3 flex items-center justify-between text-[11px] text-slate-400 select-none shrink-0 font-mono">
+        <div className="h-6 bg-app-surface border-t border-app-border px-3 flex items-center justify-between text-[11px] text-slate-400 select-none shrink-0 font-mono">
           <div className="flex items-center space-x-3">
             <span>Ln {selectedLine || 1}, Col 1</span>
             <span className="hidden sm:inline text-slate-600">|</span>
@@ -822,7 +954,20 @@ export function InBrowserIDE({
             <span className="hidden sm:inline font-sans text-[10px] text-slate-400 uppercase tracking-wider font-semibold">
               {fileTypeLabel}
             </span>
-            {isPrompt ? (
+            {isTutorPrompt ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setTargetTutorFile(file);
+                  setIsGeminiDrawerOpen(true);
+                }}
+                className="flex items-center space-x-1 text-indigo-400 hover:text-indigo-300 font-semibold font-sans text-[10px] cursor-pointer"
+                title="Click to open Gemini AI Tutor"
+              >
+                <GeminiSparkleIcon className="w-3 h-3" />
+                <span>Ask Gemini Available</span>
+              </button>
+            ) : isPrompt ? (
               <span className="flex items-center space-x-1 text-emerald-400 font-semibold font-sans text-[10px]">
                 <Check className="w-3 h-3" />
                 <span>Copy Allowed</span>
@@ -841,20 +986,18 @@ export function InBrowserIDE({
 
   return (
     <div className="flex flex-col h-full bg-app-bg text-app-text overflow-hidden font-sans select-none transition-colors duration-150 relative">
-      {/* Ambient background light gradients for authentic glassmorphism */}
-      <div className="absolute top-0 left-1/4 w-96 h-96 bg-cyan-500/5 rounded-full blur-3xl pointer-events-none -z-10" />
-      <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-emerald-500/5 rounded-full blur-3xl pointer-events-none -z-10" />
+
       
       {/* =========================================================================
           TOP HEADER / WORKSPACE BAR
          ========================================================================= */}
-      <header className="h-14 sm:h-15 bg-app-surface/85 backdrop-blur-xl border-b border-white/[0.08] px-3 sm:px-4 py-2 flex items-center justify-between text-xs sm:text-sm select-none gap-2 shadow-[0_4px_20px_rgba(0,0,0,0.2)] relative z-20">
+      <header className="h-14 sm:h-15 bg-app-surface border-b border-app-border px-3 sm:px-4 py-2 flex items-center justify-between text-xs sm:text-sm select-none gap-2 shadow-[0_4px_20px_rgba(0,0,0,0.2)] relative z-20">
         
         {/* Left: Hamburger (Mobile) + Branding */}
         <div className="flex items-center space-x-2 sm:space-x-3.5 min-w-0">
           <button
             onClick={toggleSidebar}
-            className="p-1.5 -ml-1 rounded-xl hover:bg-white/5 border border-transparent hover:border-white/10 text-app-subtext hover:text-app-text transition-all cursor-pointer"
+            className="p-2 rounded-xl border border-app-border bg-app-surface hover:bg-app-hover text-app-text transition-colors cursor-pointer min-h-[40px] min-w-[40px] flex items-center justify-center"
             title="Toggle Primary Side Bar (Ctrl+B)"
             aria-label="Toggle Side Bar"
           >
@@ -863,10 +1006,10 @@ export function InBrowserIDE({
           </button>
 
           <div className="flex items-center space-x-2 shrink-0">
-            <div className="w-7 h-7 rounded-xl bg-white/[0.04] border border-white/15 flex items-center justify-center font-bold text-app-accent text-xs shrink-0 shadow-[inset_0_1px_0_rgba(255,255,255,0.2),_0_2px_6px_rgba(0,0,0,0.35)]">
+            <div className="w-7 h-7 rounded-lg bg-app-surface-raised border border-app-border flex items-center justify-center font-bold text-app-text text-xs shrink-0">
               CS
             </div>
-            <span className="font-semibold tracking-tight text-app-text text-xs sm:text-sm md:text-base">
+            <span className="font-semibold tracking-tight text-app-text text-xs sm:text-sm md:text-base hidden xs:inline">
               Contest Sandbox
             </span>
           </div>
@@ -910,38 +1053,54 @@ export function InBrowserIDE({
           ) : isLastStage ? (
             <button
               onClick={onOpenCompleteModal}
-              className="flex items-center space-x-1 sm:space-x-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-amber-500 via-yellow-500 to-emerald-400 text-slate-950 font-bold text-xs hover:brightness-110 active:scale-[0.98] transition-all cursor-pointer shadow-[0_4px_16px_rgba(245,158,11,0.45),_inset_0_1px_0_rgba(255,255,255,0.4)] whitespace-nowrap animate-pulse"
+              className="flex items-center space-x-1 sm:space-x-1.5 px-2.5 sm:px-3.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-zinc-950 font-semibold text-xs active:scale-[0.98] transition-colors cursor-pointer whitespace-nowrap min-h-[36px]"
               title="Final Stage Complete: Submit Final Recovery Phrase to Lock Stats"
             >
-              <Trophy className="w-3.5 h-3.5 shrink-0 text-slate-950" />
-              <span>Complete Investigation</span>
-              <span className="text-[10px] font-bold bg-black/20 px-1.5 py-0.5 rounded ml-0.5 sm:ml-1">
+              <Trophy className="w-3.5 h-3.5 shrink-0" />
+              <span>Complete Final Stage</span>
+              <span className="text-[10px] font-mono font-bold bg-amber-600/30 px-1.5 py-0.5 rounded ml-0.5 sm:ml-1 hidden xs:inline-block">
                 +200 PTS
               </span>
             </button>
           ) : (
             <button
               onClick={onOpenUnlockModal}
-              className="flex items-center space-x-1 sm:space-x-1.5 px-3 sm:px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 text-slate-950 font-semibold text-xs hover:brightness-105 active:scale-[0.98] transition-all cursor-pointer shadow-[0_4px_14px_rgba(16,185,129,0.35),_inset_0_1px_0_rgba(255,255,255,0.4)] whitespace-nowrap"
+              className="flex items-center space-x-1 sm:space-x-1.5 px-2.5 sm:px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-xs active:scale-[0.98] transition-colors cursor-pointer whitespace-nowrap min-h-[36px]"
               title={`Unlock Stage ${selectedStageNumber + 1}`}
             >
               <Lock className="w-3.5 h-3.5 shrink-0" />
-              <span className="hidden sm:inline">Unlock Stage ${selectedStageNumber + 1}</span>
-              <span className="sm:hidden">Stage ${selectedStageNumber + 1}</span>
-              <span className="text-[10px] font-bold bg-black/20 px-1.5 py-0.5 rounded ml-0.5 sm:ml-1">
-                +${selectedStage?.points || 100} PTS
+              <span className="hidden sm:inline">Unlock Stage {selectedStageNumber + 1}</span>
+              <span className="sm:hidden">Stage {selectedStageNumber + 1}</span>
+              <span className="text-[10px] font-mono font-semibold bg-emerald-700/60 px-1.5 py-0.5 rounded ml-0.5 sm:ml-1 hidden xs:inline-block">
+                +{selectedStage?.points || 100} PTS
               </span>
+            </button>
+          )}
+
+          {/* Ask Gemini Quick Access Pill */}
+          {files.some(isTutorPromptFile) && (
+            <button
+              onClick={() => {
+                const promptF = files.find(isTutorPromptFile) || null;
+                setTargetTutorFile(promptF);
+                setIsGeminiDrawerOpen(true);
+              }}
+              className="flex items-center space-x-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-500 hover:via-indigo-500 hover:to-purple-500 text-white font-medium text-xs shadow-md shadow-indigo-500/20 active:scale-95 transition-all cursor-pointer border border-white/20 whitespace-nowrap min-h-[36px]"
+              title="Open Google Gemini AI Tutor"
+            >
+              <GeminiSparkleIcon className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Ask Gemini</span>
             </button>
           )}
 
           {/* 2. Broadcast Feed Side Panel Button */}
           <button
             onClick={onOpenBroadcastDrawer}
-            className="relative p-2 rounded-xl border border-app-border bg-app-surface hover:bg-app-hover text-app-text transition-all cursor-pointer flex items-center justify-center shrink-0 shadow-xs"
+            className="relative p-2 rounded-xl border border-app-border bg-app-surface hover:bg-app-hover text-app-text transition-colors cursor-pointer flex items-center justify-center shrink-0 min-h-[40px] min-w-[40px]"
             title="Tournament Broadcast Feed"
             aria-label="Open Broadcast Feed"
           >
-            <Megaphone className="w-4 h-4 text-cyan-500 dark:text-cyan-400 shrink-0" />
+            <Megaphone className="w-4 h-4 text-app-subtext shrink-0" />
             {unreadBroadcastCount && unreadBroadcastCount > 0 ? (
               <span className="absolute -top-1 -right-1 flex h-4 min-w-4 px-1 items-center justify-center rounded-full bg-rose-500 text-[9px] font-bold text-white shadow-xs">
                 {unreadBroadcastCount > 9 ? '9+' : unreadBroadcastCount}
@@ -949,7 +1108,7 @@ export function InBrowserIDE({
             ) : null}
           </button>
 
-                    {/* Offline / Progress Beacon Queue Status Indicator */}
+          {/* Offline / Progress Beacon Queue Status Indicator */}
           {(!isOnline || syncStatus.pendingCount > 0 || syncStatus.isSyncing) && (
             <button
               onClick={() => flushOfflineProgressQueue()}
@@ -960,7 +1119,7 @@ export function InBrowserIDE({
                   ? 'Syncing offline stage progress to server...'
                   : `${syncStatus.pendingCount} completion(s) queued. Click to sync now.`
               }
-              className={`hidden sm:flex items-center space-x-1.5 px-2.5 py-1.5 rounded-xl text-xs font-mono border transition-all cursor-pointer shadow-xs ${
+              className={`hidden sm:flex items-center space-x-1.5 px-2.5 py-1.5 rounded-xl text-xs font-mono border transition-colors cursor-pointer min-h-[40px] ${
                 !isOnline
                   ? 'bg-amber-500/10 text-amber-500 border-amber-500/25 hover:bg-amber-500/20'
                   : syncStatus.isSyncing
@@ -990,7 +1149,7 @@ export function InBrowserIDE({
           {/* 3. Leaderboard Simple Logo-like Button */}
           <button
             onClick={onOpenLeaderboard}
-            className="relative p-2 rounded-xl border border-app-border bg-app-surface hover:bg-app-hover text-app-text transition-all cursor-pointer flex items-center justify-center shrink-0 shadow-xs"
+            className="relative p-2 rounded-xl border border-app-border bg-app-surface hover:bg-app-hover text-app-text transition-colors cursor-pointer flex items-center justify-center shrink-0 min-h-[40px] min-w-[40px]"
             title="Live Leaderboard"
             aria-label="Open Leaderboard"
           >
@@ -1008,7 +1167,7 @@ export function InBrowserIDE({
                 e.stopPropagation();
                 setProfileMenuOpen((prev) => !prev);
               }}
-              className="flex items-center space-x-2 p-1 sm:px-2.5 sm:py-1.5 rounded-xl border border-app-border bg-app-surface hover:bg-app-hover transition-all cursor-pointer shadow-xs"
+              className="flex items-center space-x-2 p-1.5 sm:px-2.5 sm:py-1.5 rounded-xl border border-app-border bg-app-surface hover:bg-app-hover transition-colors cursor-pointer min-h-[40px]"
               title="User Account"
             >
               <div className="w-6 h-6 rounded-lg bg-app-muted border border-app-border text-app-accent font-bold flex items-center justify-center text-[10px] shrink-0 shadow-xs">
@@ -1090,12 +1249,27 @@ export function InBrowserIDE({
         
         {/* LEFT SIDEBAR: FILE EXPLORER */}
         <aside
-          className={`fixed md:static inset-y-0 left-0 z-40 md:z-auto w-72 md:w-64 border-r border-white/[0.08] bg-app-surface/80 backdrop-blur-xl flex flex-col flex-shrink-0 select-none shadow-xl md:shadow-none transition-all duration-200 ease-in-out ${
+          className={`fixed md:static inset-y-0 left-0 z-40 md:z-auto w-72 md:w-64 border-r border-app-border bg-app-surface flex flex-col flex-shrink-0 select-none shadow-2xl md:shadow-none transition-all duration-200 ease-in-out ${
             mobileMenuOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
           } ${!sidebarVisible ? 'md:hidden' : ''}`}
         >
+          {/* Mobile Drawer Close Header */}
+          <div className="flex md:hidden items-center justify-between p-3 border-b border-app-border bg-app-surface">
+            <div className="flex items-center space-x-2">
+              <FolderTree className="w-4 h-4 text-app-subtext" />
+              <span className="text-xs font-bold text-app-text">Stage Files</span>
+            </div>
+            <button
+              onClick={() => setMobileMenuOpen(false)}
+              className="p-1.5 rounded-lg text-app-subtext hover:text-app-text border border-app-border cursor-pointer min-h-[32px] min-w-[32px] flex items-center justify-center"
+              aria-label="Close file drawer"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
           {/* Explorer Header (VS Code style) */}
-          <div className="h-9 px-3 border-b border-white/[0.08] flex items-center justify-between text-xs text-app-subtext font-semibold uppercase tracking-wider bg-white/[0.02] select-none shrink-0">
+          <div className="h-9 px-3 border-b border-app-border flex items-center justify-between text-xs text-app-subtext font-semibold uppercase tracking-wider bg-white/[0.02] select-none shrink-0">
             <div className="flex items-center space-x-2">
               <FolderTree className="w-3.5 h-3.5 text-app-accent" />
               <span className="text-[11px] font-bold text-app-text tracking-wider">EXPLORER</span>
@@ -1147,7 +1321,7 @@ export function InBrowserIDE({
                     }}
                     className={`w-full flex items-center justify-between px-2.5 py-1.5 cursor-pointer transition-colors text-xs select-none no-underline group ${
                       isSelected
-                        ? 'bg-[#37373d]/90 text-white font-medium'
+                        ? 'bg-app-surface-raised text-app-text font-medium'
                         : 'text-slate-300 hover:bg-white/[0.04] hover:text-white'
                     }`}
                     title={`Stage ${stage.stageNumber}: ${stage.title} (Click to ${isExpanded ? 'collapse' : 'expand'})`}
@@ -1266,7 +1440,7 @@ export function InBrowserIDE({
                               }}
                               className={`w-full flex items-center justify-between pl-6 pr-2.5 py-1 text-xs select-none transition-colors duration-75 cursor-pointer no-underline group ${
                                 isFileActive
-                                  ? 'bg-[#37373d] text-white font-medium border-l-2 border-app-accent pl-[22px]'
+                                  ? 'bg-app-surface-raised text-app-text font-medium border-l-2 border-app-accent pl-[22px]'
                                   : isFileOpen
                                   ? 'text-white hover:bg-white/[0.05]'
                                   : 'text-slate-400 hover:bg-white/[0.04] hover:text-slate-200'
@@ -1336,7 +1510,7 @@ export function InBrowserIDE({
               {/* =========================================================================
                   MULTI-TAB HEADER & ACTIONS BAR
                  ========================================================================= */}
-              <div className="h-10 border-b border-white/[0.08] bg-app-surface/75 backdrop-blur-xl flex items-center justify-between px-2 gap-2 select-none">
+              <div className="h-10 border-b border-app-border bg-app-surface flex items-center justify-between px-2 gap-2 select-none">
                 
                 {/* Scrollable Open File Tabs Container */}
                 <div
@@ -1504,7 +1678,7 @@ export function InBrowserIDE({
               <div className="flex-1 flex overflow-hidden relative">
                 {splitView && splitFile ? (
                   // DUAL PANE SPLIT VIEW
-                  <div className="flex-1 flex flex-col md:flex-row overflow-hidden divide-y md:divide-y-0 md:divide-x divide-white/[0.08]">
+                  <div className="flex-1 flex flex-col md:flex-row overflow-hidden divide-y md:divide-y-0 md:divide-x divide-app-border">
                     
                     {/* Primary Pane (Left) */}
                     <div
@@ -1513,7 +1687,7 @@ export function InBrowserIDE({
                       }`}
                       onClick={() => setActivePane('left')}
                     >
-                      <div className="h-7 bg-app-surface/85 backdrop-blur-md border-b border-white/[0.08] px-3 flex items-center justify-between text-[11px] text-app-subtext select-none cursor-pointer">
+                      <div className="h-7 bg-app-surface border-b border-app-border px-3 flex items-center justify-between text-[11px] text-app-subtext select-none cursor-pointer">
                         <div className="flex items-center space-x-1.5 truncate">
                           {getFileIcon(activeFile)}
                           <span className={`font-medium truncate ${activePane === 'left' ? 'text-app-text font-semibold' : 'text-app-subtext'}`}>
@@ -1536,7 +1710,7 @@ export function InBrowserIDE({
                       }`}
                       onClick={() => setActivePane('right')}
                     >
-                      <div className="h-7 bg-app-surface/85 backdrop-blur-md border-b border-white/[0.08] px-2 sm:px-3 flex items-center justify-between text-[11px] text-app-subtext gap-2 select-none cursor-pointer">
+                      <div className="h-7 bg-app-surface border-b border-app-border px-2 sm:px-3 flex items-center justify-between text-[11px] text-app-subtext gap-2 select-none cursor-pointer">
                         <div className="flex items-center space-x-1.5 min-w-0">
                           {getFileIcon(splitFile)}
                           {/* File picker for pane 2 */}
@@ -1644,8 +1818,8 @@ export function InBrowserIDE({
 
           {/* INTERACTIVE TERMINAL DRAWER (Fixed height showing 5 logs at a time) */}
           {terminalOpen && (
-            <div className="shrink-0 border-t border-white/[0.08] bg-app-surface/85 backdrop-blur-xl font-mono text-xs p-2.5 sm:p-3 select-text transition-all shadow-[0_-4px_20px_rgba(0,0,0,0.2)]">
-              <div className="flex items-center justify-between text-app-subtext pb-1.5 mb-1.5 border-b border-white/[0.08]">
+            <div className="shrink-0 border-t border-app-border bg-app-surface font-mono text-xs p-2.5 sm:p-3 select-text transition-all shadow-[0_-4px_20px_rgba(0,0,0,0.2)]">
+              <div className="flex items-center justify-between text-app-subtext pb-1.5 mb-1.5 border-b border-app-border">
                 <div className="flex items-center space-x-2">
                   <Terminal className="w-3.5 h-3.5 text-app-accent" />
                   <span className="font-semibold text-app-text text-[11px] uppercase tracking-wider">
@@ -1670,7 +1844,7 @@ export function InBrowserIDE({
               {/* Fixed 5-log height container that does not grow or shrink with log count */}
               <div
                 ref={terminalLogsContainerRef}
-                className="h-[116px] overflow-y-auto space-y-1 text-[11px] p-2 bg-app-bg/85 rounded-xl border border-white/[0.06] shadow-[inset_0_2px_6px_rgba(0,0,0,0.4)]"
+                className="h-[88px] sm:h-[116px] overflow-y-auto space-y-1 text-[11px] p-2 bg-app-bg rounded-xl border border-app-border shadow-inner"
               >
                 {logs.length === 0 ? (
                   <p className="text-app-subtext italic py-1">Terminal logs cleared.</p>
@@ -1703,6 +1877,14 @@ export function InBrowserIDE({
           <span className="font-medium">{toastMsg}</span>
         </div>
       )}
+
+      {/* LAZY LOADED GOOGLE GEMINI AI TUTOR SIDE DRAWER */}
+      <GeminiTutorDrawer
+        isOpen={isGeminiDrawerOpen}
+        onClose={() => setIsGeminiDrawerOpen(false)}
+        promptFile={activeTutorPromptFile}
+        stageNumber={selectedStageNumber}
+      />
 
     </div>
   );

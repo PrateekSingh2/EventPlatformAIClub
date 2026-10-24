@@ -7,7 +7,7 @@ import { getContestSettings } from '@/lib/contest';
 /**
  * POST /api/stage/fetch-archive
  *
- * Returns a short-lived signed URL for the participant's unique outer ZIP archive.
+ * Returns a short-lived signed URL for the participant / team unique outer ZIP archive.
  * The outer ZIP contains stage1/ folder (unlocked) + stageN.zip files (password-protected).
  * The browser downloads this archive ONCE and caches it in IndexedDB.
  * All subsequent stage unlocking is done purely client-side.
@@ -66,7 +66,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 3. Look up the token's archive record
+    // 3. Look up the team's unique archive record
     if (!isSupabaseConfigured) {
       // Dev fallback: return demo
       return NextResponse.json({
@@ -78,13 +78,35 @@ export async function POST(req: NextRequest) {
     }
 
     const supabaseAdmin = getSupabaseAdmin();
-    const { data: archiveRecord, error: archiveErr } = await supabaseAdmin
+    const cleanToken = accessToken.trim().toUpperCase();
+
+    // First try: direct access_token lookup
+    let { data: archiveRecord } = await supabaseAdmin
       .from('token_archives')
       .select('id, storage_path, stage_count')
-      .eq('access_token', accessToken)
-      .single();
+      .eq('access_token', cleanToken)
+      .maybeSingle();
 
-    if (archiveErr || !archiveRecord) {
+    // Second try: team_name lookup (ensures all team members get the exact same team archive)
+    if (!archiveRecord && user.team_name) {
+      try {
+        const { data: teamArchive } = await supabaseAdmin
+          .from('token_archives')
+          .select('id, storage_path, stage_count')
+          .eq('team_name', user.team_name)
+          .order('uploaded_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (teamArchive) {
+          archiveRecord = teamArchive;
+        }
+      } catch (err: any) {
+        console.warn('[team_name archive lookup fallback]:', err.message);
+      }
+    }
+
+    if (!archiveRecord) {
       // Fall back to case study archive
       return NextResponse.json({
         downloadUrl: '/case-study-archive.zip',
@@ -110,24 +132,24 @@ export async function POST(req: NextRequest) {
           }
         );
     } catch {
-      // Non-fatal
+      // Telemetry non-fatal
     }
 
-    // 5. Generate short-lived signed URL
+    // 5. Generate signed download URL
     const { downloadUrl, expiresIn } = await createTokenArchiveDownloadUrl(
-      (archiveRecord as any).storage_path
+      archiveRecord.storage_path
     );
 
     return NextResponse.json({
       downloadUrl,
-      stageCount: (archiveRecord as any).stage_count,
+      stageCount: archiveRecord.stage_count || 12,
       expiresIn,
       isTokenArchive: true,
     });
   } catch (error: any) {
-    console.error('[API POST /api/stage/fetch-archive error]:', error);
+    console.error('[API /api/stage/fetch-archive error]:', error);
     return NextResponse.json(
-      { error: error.message || 'Failed to fetch archive' },
+      { error: error.message || 'Internal server error' },
       { status: 500 }
     );
   }

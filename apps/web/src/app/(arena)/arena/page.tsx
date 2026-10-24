@@ -448,6 +448,8 @@ function ArenaContent() {
 
             if (taggedFiles.length > 0) {
               const defaultFile =
+                taggedFiles.find((f) => f.name.toLowerCase() === 'ai_tutor_prompt.txt') ||
+                taggedFiles.find((f) => f.name.toLowerCase().includes('tutor')) ||
                 taggedFiles.find((f) => f.name === 'START_HERE.md') ||
                 taggedFiles.find((f) => f.name === 'README.md') ||
                 taggedFiles[0];
@@ -556,6 +558,8 @@ function ArenaContent() {
 
               if (taggedFiles.length > 0) {
                 const defaultFile =
+                  taggedFiles.find((f) => f.name.toLowerCase() === 'ai_tutor_prompt.txt') ||
+                  taggedFiles.find((f) => f.name.toLowerCase().includes('tutor')) ||
                   taggedFiles.find((f) => f.name === 'README.md') ||
                   taggedFiles.find((f) => f.name === 'START_HERE.md') ||
                   taggedFiles[0];
@@ -685,10 +689,16 @@ function ArenaContent() {
       });
 
       if (taggedFiles.length > 0) {
-        setActiveFile(taggedFiles[0]);
+        const defaultFile =
+          taggedFiles.find((f) => f.name.toLowerCase() === 'ai_tutor_prompt.txt') ||
+          taggedFiles.find((f) => f.name.toLowerCase().includes('tutor')) ||
+          taggedFiles.find((f) => f.name === 'START_HERE.md') ||
+          taggedFiles.find((f) => f.name === 'README.md') ||
+          taggedFiles[0];
+        setActiveFile(defaultFile);
         setOpenFiles((prev) => {
-          if (prev.some((f) => f.path === taggedFiles[0].path)) return prev;
-          return [...prev, taggedFiles[0]];
+          if (prev.some((f) => f.path === defaultFile.path)) return prev;
+          return [...prev, defaultFile];
         });
       } else {
         setActiveFile(null);
@@ -829,14 +839,16 @@ function ArenaContent() {
 
   if (error) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen p-6 bg-slate-950 text-slate-100">
-        <div className="p-8 max-w-md w-full glass-panel-highlight rounded-2xl border border-rose-500/40 text-center space-y-4">
-          <AlertCircle className="w-12 h-12 text-rose-400 mx-auto" />
-          <h2 className="text-xl font-bold">Access Denied</h2>
-          <p className="text-xs text-slate-300">{error}</p>
+      <div className="flex flex-col items-center justify-center min-h-screen p-4 bg-app-bg text-app-text font-sans">
+        <div className="p-6 sm:p-8 max-w-md w-full bg-app-surface border border-rose-500/35 rounded-3xl shadow-xl text-center space-y-4">
+          <div className="w-12 h-12 rounded-2xl bg-rose-500/10 border border-rose-500/25 flex items-center justify-center text-rose-500 mx-auto">
+            <AlertCircle className="w-6 h-6" />
+          </div>
+          <h2 className="text-lg sm:text-xl font-bold tracking-tight text-app-text">Access Denied</h2>
+          <p className="text-xs text-app-subtext font-medium leading-relaxed">{error}</p>
           <button
             onClick={() => router.push('/')}
-            className="px-5 py-2.5 text-xs font-bold text-slate-950 bg-cyan-400 rounded-xl hover:bg-cyan-300 transition-all cursor-pointer"
+            className="w-full py-2.5 px-4 rounded-xl bg-app-text text-app-bg text-xs font-semibold hover:opacity-90 transition-opacity cursor-pointer min-h-[44px]"
           >
             Return to Login
           </button>
@@ -968,9 +980,9 @@ export default function ArenaPage() {
   return (
     <Suspense
       fallback={
-        <div className="flex items-center justify-center min-h-screen bg-slate-950 text-cyan-400 font-mono text-sm">
-          <Loader2 className="w-6 h-6 animate-spin mr-2" />
-          Initializing Contest Arena...
+        <div className="flex items-center justify-center min-h-screen bg-app-bg text-app-text font-mono text-xs sm:text-sm">
+          <Loader2 className="w-5 h-5 animate-spin mr-2.5 text-app-subtext" />
+          <span>Initializing Contest Arena...</span>
         </div>
       }
     >

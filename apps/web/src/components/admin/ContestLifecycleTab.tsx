@@ -10,15 +10,12 @@ import {
   CheckCircle2,
   Clock,
   Send,
-  Radio,
   AlertTriangle,
   RotateCcw,
   ExternalLink,
   Loader2,
   Megaphone,
   History,
-  Shield,
-  Sparkles,
 } from 'lucide-react';
 
 interface ContestLifecycleTabProps {
@@ -108,20 +105,20 @@ export function ContestLifecycleTab({ adminSecret }: ContestLifecycleTabProps) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          adminSecret,
           message: broadcastMessage.trim(),
           urgency,
-          adminSecret,
         }),
       });
 
       const data = await res.json();
       if (!res.ok || !data.success) {
-        throw new Error(data.error || 'Failed to broadcast announcement');
+        throw new Error(data.error || 'Failed to dispatch broadcast');
       }
 
       setBroadcastFeedback({
         type: 'success',
-        text: 'Broadcast sent to all connected participants.',
+        text: 'Announcement broadcasted successfully to all contestants.',
       });
       setBroadcastMessage('');
       fetchAnnouncements();
@@ -136,16 +133,20 @@ export function ContestLifecycleTab({ adminSecret }: ContestLifecycleTabProps) {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       {/* Header Info */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-5 rounded-2xl glass-panel border border-slate-800">
-        <div>
-          <h2 className="text-base font-bold text-white flex items-center gap-2">
-            <Trophy className="w-5 h-5 text-amber-400" />
-            Tournament Operations & Realtime Controls
-          </h2>
-          <p className="text-xs text-slate-400">
-            Authoritative contest lifecycle state machine & real-time broadcast command center
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 sm:p-6 rounded-2xl bg-app-surface border border-app-border shadow-xs">
+        <div className="space-y-1">
+          <div className="flex items-center space-x-2">
+            <h2 className="text-base sm:text-lg font-bold text-app-text tracking-tight">
+              Tournament Operations
+            </h2>
+            <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-app-muted text-app-subtext border border-app-border">
+              Lifecycle
+            </span>
+          </div>
+          <p className="text-xs text-app-subtext">
+            Contest lifecycle state machine & real-time announcements.
           </p>
         </div>
 
@@ -153,78 +154,82 @@ export function ContestLifecycleTab({ adminSecret }: ContestLifecycleTabProps) {
           href="/arena?token=AX-DEMO-2026"
           target="_blank"
           rel="noopener noreferrer"
-          className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-cyan-950/60 hover:bg-cyan-900/60 border border-cyan-500/30 text-cyan-300 text-xs font-semibold transition-all"
+          className="inline-flex items-center justify-center space-x-1.5 px-3.5 py-2 rounded-xl bg-app-surface hover:bg-app-hover border border-app-border text-xs font-medium text-app-text transition-colors self-start sm:self-auto min-h-[38px]"
         >
-          <span>Open Demo Arena</span>
-          <ExternalLink className="w-3.5 h-3.5" />
+          <span>Demo Arena</span>
+          <ExternalLink className="w-3.5 h-3.5 text-app-subtext" />
         </a>
       </div>
 
       {actionError && (
-        <div className="p-4 rounded-xl bg-rose-950/40 border border-rose-500/50 text-xs text-rose-300 flex items-center gap-2">
-          <AlertTriangle className="w-4 h-4 text-rose-400 flex-shrink-0" />
+        <div className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-xs text-rose-400 flex items-center space-x-2">
+          <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
           <span>{actionError}</span>
         </div>
       )}
 
       {/* Lifecycle Cards Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         {/* DRAFT */}
         <div
-          className={`p-5 rounded-2xl border transition-all ${
+          className={`p-4 sm:p-5 rounded-2xl border transition-all flex flex-col justify-between ${
             status === 'DRAFT'
-              ? 'bg-slate-900 border-cyan-500/60 shadow-neon-cyan ring-1 ring-cyan-500/40'
-              : 'bg-slate-950/60 border-slate-800/80 opacity-70'
+              ? 'bg-app-surface border-zinc-600 shadow-sm'
+              : 'bg-app-surface/60 border-app-border opacity-70'
           }`}
         >
-          <div className="flex items-center justify-between mb-3">
-            <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
-              STAGE 0
-            </span>
-            <Clock className="w-4 h-4 text-slate-400" />
+          <div>
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-[10px] font-mono font-medium px-2 py-0.5 rounded bg-app-muted text-app-subtext border border-app-border">
+                STAGE 0
+              </span>
+              <Clock className="w-4 h-4 text-app-subtext" />
+            </div>
+            <h3 className="text-sm font-bold text-app-text mb-1">DRAFT</h3>
+            <p className="text-[11px] text-app-subtext mb-4 leading-relaxed">
+              Arena locked behind countdown. Participants cannot download challenges or submit answers.
+            </p>
           </div>
-          <h3 className="text-sm font-bold text-white mb-1">DRAFT</h3>
-          <p className="text-[11px] text-slate-400 mb-4 leading-relaxed">
-            Participants can login, but the arena is locked behind the &quot;Contest Starts in...&quot; countdown screen.
-          </p>
           {status === 'DRAFT' ? (
             <button
               onClick={() => handleTransition('LIVE')}
               disabled={transitioning}
-              className="w-full py-2 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-neon-emerald transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+              className="w-full py-2 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition-colors flex items-center justify-center space-x-1.5 cursor-pointer disabled:opacity-50 min-h-[38px]"
             >
               <Play className="w-3.5 h-3.5 fill-white" />
-              <span>Go LIVE Now</span>
+              <span>Start Contest (Live)</span>
             </button>
           ) : (
-            <div className="text-[10px] font-mono text-slate-500 italic">Inactive</div>
+            <div className="text-[11px] text-app-subtext/60 italic pt-2">Inactive</div>
           )}
         </div>
 
         {/* LIVE */}
         <div
-          className={`p-5 rounded-2xl border transition-all ${
+          className={`p-4 sm:p-5 rounded-2xl border transition-all flex flex-col justify-between ${
             status === 'LIVE'
-              ? 'bg-slate-900 border-emerald-500/60 shadow-neon-emerald ring-1 ring-emerald-500/40'
-              : 'bg-slate-950/60 border-slate-800/80 opacity-70'
+              ? 'bg-app-surface border-emerald-600/70 shadow-sm'
+              : 'bg-app-surface/60 border-app-border opacity-70'
           }`}
         >
-          <div className="flex items-center justify-between mb-3">
-            <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-emerald-950/60 text-emerald-300 border border-emerald-500/40">
-              ACTIVE
-            </span>
-            <Play className="w-4 h-4 text-emerald-400 fill-emerald-400" />
+          <div>
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-[10px] font-mono font-medium px-2 py-0.5 rounded bg-emerald-950/40 text-emerald-300 border border-emerald-800/60">
+                ACTIVE
+              </span>
+              <Play className="w-4 h-4 text-emerald-400 fill-emerald-400" />
+            </div>
+            <h3 className="text-sm font-bold text-app-text mb-1">LIVE</h3>
+            <p className="text-[11px] text-app-subtext mb-4 leading-relaxed">
+              Normal gameplay active. Contestants download stage archives, submit flags, and stream live standings.
+            </p>
           </div>
-          <h3 className="text-sm font-bold text-white mb-1">LIVE</h3>
-          <p className="text-[11px] text-slate-400 mb-4 leading-relaxed">
-            Normal gameplay active. Participants extract archives, submit solutions, and stream leaderboard updates.
-          </p>
           {status === 'LIVE' ? (
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 pt-2">
               <button
                 onClick={() => handleTransition('FROZEN')}
                 disabled={transitioning}
-                className="flex-1 py-2 px-2.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold shadow-md transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50"
+                className="flex-1 py-2 px-2.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold transition-colors flex items-center justify-center space-x-1 cursor-pointer disabled:opacity-50 min-h-[38px]"
               >
                 <Pause className="w-3.5 h-3.5 fill-white" />
                 <span>Freeze</span>
@@ -232,41 +237,43 @@ export function ContestLifecycleTab({ adminSecret }: ContestLifecycleTabProps) {
               <button
                 onClick={() => handleTransition('CONCLUDED')}
                 disabled={transitioning}
-                className="flex-1 py-2 px-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold shadow-md transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50"
+                className="flex-1 py-2 px-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold transition-colors flex items-center justify-center space-x-1 cursor-pointer disabled:opacity-50 min-h-[38px]"
               >
                 <CheckCircle2 className="w-3.5 h-3.5" />
                 <span>Conclude</span>
               </button>
             </div>
           ) : (
-            <div className="text-[10px] font-mono text-slate-500 italic">Inactive</div>
+            <div className="text-[11px] text-app-subtext/60 italic pt-2">Inactive</div>
           )}
         </div>
 
         {/* FROZEN */}
         <div
-          className={`p-5 rounded-2xl border transition-all ${
+          className={`p-4 sm:p-5 rounded-2xl border transition-all flex flex-col justify-between ${
             status === 'FROZEN'
-              ? 'bg-slate-900 border-amber-500/60 shadow-md ring-1 ring-amber-500/40'
-              : 'bg-slate-950/60 border-slate-800/80 opacity-70'
+              ? 'bg-app-surface border-amber-600/70 shadow-sm'
+              : 'bg-app-surface/60 border-app-border opacity-70'
           }`}
         >
-          <div className="flex items-center justify-between mb-3">
-            <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-amber-950/60 text-amber-300 border border-amber-500/40">
-              PAUSED
-            </span>
-            <Pause className="w-4 h-4 text-amber-400 fill-amber-400" />
+          <div>
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-[10px] font-mono font-medium px-2 py-0.5 rounded bg-amber-950/40 text-amber-300 border border-amber-800/60">
+                PAUSED
+              </span>
+              <Pause className="w-4 h-4 text-amber-400 fill-amber-400" />
+            </div>
+            <h3 className="text-sm font-bold text-app-text mb-1">FROZEN</h3>
+            <p className="text-[11px] text-app-subtext mb-4 leading-relaxed">
+              Participant leaderboard frozen and submissions paused. Monitoring telemetry remains active.
+            </p>
           </div>
-          <h3 className="text-sm font-bold text-white mb-1">FROZEN</h3>
-          <p className="text-[11px] text-slate-400 mb-4 leading-relaxed">
-            Participant leaderboard frozen and submissions paused. Telemetry radar and monitoring remain active.
-          </p>
           {status === 'FROZEN' ? (
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 pt-2">
               <button
                 onClick={() => handleTransition('LIVE')}
                 disabled={transitioning}
-                className="flex-1 py-2 px-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-neon-emerald transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50"
+                className="flex-1 py-2 px-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition-colors flex items-center justify-center space-x-1 cursor-pointer disabled:opacity-50 min-h-[38px]"
               >
                 <Play className="w-3.5 h-3.5 fill-white" />
                 <span>Resume</span>
@@ -274,123 +281,125 @@ export function ContestLifecycleTab({ adminSecret }: ContestLifecycleTabProps) {
               <button
                 onClick={() => handleTransition('CONCLUDED')}
                 disabled={transitioning}
-                className="flex-1 py-2 px-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold shadow-md transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50"
+                className="flex-1 py-2 px-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold transition-colors flex items-center justify-center space-x-1 cursor-pointer disabled:opacity-50 min-h-[38px]"
               >
                 <CheckCircle2 className="w-3.5 h-3.5" />
                 <span>Conclude</span>
               </button>
             </div>
           ) : (
-            <div className="text-[10px] font-mono text-slate-500 italic">Inactive</div>
+            <div className="text-[11px] text-app-subtext/60 italic pt-2">Inactive</div>
           )}
         </div>
 
         {/* CONCLUDED */}
         <div
-          className={`p-5 rounded-2xl border transition-all ${
+          className={`p-4 sm:p-5 rounded-2xl border transition-all flex flex-col justify-between ${
             status === 'CONCLUDED'
-              ? 'bg-slate-900 border-purple-500/60 shadow-md ring-1 ring-purple-500/40'
-              : 'bg-slate-950/60 border-slate-800/80 opacity-70'
+              ? 'bg-app-surface border-purple-600/70 shadow-sm'
+              : 'bg-app-surface/60 border-app-border opacity-70'
           }`}
         >
-          <div className="flex items-center justify-between mb-3">
-            <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-purple-950/60 text-purple-300 border border-purple-500/40">
-              TERMINAL
-            </span>
-            <CheckCircle2 className="w-4 h-4 text-purple-400" />
+          <div>
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-[10px] font-mono font-medium px-2 py-0.5 rounded bg-purple-950/40 text-purple-300 border border-purple-800/60">
+                FINAL
+              </span>
+              <CheckCircle2 className="w-4 h-4 text-purple-400" />
+            </div>
+            <h3 className="text-sm font-bold text-app-text mb-1">CONCLUDED</h3>
+            <p className="text-[11px] text-app-subtext mb-4 leading-relaxed">
+              Tournament finished. Submissions closed permanently. Final rankings published in read-only form.
+            </p>
           </div>
-          <h3 className="text-sm font-bold text-white mb-1">CONCLUDED</h3>
-          <p className="text-[11px] text-slate-400 mb-4 leading-relaxed">
-            Tournament finished. All submissions closed permanently. Final rankings published in read-only form.
-          </p>
           {status === 'CONCLUDED' ? (
             <button
               onClick={() => handleTransition('DRAFT')}
               disabled={transitioning}
-              className="w-full py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-xs font-semibold transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+              className="w-full py-2 px-3 rounded-xl bg-app-surface hover:bg-app-hover text-app-text border border-app-border text-xs font-medium transition-colors flex items-center justify-center space-x-1.5 cursor-pointer disabled:opacity-50 min-h-[38px]"
             >
-              <RotateCcw className="w-3.5 h-3.5" />
-              <span>Reset to DRAFT</span>
+              <RotateCcw className="w-3.5 h-3.5 text-app-subtext" />
+              <span>Reset to Draft</span>
             </button>
           ) : (
-            <div className="text-[10px] font-mono text-slate-500 italic">Inactive</div>
+            <div className="text-[11px] text-app-subtext/60 italic pt-2">Inactive</div>
           )}
         </div>
       </div>
 
       {/* Broadcast Composer & History Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left 2 Cols: Broadcast Composer */}
-        <div className="lg:col-span-2 p-6 rounded-2xl glass-panel border border-slate-800 space-y-4">
-          <div className="flex items-center gap-2.5">
-            <div className="p-2 rounded-xl bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
-              <Megaphone className="w-5 h-5" />
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+        {/* Left: Broadcast Composer */}
+        <div className="lg:col-span-2 p-4 sm:p-6 rounded-2xl bg-app-surface border border-app-border space-y-4 shadow-xs">
+          <div className="flex items-center space-x-2.5">
+            <div className="w-8 h-8 rounded-xl bg-app-hover border border-app-border flex items-center justify-center text-app-text shrink-0">
+              <Megaphone className="w-4 h-4" />
             </div>
             <div>
-              <h3 className="text-sm font-bold text-white">Broadcast Real-Time Announcement</h3>
-              <p className="text-xs text-slate-400">
-                Pushes an unclosable glowing banner to all ~200 connected contestant screens instantly
+              <h3 className="text-sm font-bold text-app-text">Broadcast Real-Time Announcement</h3>
+              <p className="text-xs text-app-subtext">
+                Instantly displays a notification banner to all connected contestants.
               </p>
             </div>
           </div>
 
           <form onSubmit={handleSendBroadcast} className="space-y-4">
             <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+              <label className="block text-xs font-medium text-app-text mb-1.5">
                 Urgency Level
               </label>
               <div className="grid grid-cols-3 gap-2">
                 <button
                   type="button"
                   onClick={() => setUrgency('info')}
-                  className={`py-2 px-3 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
+                  className={`py-2 px-2.5 rounded-xl text-xs font-medium border transition-colors cursor-pointer min-h-[38px] ${
                     urgency === 'info'
-                      ? 'bg-cyan-950/80 border-cyan-500 text-cyan-300 shadow-neon-cyan'
-                      : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
+                      ? 'bg-app-text text-app-bg border-app-text font-semibold'
+                      : 'bg-app-bg border-app-border text-app-subtext hover:text-app-text'
                   }`}
                 >
-                  Info (Standard)
+                  Standard (Info)
                 </button>
                 <button
                   type="button"
                   onClick={() => setUrgency('warning')}
-                  className={`py-2 px-3 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
+                  className={`py-2 px-2.5 rounded-xl text-xs font-medium border transition-colors cursor-pointer min-h-[38px] ${
                     urgency === 'warning'
-                      ? 'bg-amber-950/80 border-amber-500 text-amber-300 shadow-md'
-                      : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
+                      ? 'bg-amber-500 text-slate-950 border-amber-500 font-semibold'
+                      : 'bg-app-bg border-app-border text-app-subtext hover:text-app-text'
                   }`}
                 >
-                  Warning (Freeze/Time)
+                  Warning (Time)
                 </button>
                 <button
                   type="button"
                   onClick={() => setUrgency('critical')}
-                  className={`py-2 px-3 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
+                  className={`py-2 px-2.5 rounded-xl text-xs font-medium border transition-colors cursor-pointer min-h-[38px] ${
                     urgency === 'critical'
-                      ? 'bg-rose-950/80 border-rose-500 text-rose-300 shadow-neon-rose'
-                      : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
+                      ? 'bg-rose-500 text-white border-rose-500 font-semibold'
+                      : 'bg-app-bg border-app-border text-app-subtext hover:text-app-text'
                   }`}
                 >
-                  Critical (Rule Alert)
+                  Critical (Alert)
                 </button>
               </div>
             </div>
 
             <div>
               <div className="flex items-center justify-between mb-1.5">
-                <label className="text-xs font-semibold text-slate-300">
+                <label className="text-xs font-medium text-app-text">
                   Announcement Message
                 </label>
-                <span className="text-[10px] font-mono text-slate-500">
-                  {broadcastMessage.length} / 500 characters
+                <span className="text-[10px] font-mono text-app-subtext">
+                  {broadcastMessage.length} / 500
                 </span>
               </div>
               <textarea
                 value={broadcastMessage}
                 onChange={(e) => setBroadcastMessage(e.target.value.slice(0, 500))}
                 rows={3}
-                placeholder="e.g. Hint for Stage 2 has been updated in your dataset; 15 minutes remaining!"
-                className="w-full px-3.5 py-2.5 text-xs text-white bg-slate-900 border border-slate-700 rounded-xl focus:border-cyan-400 focus:outline-none resize-none font-sans"
+                placeholder="e.g. Stage 2 clarification posted; 15 minutes remaining!"
+                className="w-full px-3 py-2 text-xs text-app-text bg-app-bg border border-app-border rounded-xl focus:border-zinc-400 focus:outline-none resize-none font-sans transition-colors"
               />
             </div>
 
@@ -407,71 +416,71 @@ export function ContestLifecycleTab({ adminSecret }: ContestLifecycleTabProps) {
             <button
               type="submit"
               disabled={sendingBroadcast || !broadcastMessage.trim()}
-              className="flex items-center justify-center gap-2 w-full py-2.5 px-4 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold shadow-neon-cyan transition-all cursor-pointer disabled:opacity-50"
+              className="flex items-center justify-center space-x-2 w-full py-2.5 px-4 rounded-xl bg-app-text text-app-bg hover:opacity-90 font-semibold text-xs transition-opacity cursor-pointer disabled:opacity-40 min-h-[42px]"
             >
               {sendingBroadcast ? (
                 <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>Dispatching to Realtime Sockets...</span>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <span>Dispatching...</span>
                 </>
               ) : (
                 <>
-                  <Send className="w-4 h-4" />
-                  <span>Dispatch Real-Time Broadcast</span>
+                  <Send className="w-3.5 h-3.5" />
+                  <span>Dispatch Announcement</span>
                 </>
               )}
             </button>
           </form>
         </div>
 
-        {/* Right 1 Col: Recent Announcements History */}
-        <div className="p-6 rounded-2xl glass-panel border border-slate-800 flex flex-col space-y-4">
+        {/* Right: Recent Broadcasts History */}
+        <div className="p-4 sm:p-6 rounded-2xl bg-app-surface border border-app-border flex flex-col space-y-3.5 shadow-xs">
           <div className="flex items-center justify-between">
-            <h3 className="text-sm font-bold text-white flex items-center gap-2">
-              <History className="w-4 h-4 text-slate-400" />
-              Recent Broadcasts
+            <h3 className="text-sm font-bold text-app-text flex items-center space-x-2">
+              <History className="w-4 h-4 text-app-subtext" />
+              <span>Recent Broadcasts</span>
             </h3>
             <button
               onClick={fetchAnnouncements}
-              className="text-[10px] font-mono text-cyan-400 hover:underline cursor-pointer"
+              className="text-[11px] text-app-subtext hover:text-app-text transition-colors cursor-pointer"
             >
               Refresh
             </button>
           </div>
 
-          <div className="flex-1 overflow-y-auto space-y-2.5 max-h-64">
+          <div className="flex-1 overflow-y-auto space-y-2 max-h-72">
             {loadingHistory ? (
-              <div className="text-center py-6 text-xs text-slate-500">
-                <Loader2 className="w-4 h-4 animate-spin mx-auto mb-1 text-cyan-400" />
+              <div className="text-center py-6 text-xs text-app-subtext">
+                <Loader2 className="w-4 h-4 animate-spin mx-auto mb-1 text-app-subtext" />
                 Loading history...
               </div>
             ) : announcements.length === 0 ? (
-              <p className="text-xs text-slate-500 italic text-center py-6">
+              <p className="text-xs text-app-subtext italic text-center py-6">
                 No previous announcements recorded.
               </p>
             ) : (
               announcements.map((ann) => (
                 <div
                   key={ann.id}
-                  className="p-3 rounded-xl bg-slate-900/80 border border-slate-800 space-y-1"
+                  className="p-3 rounded-xl bg-app-bg border border-app-border space-y-1"
                 >
                   <div className="flex items-center justify-between text-[10px] font-mono">
                     <span
                       className={`px-1.5 py-0.5 rounded text-[9px] uppercase font-bold ${
                         ann.urgency === 'critical'
-                          ? 'bg-rose-950 text-rose-300'
+                          ? 'bg-rose-500/15 text-rose-300 border border-rose-500/30'
                           : ann.urgency === 'warning'
-                          ? 'bg-amber-950 text-amber-300'
-                          : 'bg-cyan-950 text-cyan-300'
+                          ? 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
+                          : 'bg-zinc-500/15 text-zinc-300 border border-zinc-500/30'
                       }`}
                     >
                       {ann.urgency}
                     </span>
-                    <span className="text-slate-500">
+                    <span className="text-app-subtext">
                       {new Date(ann.created_at).toLocaleTimeString()}
                     </span>
                   </div>
-                  <p className="text-xs text-slate-200 line-clamp-2">{ann.message}</p>
+                  <p className="text-xs text-app-text line-clamp-2">{ann.message}</p>
                 </div>
               ))
             )}

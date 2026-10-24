@@ -154,7 +154,7 @@ export function LiveLeaderboard({
       <div className="absolute inset-y-0 right-0 max-w-full flex pl-4 sm:pl-10">
         <aside
           onClick={(e) => e.stopPropagation()}
-          className="w-screen max-w-xs sm:w-88 border-l border-app-border bg-app-surface flex flex-col shadow-[-16px_0_40px_rgba(0,0,0,0.5)] select-none h-full"
+          className="w-screen max-w-sm sm:w-96 border-l border-app-border bg-app-surface flex flex-col shadow-2xl select-none h-full"
         >
           {/* Header */}
           <div className="p-3.5 border-b border-app-border space-y-2">
@@ -200,7 +200,7 @@ export function LiveLeaderboard({
                 </button>
                 <button
                   onClick={onClose}
-                  className="text-app-subtext hover:text-app-text cursor-pointer p-1.5 rounded-lg hover:bg-white/5 transition-colors"
+                  className="text-app-subtext hover:text-app-text cursor-pointer p-1.5 rounded-lg hover:bg-app-hover border border-app-border transition-colors min-h-[32px] min-w-[32px] flex items-center justify-center"
                   title="Close (Esc)"
                 >
                   <X className="w-4 h-4" />

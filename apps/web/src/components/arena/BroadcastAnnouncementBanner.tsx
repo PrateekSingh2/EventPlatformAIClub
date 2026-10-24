@@ -13,22 +13,22 @@ export function BroadcastAnnouncementBanner({ announcement }: BroadcastAnnouncem
 
   const urgencyConfig = {
     info: {
-      bg: 'bg-cyan-950/90 border-cyan-500/40 text-cyan-200 shadow-neon-cyan',
-      icon: <Info className="w-5 h-5 text-cyan-400 flex-shrink-0 animate-pulse" />,
-      badge: 'OFFICIAL ANNOUNCEMENT',
-      badgeClass: 'bg-cyan-900/60 text-cyan-300 border-cyan-500/40',
+      bg: 'bg-app-surface border-app-border text-app-text',
+      icon: <Info className="w-4 h-4 text-app-accent flex-shrink-0" />,
+      badge: 'ANNOUNCEMENT',
+      badgeClass: 'bg-app-surface-raised text-app-text border-app-border',
     },
     warning: {
-      bg: 'bg-amber-950/90 border-amber-500/40 text-amber-200 shadow-lg shadow-amber-900/40',
-      icon: <AlertTriangle className="w-5 h-5 text-amber-400 flex-shrink-0 animate-bounce" />,
+      bg: 'bg-amber-500/10 border-amber-500/30 text-amber-300',
+      icon: <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0" />,
       badge: 'TOURNAMENT ALERT',
-      badgeClass: 'bg-amber-900/60 text-amber-300 border-amber-500/40',
+      badgeClass: 'bg-amber-500/20 text-amber-300 border-amber-500/40',
     },
     critical: {
-      bg: 'bg-rose-950/95 border-rose-500/50 text-rose-100 shadow-neon-rose',
-      icon: <AlertOctagon className="w-5 h-5 text-rose-400 flex-shrink-0 animate-ping" />,
+      bg: 'bg-rose-500/10 border-rose-500/30 text-rose-300',
+      icon: <AlertOctagon className="w-4 h-4 text-rose-400 flex-shrink-0" />,
       badge: 'CRITICAL NOTICE',
-      badgeClass: 'bg-rose-900/80 text-rose-300 border-rose-500/50',
+      badgeClass: 'bg-rose-500/20 text-rose-300 border-rose-500/40',
     },
   };
 
@@ -38,28 +38,28 @@ export function BroadcastAnnouncementBanner({ announcement }: BroadcastAnnouncem
     <div
       role="alert"
       aria-live="assertive"
-      className="fixed top-0 left-0 right-0 z-50 flex items-center justify-center p-2.5 transition-all animate-in slide-in-from-top duration-300 ease-out"
+      className="fixed top-0 left-0 right-0 z-50 flex items-center justify-center p-2.5 transition-all animate-in slide-in-from-top duration-200"
     >
       <div
-        className={`w-full max-w-4xl px-4 py-3 rounded-2xl border backdrop-blur-md flex items-center justify-between gap-3 shadow-2xl ${config.bg}`}
+        className={`w-full max-w-3xl px-3.5 py-2.5 rounded-xl border backdrop-blur-md flex items-center justify-between gap-3 shadow-lg ${config.bg}`}
       >
-        <div className="flex items-center gap-3 overflow-hidden">
+        <div className="flex items-center gap-2.5 overflow-hidden">
           {config.icon}
-          <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2.5 min-w-0">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2 min-w-0">
             <span
-              className={`text-[10px] font-mono font-extrabold uppercase px-2 py-0.5 rounded border tracking-wider w-fit flex-shrink-0 ${config.badgeClass}`}
+              className={`text-[10px] font-mono font-semibold uppercase px-2 py-0.5 rounded border tracking-wider w-fit shrink-0 ${config.badgeClass}`}
             >
               {config.badge}
             </span>
-            <span className="text-xs sm:text-sm font-semibold truncate text-white">
+            <span className="text-xs sm:text-sm font-medium truncate text-app-text">
               {announcement.message}
             </span>
           </div>
         </div>
 
-        <div className="hidden md:flex items-center gap-1.5 text-[10px] font-mono text-slate-400 flex-shrink-0">
-          <Megaphone className="w-3 h-3 text-cyan-400" />
-          <span>Broadcast Active</span>
+        <div className="hidden md:flex items-center gap-1.5 text-[10px] font-mono text-app-subtext shrink-0">
+          <Megaphone className="w-3 h-3" />
+          <span>Live Broadcast</span>
         </div>
       </div>
     </div>
