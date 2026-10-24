@@ -10,6 +10,7 @@ import { ContestLifecycleTab } from '@/components/admin/ContestLifecycleTab';
 import { BrevoStudioTab } from '@/components/admin/BrevoStudioTab';
 import { FormDataTab } from '@/components/admin/FormDataTab';
 import { TeamMergerTab } from '@/components/admin/TeamMergerTab';
+import { AdminLeaderboardTab } from '@/components/admin/AdminLeaderboardTab';
 import { Round1RubricTab } from '@/components/admin/Round1RubricTab';
 import {
   Layers,
@@ -45,7 +46,8 @@ type AdminTab =
   | 'brevo'
   | 'round1'
   | 'formdata'
-  | 'teammerger';
+  | 'teammerger'
+  | 'leaderboard';
 
 interface NavItem {
   id: AdminTab;
@@ -111,6 +113,13 @@ const ADMIN_NAV_ITEMS: NavItem[] = [
     subtitle: 'Detect & merge duplicate teams',
     shortLabel: 'Merger',
     icon: GitMerge,
+  },
+  {
+    id: 'leaderboard',
+    title: 'Leaderboard',
+    subtitle: 'Live scores & stages',
+    shortLabel: 'Scores',
+    icon: Trophy,
   },
 ];
 
@@ -543,6 +552,7 @@ export default function AdminPage() {
             {activeTab === 'brevo' && <BrevoStudioTab adminSecret={adminSecret} />}
             {activeTab === 'formdata' && <FormDataTab adminSecret={adminSecret} />}
             {activeTab === 'teammerger' && <TeamMergerTab adminSecret={adminSecret} />}
+            {activeTab === 'leaderboard' && <AdminLeaderboardTab adminSecret={adminSecret} />}
           </main>
         </div>
       </div>

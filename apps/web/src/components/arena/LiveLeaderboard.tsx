@@ -10,6 +10,7 @@ import {
   getUserTotalTime,
   getTieBreakReason,
 } from '@/lib/leaderboard-sort';
+import { readClientCache, writeClientCache } from '@/lib/client-cache';
 import {
   Trophy,
   X,
@@ -54,30 +55,21 @@ export function LiveLeaderboard({
   const isConcluded = contestStatus === 'CONCLUDED';
 
   // Combined fetch of leaderboard applying deterministic multi-tier tie-breaking
-  const fetchLeaderboard = useCallback(async () => {
+  const fetchLeaderboard = useCallback(async (preferNetwork = true) => {
+    const cached = readClientCache<{ users: User[] }>('arena_leaderboard', 25_000);
+    if (cached?.users?.length) {
+      setUsers(sortLeaderboardUsers(cached.users));
+      if (!preferNetwork) return;
+    }
+
     try {
-      // 1. Direct real-time fetch from Supabase users table with all telemetry columns
-      if (isSupabaseConfigured) {
-        const { data, error } = await supabase
-          .from('users')
-          .select('id, name, email, role, access_token, team_name, team_size, total_score, current_stage, is_flagged, is_disqualified, is_completed, created_at, updated_at, contest_started_at, stage_timestamps, stage_durations, total_time_seconds, last_stage_completed_at')
-          .eq('role', 'participant')
-          .limit(500);
-
-        if (!error && Array.isArray(data)) {
-          const sorted = sortLeaderboardUsers(data as User[]);
-          setUsers(sorted);
-          return;
-        }
-      }
-
-      // 2. Fallback to server endpoint if direct client query encounters any network issue
-      const res = await fetch('/api/leaderboard');
+      const res = await fetch('/api/leaderboard', { cache: 'default' });
       if (res.ok) {
         const json = await res.json();
         if (json.success && Array.isArray(json.users)) {
           const sorted = sortLeaderboardUsers(json.users as User[]);
           setUsers(sorted);
+          writeClientCache('arena_leaderboard', { users: sorted });
           return;
         }
       }
@@ -85,7 +77,7 @@ export function LiveLeaderboard({
       console.warn('[LiveLeaderboard]: Failed to fetch unified leaderboard', err);
     }
 
-    setUsers([]);
+    if (!cached?.users?.length) setUsers([]);
   }, []);
 
   // Hot-reload: Auto-poll every 3 seconds + Supabase Realtime channel
@@ -95,11 +87,11 @@ export function LiveLeaderboard({
     fetchLeaderboard();
 
     const interval = setInterval(() => {
-      fetchLeaderboard();
-    }, 3000);
+      fetchLeaderboard(true);
+    }, 20_000);
 
-    // Subscribe to real-time postgres updates on users table
-    let channel: any = null;
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+    let channel: ReturnType<typeof supabase.channel> | null = null;
     if (isSupabaseConfigured) {
       channel = supabase
         .channel('leaderboard-channel')
@@ -107,13 +99,13 @@ export function LiveLeaderboard({
           'postgres_changes',
           { event: '*', schema: 'public', table: 'users' },
           () => {
-            // If frozen or concluded, do not update rankings from real-time events
-            if (contestStatus === 'FROZEN' || contestStatus === 'CONCLUDED') {
-              return;
-            }
-            startTransition(() => {
-              fetchLeaderboard();
-            });
+            if (contestStatus === 'FROZEN' || contestStatus === 'CONCLUDED') return;
+            if (debounceTimer) clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(() => {
+              startTransition(() => {
+                fetchLeaderboard(true);
+              });
+            }, 5000);
           }
         )
         .subscribe();
@@ -121,6 +113,7 @@ export function LiveLeaderboard({
 
     return () => {
       clearInterval(interval);
+      if (debounceTimer) clearTimeout(debounceTimer);
       if (channel) {
         supabase.removeChannel(channel);
       }

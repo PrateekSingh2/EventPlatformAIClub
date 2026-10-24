@@ -31,6 +31,13 @@ import {
   type MergeGroup,
   type TeamSubmission,
 } from '@/lib/team-merger';
+import {
+  assignTeamsToSeminarHalls,
+  buildSeminarHallExportRows,
+  DEFAULT_SEMINAR_HALLS,
+  type SeminarHallTeam,
+} from '@/lib/seminar-halls';
+import { readClientCache, writeClientCache } from '@/lib/client-cache';
 
 interface TeamMergerTabProps {
   adminSecret: string;
@@ -85,6 +92,9 @@ export function TeamMergerTab({ adminSecret }: TeamMergerTabProps) {
   const [previewGroup, setPreviewGroup] = useState<MergeGroup | null>(null);
   const [excludedOptOutCount, setExcludedOptOutCount] = useState(0);
   const [packMessage, setPackMessage] = useState<string | null>(null);
+  const [selectedHalls, setSelectedHalls] = useState<Set<string>>(new Set(['SH1', 'SH7']));
+  const [customHall, setCustomHall] = useState('');
+  const [hallMessage, setHallMessage] = useState<string | null>(null);
   const fetchGeneration = useRef(0);
 
   const fetchSubmissions = useCallback(async () => {
@@ -92,6 +102,18 @@ export function TeamMergerTab({ adminSecret }: TeamMergerTabProps) {
     try {
       setLoading(true);
       setError(null);
+      const cached = readClientCache<{ submissions: TeamSubmission[] }>(
+        'admin_form_submissions',
+        45_000
+      );
+      if (cached?.submissions?.length) {
+        setSubmissions(cached.submissions);
+        setExcludedOptOutCount(
+          cached.submissions.filter((s) => s.squad_merge_opt_in === false).length
+        );
+        setLoading(false);
+      }
+
       const res = await fetch('/api/admin/form-submissions', {
         headers: { 'x-admin-secret': adminSecret },
       });
@@ -105,6 +127,7 @@ export function TeamMergerTab({ adminSecret }: TeamMergerTabProps) {
       const all: TeamSubmission[] = data.submissions || [];
       setExcludedOptOutCount(all.filter((s) => s.squad_merge_opt_in === false).length);
       setSubmissions(all);
+      writeClientCache('admin_form_submissions', { submissions: all });
     } catch {
       setError('Network error while loading submissions');
       setSubmissions([]);
@@ -174,6 +197,57 @@ export function TeamMergerTab({ adminSecret }: TeamMergerTabProps) {
     }
     return buildManualMergeGroups(submissions, manualGroupMap);
   }, [autoMerge, submissions, mergerEligible, manualGroupMap]);
+
+  const seminarTeams = useMemo((): SeminarHallTeam[] => {
+    return groups.map((g) => ({
+      teamKey: g.submissionIds.slice().sort().join('|'),
+      teamName: g.mergedTeamName,
+      memberCount: g.members.filter((m) => (m.email || m.name || '').trim()).length || g.members.length,
+      memberEmails: g.members.map((m) => m.email).filter(Boolean),
+    }));
+  }, [groups]);
+
+  const hallAssignments = useMemo(() => {
+    const halls = Array.from(selectedHalls);
+    return assignTeamsToSeminarHalls(seminarTeams, halls);
+  }, [seminarTeams, selectedHalls]);
+
+  const toggleHall = (hall: string) => {
+    setSelectedHalls((prev) => {
+      const next = new Set(prev);
+      if (next.has(hall)) next.delete(hall);
+      else next.add(hall);
+      return next;
+    });
+  };
+
+  const addCustomHall = () => {
+    const h = customHall.trim().toUpperCase();
+    if (!h) return;
+    setSelectedHalls((prev) => new Set(prev).add(h));
+    setCustomHall('');
+  };
+
+  const exportSeminarHallCsv = () => {
+    const halls = Array.from(selectedHalls);
+    if (halls.length === 0) {
+      setHallMessage('Select at least one seminar hall (e.g. SH1, SH7).');
+      return;
+    }
+    const rows = buildSeminarHallExportRows(seminarTeams, hallAssignments);
+    const headers = ['seminar_hall', 'merged_team_name', 'team_size', 'member_emails', 'team_key'];
+    const lines = [
+      headers.join(','),
+      ...rows.map((r) =>
+        headers.map((h) => csvEscape(String(r[h as keyof typeof r] ?? ''))).join(',')
+      ),
+    ];
+    downloadBlob(
+      new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' }),
+      `seminar-hall-assignments-${dateStamp()}.csv`
+    );
+    setHallMessage(`Exported ${rows.length} team row(s) across ${halls.length} hall(s).`);
+  };
 
   const toggleSelect = (id: string) => {
     setSelected((prev) => {
@@ -494,6 +568,71 @@ export function TeamMergerTab({ adminSecret }: TeamMergerTabProps) {
           ))}
         </div>
       )}
+
+      <div className="p-5 rounded-2xl border border-indigo-500/30 bg-indigo-500/5 space-y-4">
+        <div>
+          <h3 className="text-sm font-bold text-app-text">Seminar hall assignment</h3>
+          <p className="text-xs text-app-subtext mt-1">
+            Select halls, then divide <strong>merged teams</strong> evenly (round-robin). Export seating list for
+            event day.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {DEFAULT_SEMINAR_HALLS.map((hall) => (
+            <button
+              key={hall}
+              type="button"
+              onClick={() => toggleHall(hall)}
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold border ${
+                selectedHalls.has(hall)
+                  ? 'border-indigo-400 bg-indigo-500/20 text-indigo-200'
+                  : 'border-app-border text-app-subtext hover:bg-app-hover'
+              }`}
+            >
+              {hall}
+            </button>
+          ))}
+        </div>
+        <div className="flex flex-wrap gap-2 items-center">
+          <input
+            value={customHall}
+            onChange={(e) => setCustomHall(e.target.value)}
+            placeholder="Custom hall e.g. SH11"
+            className="px-3 py-1.5 rounded-lg border border-app-border bg-app-surface text-xs w-36"
+          />
+          <button
+            type="button"
+            onClick={addCustomHall}
+            className="px-3 py-1.5 rounded-lg text-xs border border-app-border hover:bg-app-hover"
+          >
+            Add hall
+          </button>
+          <button
+            type="button"
+            onClick={exportSeminarHallCsv}
+            disabled={seminarTeams.length === 0}
+            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-xl bg-indigo-600 text-white disabled:opacity-50"
+          >
+            <Download className="w-3.5 h-3.5" />
+            Export hall seating CSV
+          </button>
+        </div>
+        {hallMessage && (
+          <p className="text-xs text-indigo-300">{hallMessage}</p>
+        )}
+        {selectedHalls.size > 0 && seminarTeams.length > 0 && (
+          <p className="text-[11px] text-app-subtext font-mono">
+            Preview:{' '}
+            {Array.from(selectedHalls)
+              .sort()
+              .map((h) => {
+                const n = seminarTeams.filter((t) => hallAssignments.get(t.teamKey) === h).length;
+                return `${h}=${n} teams`;
+              })
+              .join(' · ')}
+          </p>
+        )}
+      </div>
 
       {previewGroup && (
         <div

@@ -21,10 +21,17 @@ export async function GET() {
 
     const sortedUsers = sortLeaderboardUsers(users || []);
 
-    return NextResponse.json({
-      success: true,
-      users: sortedUsers,
-    });
+    return NextResponse.json(
+      {
+        success: true,
+        users: sortedUsers,
+      },
+      {
+        headers: {
+          'Cache-Control': 'public, s-maxage=15, stale-while-revalidate=45',
+        },
+      }
+    );
   } catch (err: any) {
     console.error('[API GET /api/leaderboard exception]:', err);
     return NextResponse.json({ success: false, users: [] }, { status: 500 });

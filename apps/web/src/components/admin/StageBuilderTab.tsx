@@ -6,6 +6,8 @@ import { validateArchiveDecryption, extractInnerZipBlob, countStagesInOuterArchi
 import { mapWithConcurrency } from '@/lib/async-pool';
 import { downloadTokensFile } from '@/lib/tokens';
 import { supabase } from '@/lib/supabase';
+import { readClientCache, writeClientCache } from '@/lib/client-cache';
+import { CaseStudyKeysPanel } from '@/components/admin/CaseStudyKeysPanel';
 import {
   Upload,
   Shuffle,
@@ -62,6 +64,44 @@ type BulkDistributionMode = 'pool' | 'unique';
 
 const UPLOAD_CONCURRENCY = 4;
 const MANUAL_POOL_OVERRIDE_STORAGE_KEY = 'stageBuilder:manualPoolOverrides';
+
+function rosterFromParticipants(participants: any[]): TeamRosterItem[] {
+  const teamsMap = new Map<string, TeamRosterItem>();
+  for (const p of participants) {
+    const token = (p.access_token || '').trim().toUpperCase();
+    if (!token) continue;
+
+    const rawTeamName = (p.team_name || '').trim();
+    const isSolo = !rawTeamName;
+    const teamKey = isSolo ? `solo:${p.email.toLowerCase()}` : rawTeamName.toLowerCase();
+    const displayTeamName = isSolo ? `${p.name || p.email} (Solo)` : rawTeamName;
+
+    if (!teamsMap.has(teamKey)) {
+      teamsMap.set(teamKey, {
+        teamKey,
+        teamName: displayTeamName,
+        teamSize: p.team_size || (isSolo ? 'Solo' : undefined),
+        isSolo,
+        memberCount: 0,
+        members: [],
+        tokens: [],
+        primaryToken: token,
+      });
+    }
+
+    const team = teamsMap.get(teamKey)!;
+    team.memberCount++;
+    team.members.push({
+      name: p.name || p.email.split('@')[0],
+      email: p.email,
+      token,
+    });
+    if (!team.tokens.includes(token)) {
+      team.tokens.push(token);
+    }
+  }
+  return Array.from(teamsMap.values());
+}
 
 function makeUniquePoolKey(fileName: string): string {
   const base = fileName
@@ -226,47 +266,18 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
   const fetchAvailableTokens = async () => {
     setLoadingTokens(true);
     try {
+      const cached = readClientCache<{ participants: any[] }>('admin_participants_roster', 45_000);
+      if (cached?.participants?.length) {
+        setAvailableTeams(rosterFromParticipants(cached.participants));
+      }
+
       const res = await fetch('/api/admin/participants', {
         headers: { 'x-admin-secret': adminSecret },
       });
       const data = await res.json();
       if (res.ok && data.participants) {
-        const teamsMap = new Map<string, TeamRosterItem>();
-        for (const p of data.participants as any[]) {
-          const token = (p.access_token || '').trim().toUpperCase();
-          if (!token) continue;
-
-          const rawTeamName = (p.team_name || '').trim();
-          const isSolo = !rawTeamName;
-          const teamKey = isSolo ? `solo:${p.email.toLowerCase()}` : rawTeamName.toLowerCase();
-          const displayTeamName = isSolo ? `${p.name || p.email} (Solo)` : rawTeamName;
-
-          if (!teamsMap.has(teamKey)) {
-            teamsMap.set(teamKey, {
-              teamKey,
-              teamName: displayTeamName,
-              teamSize: p.team_size || (isSolo ? 'Solo' : undefined),
-              isSolo,
-              memberCount: 0,
-              members: [],
-              tokens: [],
-              primaryToken: token,
-            });
-          }
-
-          const team = teamsMap.get(teamKey)!;
-          team.memberCount++;
-          team.members.push({
-            name: p.name || p.email.split('@')[0],
-            email: p.email,
-            token,
-          });
-          if (!team.tokens.includes(token)) {
-            team.tokens.push(token);
-          }
-        }
-
-        const teamsArray = Array.from(teamsMap.values());
+        writeClientCache('admin_participants_roster', { participants: data.participants });
+        const teamsArray = rosterFromParticipants(data.participants);
         setAvailableTeams(teamsArray);
 
         // Auto-assign unique teams to zip files if files already loaded
@@ -1292,6 +1303,7 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
          ========================================================================= */}
       {mode === 'bulk' && (
         <div className="space-y-6">
+          <CaseStudyKeysPanel adminSecret={adminSecret} />
           {/* Header Description Banner */}
           <div className="p-5 rounded-2xl bg-app-surface border border-app-border">
             <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">

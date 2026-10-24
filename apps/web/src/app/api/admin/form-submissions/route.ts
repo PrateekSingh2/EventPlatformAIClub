@@ -53,7 +53,14 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ submissions: [], error: error.message }, { status: 503 });
     }
 
-    return NextResponse.json({ submissions: data ?? [] });
+    return NextResponse.json(
+      { submissions: data ?? [] },
+      {
+        headers: {
+          'Cache-Control': 'private, max-age=30, stale-while-revalidate=60',
+        },
+      }
+    );
   } catch (err) {
     console.error('[GET /api/admin/form-submissions]', err);
     return NextResponse.json(

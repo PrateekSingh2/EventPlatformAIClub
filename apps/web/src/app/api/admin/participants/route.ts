@@ -14,19 +14,37 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
+    const includeTelemetry = req.nextUrl.searchParams.get('telemetry') === '1';
     const supabaseAdmin = getSupabaseAdmin();
-    const { data: users, error } = await supabaseAdmin
-      .from('users')
-      .select('*, stage_telemetry(*)')
-      .order('created_at', { ascending: false });
+
+    const rosterSelect =
+      'id, name, email, access_token, team_name, team_size, role, total_score, current_stage, is_flagged, is_disqualified, is_completed, created_at, updated_at, contest_started_at, stage_timestamps, stage_durations, total_time_seconds, last_stage_completed_at';
+
+    const { data: users, error } = includeTelemetry
+      ? await supabaseAdmin
+          .from('users')
+          .select(`${rosterSelect}, stage_telemetry(user_id, stage_number, duration_seconds, score_awarded, flagged_too_fast, completed_at)`)
+          .order('created_at', { ascending: false })
+          .limit(500)
+      : await supabaseAdmin
+          .from('users')
+          .select(rosterSelect)
+          .order('created_at', { ascending: false })
+          .limit(500);
 
     if (error) {
       console.warn('[GET /admin/participants query warning]:', error.message);
       return NextResponse.json({ participants: [] });
     }
 
-    // Only return real participants registered in the database
-    return NextResponse.json({ participants: users || [] });
+    return NextResponse.json(
+      { participants: users || [] },
+      {
+        headers: {
+          'Cache-Control': includeTelemetry ? 'private, no-store' : 'private, max-age=30, stale-while-revalidate=60',
+        },
+      }
+    );
   } catch (error: any) {
     console.error('[API GET /admin/participants error]:', error);
     return NextResponse.json({ participants: [] });
