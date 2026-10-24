@@ -3,6 +3,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   GitMerge,
+  GitBranch,
   Loader2,
   RefreshCw,
   Download,
@@ -16,10 +17,15 @@ import * as XLSX from 'xlsx';
 import type { TeamMemberPayload } from '@/lib/team-registration-form';
 import {
   applyManualMerge,
+  applyManualUnmerge,
   buildManualMergeGroups,
   buildMergerExportRows,
   computeAutoMergeGroups,
   filterMergerEligibleSubmissions,
+  manualGroupMapFromJson,
+  manualGroupMapsEqual,
+  manualGroupMapToJson,
+  pruneManualGroupMap,
   MERGER_EXPORT_HEADERS,
   type MergeGroup,
   type TeamSubmission,
@@ -30,6 +36,27 @@ interface TeamMergerTabProps {
 }
 
 const AUTO_MERGE_STORAGE_KEY = 'eventPlatform.teamMerger.autoMerge';
+const MANUAL_GROUPS_STORAGE_KEY = 'eventPlatform.teamMerger.manualGroups';
+
+function readStoredManualGroups(): Map<string, string> {
+  try {
+    return manualGroupMapFromJson(localStorage.getItem(MANUAL_GROUPS_STORAGE_KEY));
+  } catch {
+    return new Map();
+  }
+}
+
+function writeStoredManualGroups(map: Map<string, string>) {
+  try {
+    if (map.size === 0) {
+      localStorage.removeItem(MANUAL_GROUPS_STORAGE_KEY);
+    } else {
+      localStorage.setItem(MANUAL_GROUPS_STORAGE_KEY, manualGroupMapToJson(map));
+    }
+  } catch {
+    /* private mode / quota */
+  }
+}
 
 function readStoredAutoMerge(): boolean {
   try {
@@ -54,7 +81,9 @@ export function TeamMergerTab({ adminSecret }: TeamMergerTabProps) {
   const [autoMerge, setAutoMerge] = useState(() =>
     typeof window !== 'undefined' ? readStoredAutoMerge() : false
   );
-  const [manualGroupMap, setManualGroupMap] = useState<Map<string, string>>(new Map());
+  const [manualGroupMap, setManualGroupMap] = useState<Map<string, string>>(() =>
+    typeof window !== 'undefined' ? readStoredManualGroups() : new Map()
+  );
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [previewGroup, setPreviewGroup] = useState<MergeGroup | null>(null);
   const [excludedOptOutCount, setExcludedOptOutCount] = useState(0);
@@ -90,11 +119,41 @@ export function TeamMergerTab({ adminSecret }: TeamMergerTabProps) {
     if (adminSecret) fetchSubmissions();
   }, [adminSecret, fetchSubmissions]);
 
+  const submissionIdsKey = useMemo(
+    () =>
+      submissions
+        .map((s) => s.id)
+        .sort()
+        .join('|'),
+    [submissions]
+  );
+
+  useEffect(() => {
+    if (!submissionIdsKey) return;
+    setManualGroupMap((prev) => {
+      const pruned = pruneManualGroupMap(
+        prev,
+        submissions.map((s) => s.id)
+      );
+      if (manualGroupMapsEqual(prev, pruned)) return prev;
+      writeStoredManualGroups(pruned);
+      return pruned;
+    });
+  }, [submissionIdsKey, submissions]);
+
+  const persistManualGroupMap = (next: Map<string, string>) => {
+    writeStoredManualGroups(next);
+    setManualGroupMap(next);
+  };
+
   const toggleAutoMerge = () => {
     setAutoMerge((prev) => {
       const next = !prev;
       writeStoredAutoMerge(next);
-      if (next) setManualGroupMap(new Map());
+      if (next) {
+        writeStoredManualGroups(new Map());
+        setManualGroupMap(new Map());
+      }
       return next;
     });
   };
@@ -122,8 +181,17 @@ export function TeamMergerTab({ adminSecret }: TeamMergerTabProps) {
       return;
     }
     setError(null);
-    setManualGroupMap((prev) => applyManualMerge(prev, ids, submissions));
+    const next = applyManualMerge(manualGroupMap, ids, submissions);
+    persistManualGroupMap(next);
     setSelected(new Set());
+  };
+
+  const unmergeGroup = (submissionIds: string[]) => {
+    if (submissionIds.length < 2) return;
+    setError(null);
+    const next = applyManualUnmerge(manualGroupMap, submissionIds);
+    persistManualGroupMap(next);
+    setPreviewGroup(null);
   };
 
   const exportRows = (mode: 'full' | 'merged') =>
@@ -288,20 +356,44 @@ export function TeamMergerTab({ adminSecret }: TeamMergerTabProps) {
                 <div>
                   <h3 className="font-bold text-sm text-app-text">{group.mergedTeamName}</h3>
                   {group.submissionIds.length > 1 && (
-                    <p className="text-[11px] text-app-subtext mt-0.5">
-                      Merged from: {group.teamNames.join(', ')}
-                    </p>
+                    <div className="mt-1.5 flex flex-wrap gap-1.5">
+                      {group.sourceTeams.map((src) => (
+                        <span
+                          key={src.submissionId}
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-semibold bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/25"
+                        >
+                          {src.teamName}
+                          <span className="font-mono opacity-70">
+                            ({src.members.filter((m) => m.name?.trim() || m.enrollment_number?.trim()).length}{' '}
+                            members)
+                          </span>
+                        </span>
+                      ))}
+                    </div>
                   )}
-                  <p className="text-[11px] text-app-subtext mt-0.5">{group.matchReason}</p>
+                  <p className="text-[11px] text-app-subtext mt-1">{group.matchReason}</p>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setPreviewGroup(group)}
-                  className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold rounded-lg border border-app-border hover:bg-app-hover"
-                >
-                  <Eye className="w-3.5 h-3.5" />
-                  Preview merge
-                </button>
+                <div className="flex flex-wrap items-center gap-2">
+                  {!autoMerge && group.submissionIds.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => unmergeGroup(group.submissionIds)}
+                      className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold rounded-lg border border-amber-500/40 text-amber-600 dark:text-amber-400 bg-amber-500/10 hover:bg-amber-500/15"
+                      title="Split back into separate teams"
+                    >
+                      <GitBranch className="w-3.5 h-3.5" />
+                      Unmerge
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setPreviewGroup(group)}
+                    className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold rounded-lg border border-app-border hover:bg-app-hover"
+                  >
+                    <Eye className="w-3.5 h-3.5" />
+                    Preview merge
+                  </button>
+                </div>
               </div>
 
               <div className="px-4 py-3 space-y-3">
@@ -327,7 +419,32 @@ export function TeamMergerTab({ adminSecret }: TeamMergerTabProps) {
                     })}
                   </div>
                 )}
-                <MemberMiniTable members={group.members} />
+                {group.submissionIds.length > 1 ? (
+                  <div className="space-y-4">
+                    <div>
+                      <p className="text-[10px] font-mono uppercase text-app-subtext mb-2">
+                        Combined squad (deduped, max {4} slots)
+                      </p>
+                      <MemberMiniTable members={group.members} />
+                    </div>
+                    <div className="border-t border-app-border/60 pt-3 space-y-4">
+                      <p className="text-[10px] font-mono uppercase text-app-subtext">
+                        All teams in this merge ({group.sourceTeams.length})
+                      </p>
+                      {group.sourceTeams.map((src) => (
+                        <div
+                          key={src.submissionId}
+                          className="rounded-xl border border-app-border/80 bg-app-bg/40 px-3 py-2.5"
+                        >
+                          <h4 className="text-xs font-bold text-app-text mb-2">{src.teamName}</h4>
+                          <MemberMiniTable members={src.members} />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <MemberMiniTable members={group.members} />
+                )}
               </div>
             </article>
           ))}
@@ -346,18 +463,51 @@ export function TeamMergerTab({ adminSecret }: TeamMergerTabProps) {
             <h3 className="text-lg font-bold mb-1">{previewGroup.mergedTeamName}</h3>
             <p className="text-xs text-app-subtext mb-2">{previewGroup.matchReason}</p>
             {previewGroup.submissionIds.length > 1 && (
-              <p className="text-xs text-app-subtext mb-4">
-                Merged from: {previewGroup.teamNames.join(', ')}
-              </p>
+              <div className="flex flex-wrap gap-1.5 mb-4">
+                {previewGroup.sourceTeams.map((src) => (
+                  <span
+                    key={src.submissionId}
+                    className="px-2 py-0.5 rounded-lg text-[10px] font-semibold bg-emerald-500/15 border border-emerald-500/25"
+                  >
+                    {src.teamName}
+                  </span>
+                ))}
+              </div>
             )}
-            <MemberMiniTable members={previewGroup.members} />
-            <button
-              type="button"
-              onClick={() => setPreviewGroup(null)}
-              className="mt-5 w-full py-2.5 rounded-xl bg-app-accent text-app-bg text-sm font-bold"
-            >
-              Close
-            </button>
+            {previewGroup.submissionIds.length > 1 ? (
+              <div className="space-y-4">
+                <div>
+                  <p className="text-[10px] font-mono uppercase text-app-subtext mb-2">Combined squad</p>
+                  <MemberMiniTable members={previewGroup.members} />
+                </div>
+                {previewGroup.sourceTeams.map((src) => (
+                  <div key={src.submissionId} className="rounded-xl border border-app-border px-3 py-2">
+                    <h4 className="text-xs font-bold mb-2">{src.teamName}</h4>
+                    <MemberMiniTable members={src.members} />
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <MemberMiniTable members={previewGroup.members} />
+            )}
+            <div className="mt-5 flex flex-col sm:flex-row gap-2">
+              {!autoMerge && previewGroup.submissionIds.length > 1 && (
+                <button
+                  type="button"
+                  onClick={() => unmergeGroup(previewGroup.submissionIds)}
+                  className="flex-1 py-2.5 rounded-xl border border-amber-500/40 text-amber-600 dark:text-amber-400 bg-amber-500/10 text-sm font-bold"
+                >
+                  Unmerge teams
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setPreviewGroup(null)}
+                className="flex-1 py-2.5 rounded-xl bg-app-accent text-app-bg text-sm font-bold"
+              >
+                Close
+              </button>
+            </div>
           </div>
         </div>
       )}

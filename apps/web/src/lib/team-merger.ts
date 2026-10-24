@@ -20,6 +20,12 @@ export function filterMergerEligibleSubmissions(submissions: TeamSubmission[]): 
   });
 }
 
+export type MergeGroupSourceTeam = {
+  submissionId: string;
+  teamName: string;
+  members: TeamMemberPayload[];
+};
+
 export type MergeGroup = {
   id: string;
   submissionIds: string[];
@@ -27,6 +33,8 @@ export type MergeGroup = {
   /** Display / export name: single team keeps name; merged teams use "A X B". */
   mergedTeamName: string;
   members: TeamMemberPayload[];
+  /** Every original submission in this group with its own roster (for merged UI). */
+  sourceTeams: MergeGroupSourceTeam[];
   matchReason: string;
 };
 
@@ -193,12 +201,18 @@ export function buildMergeGroup(
   matchReason: string
 ): MergeGroup {
   const teamNames: string[] = [];
+  const sourceTeams: MergeGroupSourceTeam[] = [];
   const memberByKey = new Map<string, TeamMemberPayload>();
 
   for (const id of submissionIds) {
     const sub = byId.get(id);
     if (!sub) continue;
     teamNames.push(sub.team_name);
+    sourceTeams.push({
+      submissionId: id,
+      teamName: sub.team_name,
+      members: [...(sub.members || [])].sort((a, b) => a.slot - b.slot),
+    });
     for (const m of sub.members || []) {
       const key = memberIdentityKey(m) ?? `slot:${m.slot}:${m.name}`;
       if (!memberByKey.has(key)) {
@@ -220,6 +234,7 @@ export function buildMergeGroup(
     teamNames,
     mergedTeamName: formatMergedTeamName(teamNames),
     members,
+    sourceTeams,
     matchReason: reason,
   };
 }
@@ -269,6 +284,54 @@ export function applyManualMerge(
   }
 
   return next;
+}
+
+/** Remove merged grouping so each submission displays as its own team again. */
+export function applyManualUnmerge(
+  groupMap: Map<string, string>,
+  submissionIds: string[]
+): Map<string, string> {
+  const next = new Map(groupMap);
+  for (const id of submissionIds) {
+    next.delete(id);
+  }
+  return next;
+}
+
+export function pruneManualGroupMap(
+  map: Map<string, string>,
+  validSubmissionIds: Iterable<string>
+): Map<string, string> {
+  const valid = new Set(validSubmissionIds);
+  const next = new Map<string, string>();
+  for (const [id, leader] of map) {
+    if (!valid.has(id)) continue;
+    next.set(id, valid.has(leader) ? leader : id);
+  }
+  return next;
+}
+
+export function manualGroupMapToJson(map: Map<string, string>): string {
+  return JSON.stringify(Object.fromEntries(map));
+}
+
+export function manualGroupMapFromJson(raw: string | null): Map<string, string> {
+  if (!raw) return new Map();
+  try {
+    const parsed = JSON.parse(raw) as Record<string, string>;
+    if (!parsed || typeof parsed !== 'object') return new Map();
+    return new Map(Object.entries(parsed).filter(([k, v]) => typeof k === 'string' && typeof v === 'string'));
+  } catch {
+    return new Map();
+  }
+}
+
+export function manualGroupMapsEqual(a: Map<string, string>, b: Map<string, string>): boolean {
+  if (a.size !== b.size) return false;
+  for (const [key, value] of a) {
+    if (b.get(key) !== value) return false;
+  }
+  return true;
 }
 
 export type MergerExportRow = {
