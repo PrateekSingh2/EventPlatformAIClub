@@ -17,17 +17,16 @@ import {
   Filter,
   Download,
   Ban,
-  ShieldCheck,
   RotateCcw,
   ChevronDown,
   ChevronUp,
   Monitor,
-  KeyRound,
   Trophy,
   RefreshCw,
   Pause,
   Play,
   Layers,
+  Sparkles,
 } from 'lucide-react';
 
 interface TelemetryRadarTabProps {
@@ -340,99 +339,99 @@ export function TelemetryRadarTab({ adminSecret }: TelemetryRadarTabProps) {
   const totalCompletedCount = users.filter((u) => u.is_completed).length;
 
   return (
-    <div className="space-y-6">
-      {/* Top Mission Control Telemetry Stats Bar */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 sm:gap-4">
+    <div className="space-y-5 sm:space-y-6">
+      {/* Top Telemetry Metric Cards */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5 sm:gap-3">
         {/* Card 1: Active Contestants */}
-        <div className="p-4 rounded-2xl glass-panel border border-slate-800 bg-slate-950/60 shadow-lg">
-          <div className="flex items-center justify-between text-slate-400 text-xs">
+        <div className="p-3.5 sm:p-4 rounded-xl bg-app-surface border border-app-border space-y-1">
+          <div className="flex items-center justify-between text-app-subtext text-xs">
             <span className="font-semibold uppercase tracking-wider text-[11px]">Contestants</span>
-            <span className="flex items-center gap-1.5 text-[10px] text-emerald-400 font-mono font-bold bg-emerald-950/60 border border-emerald-800/60 px-2 py-0.5 rounded-full">
-              <Radio className="w-2.5 h-2.5 animate-pulse text-emerald-400" /> LIVE
+            <span className="inline-flex items-center gap-1 text-[10px] text-emerald-400 font-mono font-medium bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 rounded-full">
+              <Radio className="w-2.5 h-2.5 animate-pulse text-emerald-400" /> Live
             </span>
           </div>
-          <div className="text-2xl font-black text-white mt-1.5 flex items-baseline gap-2">
+          <div className="text-xl sm:text-2xl font-bold text-app-text flex items-baseline gap-1.5">
             <span>{totalContestants}</span>
-            <span className="text-xs text-slate-500 font-normal">in arena</span>
+            <span className="text-[11px] text-app-subtext font-normal">active</span>
           </div>
-          <div className="text-[11px] text-slate-400 mt-1 flex items-center justify-between">
-            <span>{totalCompletedCount} finished</span>
-            {lastUpdated && <span className="text-[10px] text-slate-500 font-mono">{lastUpdated}</span>}
+          <div className="text-[11px] text-app-subtext flex items-center justify-between pt-0.5">
+            <span>{totalCompletedCount} completed</span>
+            {lastUpdated && <span className="text-[10px] text-app-subtext font-mono">{lastUpdated}</span>}
           </div>
         </div>
 
-        {/* Card 2: Total Tab Switches (Requested directly by user!) */}
-        <div className="p-4 rounded-2xl glass-panel border border-slate-800 bg-slate-950/60 shadow-lg">
-          <div className="flex items-center justify-between text-slate-400 text-xs">
-            <span className="font-semibold uppercase tracking-wider text-[11px]">Total Tab Switches</span>
-            <Eye className="w-4 h-4 text-violet-400" />
+        {/* Card 2: Total Tab Switches */}
+        <div className="p-3.5 sm:p-4 rounded-xl bg-app-surface border border-app-border space-y-1">
+          <div className="flex items-center justify-between text-app-subtext text-xs">
+            <span className="font-semibold uppercase tracking-wider text-[11px]">Tab Switches</span>
+            <Eye className="w-3.5 h-3.5 text-indigo-400" />
           </div>
-          <div className="text-2xl font-black text-violet-400 mt-1.5 flex items-baseline gap-2">
+          <div className="text-xl sm:text-2xl font-bold text-indigo-400 flex items-baseline gap-1.5">
             <span>{totalTabSwitchesAll}</span>
-            <span className="text-xs text-slate-500 font-normal">arena-wide</span>
+            <span className="text-[11px] text-app-subtext font-normal">total</span>
           </div>
-          <p className="text-[11px] text-slate-400 mt-1">Background blur beacons</p>
+          <p className="text-[11px] text-app-subtext pt-0.5">Background window blurs</p>
         </div>
 
         {/* Card 3: Fullscreen Exits */}
-        <div className="p-4 rounded-2xl glass-panel border border-slate-800 bg-slate-950/60 shadow-lg">
-          <div className="flex items-center justify-between text-slate-400 text-xs">
-            <span className="font-semibold uppercase tracking-wider text-[11px]">Fullscreen Exits</span>
-            <Maximize2 className="w-4 h-4 text-amber-400" />
+        <div className="p-3.5 sm:p-4 rounded-xl bg-app-surface border border-app-border space-y-1">
+          <div className="flex items-center justify-between text-app-subtext text-xs">
+            <span className="font-semibold uppercase tracking-wider text-[11px]">Screen Exits</span>
+            <Maximize2 className="w-3.5 h-3.5 text-amber-400" />
           </div>
-          <div className="text-2xl font-black text-amber-400 mt-1.5 flex items-baseline gap-2">
+          <div className="text-xl sm:text-2xl font-bold text-amber-400 flex items-baseline gap-1.5">
             <span>{totalFullscreenExitsAll}</span>
-            <span className="text-xs text-slate-500 font-normal">arena departures</span>
+            <span className="text-[11px] text-app-subtext font-normal">exits</span>
           </div>
-          <p className="text-[11px] text-slate-400 mt-1">Window escapes recorded</p>
+          <p className="text-[11px] text-app-subtext pt-0.5">Window escapes logged</p>
         </div>
 
         {/* Card 4: Flagged & Suspicious */}
-        <div className="p-4 rounded-2xl glass-panel border border-slate-800 bg-slate-950/60 shadow-lg">
-          <div className="flex items-center justify-between text-slate-400 text-xs">
-            <span className="font-semibold uppercase tracking-wider text-[11px]">Flagged Contestants</span>
-            <AlertTriangle className="w-4 h-4 text-rose-400" />
+        <div className="p-3.5 sm:p-4 rounded-xl bg-app-surface border border-app-border space-y-1">
+          <div className="flex items-center justify-between text-app-subtext text-xs">
+            <span className="font-semibold uppercase tracking-wider text-[11px]">Flagged</span>
+            <AlertTriangle className="w-3.5 h-3.5 text-rose-400" />
           </div>
-          <div className="text-2xl font-black text-rose-400 mt-1.5 flex items-baseline gap-2">
+          <div className="text-xl sm:text-2xl font-bold text-rose-400 flex items-baseline gap-1.5">
             <span>{totalFlaggedCount}</span>
-            <span className="text-xs text-slate-500 font-normal">under review</span>
+            <span className="text-[11px] text-app-subtext font-normal">review</span>
           </div>
-          <p className="text-[11px] text-slate-400 mt-1">Triggered fair-play alerts</p>
+          <p className="text-[11px] text-app-subtext pt-0.5">Integrity alerts raised</p>
         </div>
 
         {/* Card 5: Disqualified / Sanctioned */}
-        <div className="p-4 rounded-2xl glass-panel border border-slate-800 bg-slate-950/60 shadow-lg">
-          <div className="flex items-center justify-between text-slate-400 text-xs">
-            <span className="font-semibold uppercase tracking-wider text-[11px]">Suspended Accounts</span>
-            <Ban className="w-4 h-4 text-red-500" />
+        <div className="p-3.5 sm:p-4 rounded-xl bg-app-surface border border-app-border space-y-1 col-span-2 sm:col-span-1">
+          <div className="flex items-center justify-between text-app-subtext text-xs">
+            <span className="font-semibold uppercase tracking-wider text-[11px]">Disqualified</span>
+            <Ban className="w-3.5 h-3.5 text-red-500" />
           </div>
-          <div className="text-2xl font-black text-red-500 mt-1.5 flex items-baseline gap-2">
+          <div className="text-xl sm:text-2xl font-bold text-red-400 flex items-baseline gap-1.5">
             <span>{totalDisqualifiedCount}</span>
-            <span className="text-xs text-slate-500 font-normal">disqualified</span>
+            <span className="text-[11px] text-app-subtext font-normal">banned</span>
           </div>
-          <p className="text-[11px] text-slate-400 mt-1">Permanently revoked</p>
+          <p className="text-[11px] text-app-subtext pt-0.5">Access tokens revoked</p>
         </div>
       </div>
 
       {/* Main Monitoring Panel */}
-      <div className="p-4 sm:p-5 rounded-2xl glass-panel border border-slate-800 bg-slate-950/40 space-y-4">
+      <div className="p-4 sm:p-5 rounded-2xl bg-app-surface border border-app-border space-y-4">
         {/* Action Header & Live Controls */}
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400">
-              <Radar className="w-4 h-4 animate-spin text-rose-400" />
+            <div className="w-8 h-8 rounded-lg bg-app-surface-raised border border-app-border flex items-center justify-center text-app-text">
+              <Radar className="w-4 h-4 text-app-text" />
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="text-sm font-bold text-white tracking-tight uppercase">
-                  Telemetry Radar (One Row Per Contestant)
+                <h3 className="text-sm font-bold text-app-text">
+                  Participant Integrity Stream
                 </h3>
-                <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 font-bold border border-slate-700">
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-app-surface-raised text-app-subtext border border-app-border">
                   {filteredUsers.length} shown
                 </span>
               </div>
-              <p className="text-xs text-slate-400">
-                Aggregated anti-cheat forensics across all challenge levels
+              <p className="text-xs text-app-subtext">
+                Live anti-cheat forensics and session events per contestant
               </p>
             </div>
           </div>
@@ -442,10 +441,10 @@ export function TelemetryRadarTab({ adminSecret }: TelemetryRadarTabProps) {
             {/* Auto Refresh Toggle */}
             <button
               onClick={() => setIsAutoRefreshActive(!isAutoRefreshActive)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-xl border transition-all cursor-pointer ${
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border transition-colors cursor-pointer min-h-[36px] ${
                 isAutoRefreshActive
-                  ? 'bg-emerald-950/60 text-emerald-300 border-emerald-700/60 shadow-xs'
-                  : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-white'
+                  ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                  : 'bg-app-surface-raised text-app-subtext border-app-border hover:text-app-text'
               }`}
               title={isAutoRefreshActive ? 'Pause auto-refresh' : 'Resume auto-refresh'}
             >
@@ -456,7 +455,7 @@ export function TelemetryRadarTab({ adminSecret }: TelemetryRadarTabProps) {
                 </>
               ) : (
                 <>
-                  <Play className="w-3 h-3 text-slate-400" />
+                  <Play className="w-3 h-3 text-app-subtext" />
                   <span>Paused</span>
                 </>
               )}
@@ -466,10 +465,10 @@ export function TelemetryRadarTab({ adminSecret }: TelemetryRadarTabProps) {
             <button
               onClick={() => fetchTelemetry(true)}
               disabled={refreshing}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 transition-all cursor-pointer disabled:opacity-50"
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-app-surface-raised hover:bg-app-surface text-app-text border border-app-border transition-colors cursor-pointer disabled:opacity-50 min-h-[36px]"
               title="Force immediate refresh"
             >
-              <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin text-cyan-400' : 'text-slate-400'}`} />
+              <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin text-app-text' : 'text-app-subtext'}`} />
               <span>Refresh</span>
             </button>
 
@@ -477,126 +476,298 @@ export function TelemetryRadarTab({ adminSecret }: TelemetryRadarTabProps) {
             <button
               onClick={handleExportCsv}
               disabled={exportingCsv}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-xl bg-emerald-950/80 hover:bg-emerald-900/80 text-emerald-300 border border-emerald-500/40 shadow-sm transition-all cursor-pointer disabled:opacity-50"
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-app-text text-app-bg hover:opacity-90 transition-opacity cursor-pointer disabled:opacity-50 min-h-[36px]"
             >
               {exportingCsv ? (
                 <>
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  <span>Generating CSV...</span>
+                  <span>Exporting...</span>
                 </>
               ) : (
                 <>
-                  <Download className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>Export Report</span>
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Export CSV</span>
                 </>
               )}
             </button>
 
             {/* Search Input */}
-            <div className="relative w-full sm:w-60">
+            <div className="relative w-full sm:w-56">
               <input
                 type="text"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search participant or alert..."
-                className="w-full px-3 py-1.5 pl-8 text-xs text-white bg-slate-900 border border-slate-700 rounded-xl focus:border-cyan-400 font-mono shadow-inner outline-none transition-colors"
+                placeholder="Search contestant or reason..."
+                className="w-full px-3 py-1.5 pl-8 text-xs text-app-text bg-app-bg border border-app-border rounded-lg focus:outline-none focus:border-zinc-400 font-sans outline-none transition-colors min-h-[36px]"
               />
-              <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-2.5" />
+              <Search className="w-3.5 h-3.5 text-app-subtext absolute left-2.5 top-1/2 -translate-y-1/2" />
             </div>
           </div>
         </div>
 
-        {/* Filter Pills */}
-        <div className="flex flex-wrap items-center gap-1.5 pt-1">
-          <button
-            onClick={() => setStatusFilter('all')}
-            className={`px-2.5 py-1 text-xs font-semibold rounded-lg transition-colors cursor-pointer border ${
-              statusFilter === 'all'
-                ? 'bg-slate-800 text-white border-slate-700 shadow-xs'
-                : 'bg-slate-900/60 text-slate-400 border-slate-800/80 hover:text-white'
-            }`}
-          >
-            All Contestants ({users.length})
-          </button>
-          <button
-            onClick={() => setStatusFilter('flagged')}
-            className={`px-2.5 py-1 text-xs font-semibold rounded-lg transition-colors cursor-pointer border flex items-center gap-1.5 ${
-              statusFilter === 'flagged'
-                ? 'bg-rose-500/20 text-rose-300 border-rose-500/40 shadow-xs'
-                : 'bg-slate-900/60 text-slate-400 border-slate-800/80 hover:text-rose-400'
-            }`}
-          >
-            <AlertTriangle className="w-3 h-3 text-rose-400" />
-            Flagged / Suspicious ({totalFlaggedCount})
-          </button>
-          <button
-            onClick={() => setStatusFilter('disqualified')}
-            className={`px-2.5 py-1 text-xs font-semibold rounded-lg transition-colors cursor-pointer border flex items-center gap-1.5 ${
-              statusFilter === 'disqualified'
-                ? 'bg-red-500/20 text-red-300 border-red-500/40 shadow-xs'
-                : 'bg-slate-900/60 text-slate-400 border-slate-800/80 hover:text-red-400'
-            }`}
-          >
-            <Ban className="w-3 h-3 text-red-400" />
-            Disqualified ({totalDisqualifiedCount})
-          </button>
-          <button
-            onClick={() => setStatusFilter('completed')}
-            className={`px-2.5 py-1 text-xs font-semibold rounded-lg transition-colors cursor-pointer border flex items-center gap-1.5 ${
-              statusFilter === 'completed'
-                ? 'bg-purple-500/20 text-purple-300 border-purple-500/40 shadow-xs'
-                : 'bg-slate-900/60 text-slate-400 border-slate-800/80 hover:text-purple-400'
-            }`}
-          >
-            <Trophy className="w-3 h-3 text-purple-400" />
-            Completed Contest ({totalCompletedCount})
-          </button>
-          <button
-            onClick={() => setStatusFilter('clean')}
-            className={`px-2.5 py-1 text-xs font-semibold rounded-lg transition-colors cursor-pointer border flex items-center gap-1.5 ${
-              statusFilter === 'clean'
-                ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 shadow-xs'
-                : 'bg-slate-900/60 text-slate-400 border-slate-800/80 hover:text-emerald-400'
-            }`}
-          >
-            <CheckCircle className="w-3 h-3 text-emerald-400" />
-            Clean ({users.length - totalFlaggedCount - totalDisqualifiedCount})
-          </button>
+        {/* Filter Pills with Horizontal Scroll on Mobile */}
+        <div className="overflow-x-auto no-scrollbar py-1">
+          <div className="flex items-center gap-1.5 min-w-max">
+            <button
+              onClick={() => setStatusFilter('all')}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer border min-h-[32px] ${
+                statusFilter === 'all'
+                  ? 'bg-app-text text-app-bg border-app-text'
+                  : 'bg-app-surface-raised text-app-subtext border-app-border hover:text-app-text'
+              }`}
+            >
+              All Contestants ({users.length})
+            </button>
+            <button
+              onClick={() => setStatusFilter('flagged')}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer border flex items-center gap-1.5 min-h-[32px] ${
+                statusFilter === 'flagged'
+                  ? 'bg-rose-500/20 text-rose-300 border-rose-500/40'
+                  : 'bg-app-surface-raised text-app-subtext border-app-border hover:text-rose-400'
+              }`}
+            >
+              <AlertTriangle className="w-3 h-3 text-rose-400" />
+              Flagged ({totalFlaggedCount})
+            </button>
+            <button
+              onClick={() => setStatusFilter('disqualified')}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer border flex items-center gap-1.5 min-h-[32px] ${
+                statusFilter === 'disqualified'
+                  ? 'bg-red-500/20 text-red-300 border-red-500/40'
+                  : 'bg-app-surface-raised text-app-subtext border-app-border hover:text-red-400'
+              }`}
+            >
+              <Ban className="w-3 h-3 text-red-400" />
+              Disqualified ({totalDisqualifiedCount})
+            </button>
+            <button
+              onClick={() => setStatusFilter('completed')}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer border flex items-center gap-1.5 min-h-[32px] ${
+                statusFilter === 'completed'
+                  ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500/40'
+                  : 'bg-app-surface-raised text-app-subtext border-app-border hover:text-indigo-400'
+              }`}
+            >
+              <Trophy className="w-3 h-3 text-indigo-400" />
+              Finished ({totalCompletedCount})
+            </button>
+            <button
+              onClick={() => setStatusFilter('clean')}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer border flex items-center gap-1.5 min-h-[32px] ${
+                statusFilter === 'clean'
+                  ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                  : 'bg-app-surface-raised text-app-subtext border-app-border hover:text-emerald-400'
+              }`}
+            >
+              <CheckCircle className="w-3 h-3 text-emerald-400" />
+              Clean ({users.length - totalFlaggedCount - totalDisqualifiedCount})
+            </button>
+          </div>
         </div>
 
-        {/* Primary Monitoring Table - Strictly ONE ROW per Contestant */}
-        <div className="overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/80">
+        {/* Mobile Cards View (Visible on screens < lg) */}
+        <div className="block lg:hidden space-y-3">
+          {loading ? (
+            <div className="p-8 text-center text-app-subtext bg-app-surface-raised rounded-xl border border-app-border">
+              <Loader2 className="w-5 h-5 animate-spin mx-auto mb-2 text-app-text" />
+              Connecting to telemetry stream...
+            </div>
+          ) : filteredUsers.length === 0 ? (
+            <div className="p-8 text-center text-app-subtext bg-app-surface-raised rounded-xl border border-app-border">
+              {telemetryError || 'No contestants found matching the filter.'}
+            </div>
+          ) : (
+            filteredUsers.map((user) => {
+              const isExpanded = expandedUserIds.has(user.user_id);
+              const isDisqualified = user.is_disqualified;
+              const isSuspicious = user.is_flagged && !isDisqualified;
+              const isHighTabs = user.total_tab_switches > 2;
+
+              return (
+                <div
+                  key={`mobile-${user.user_id}`}
+                  className={`p-3.5 rounded-xl border transition-colors space-y-3 ${
+                    isDisqualified
+                      ? 'bg-rose-500/5 border-rose-500/30'
+                      : isSuspicious
+                      ? 'bg-amber-500/5 border-amber-500/30'
+                      : user.is_completed
+                      ? 'bg-indigo-500/5 border-indigo-500/30'
+                      : 'bg-app-surface-raised border-app-border'
+                  }`}
+                >
+                  {/* Top: Name, Status Pill */}
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-bold text-sm text-app-text">{user.name}</span>
+                        {user.is_completed && (
+                          <span className="inline-flex items-center gap-1 text-[9px] font-mono px-1.5 py-0.5 rounded-full bg-indigo-500/10 border border-indigo-500/30 text-indigo-400">
+                            <Trophy className="w-2.5 h-2.5" /> Done
+                          </span>
+                        )}
+                        {isDisqualified && (
+                          <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-rose-500/20 border border-rose-500/40 text-rose-300 font-bold">
+                            BANNED
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-[11px] text-app-subtext font-mono break-all">{user.email}</div>
+                    </div>
+
+                    <div className="text-right shrink-0">
+                      <span className="text-xs font-bold text-emerald-400 font-mono">
+                        {user.total_score} PTS
+                      </span>
+                      <div className="text-[10px] text-app-subtext font-mono">
+                        Stage {user.current_stage}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Anti-cheat Metrics Pills */}
+                  <div className="grid grid-cols-3 gap-2 text-center text-xs font-mono pt-1">
+                    <div className="p-2 rounded-lg bg-app-surface border border-app-border">
+                      <div className="text-[10px] text-app-subtext uppercase">Tab Blur</div>
+                      <div className={`font-bold mt-0.5 ${isHighTabs ? 'text-rose-400' : 'text-app-text'}`}>
+                        {user.total_tab_switches}
+                      </div>
+                    </div>
+                    <div className="p-2 rounded-lg bg-app-surface border border-app-border">
+                      <div className="text-[10px] text-app-subtext uppercase">Screen Exit</div>
+                      <div className={`font-bold mt-0.5 ${user.total_fullscreen_exits > 1 ? 'text-amber-400' : 'text-app-text'}`}>
+                        {user.total_fullscreen_exits}
+                      </div>
+                    </div>
+                    <div className="p-2 rounded-lg bg-app-surface border border-app-border">
+                      <div className="text-[10px] text-app-subtext uppercase">Bad Passwords</div>
+                      <div className={`font-bold mt-0.5 ${user.total_password_failed_attempts > 0 ? 'text-amber-400' : 'text-app-text'}`}>
+                        {user.total_password_failed_attempts}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Flag Reason Banner if any */}
+                  {user.flag_reasons.length > 0 && (
+                    <div className="p-2 rounded-lg bg-rose-500/10 border border-rose-500/20 text-[11px] text-rose-300 font-sans">
+                      <span className="font-semibold">Alert: </span>
+                      {user.flag_reasons[0]}
+                    </div>
+                  )}
+
+                  {/* Mobile Actions Toolbar */}
+                  <div className="flex items-center justify-between gap-2 pt-1 border-t border-app-border">
+                    <button
+                      onClick={() => toggleExpandUser(user.user_id)}
+                      className="px-2.5 py-1.5 text-xs font-medium rounded-lg bg-app-surface hover:bg-app-hover text-app-text border border-app-border transition-colors flex items-center gap-1 cursor-pointer"
+                    >
+                      <span>Stages ({user.stages.length})</span>
+                      {isExpanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                    </button>
+
+                    <div className="flex items-center gap-1.5">
+                      {(user.is_flagged || user.flag_reasons.length > 0) && !isDisqualified && (
+                        <button
+                          onClick={() => handleClearFlag(user.user_id)}
+                          className="px-2.5 py-1.5 text-xs font-medium text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 rounded-lg cursor-pointer"
+                        >
+                          Clear Flag
+                        </button>
+                      )}
+
+                      {isDisqualified ? (
+                        <button
+                          onClick={() => handleReinstate(user.user_id)}
+                          className="px-2.5 py-1.5 text-xs font-bold text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 rounded-lg cursor-pointer flex items-center gap-1"
+                        >
+                          <RotateCcw className="w-3 h-3" /> Reinstate
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() =>
+                            setDisqualifyCandidate({
+                              userId: user.user_id,
+                              userName: user.name,
+                              userEmail: user.email,
+                            })
+                          }
+                          className="px-2.5 py-1.5 text-xs font-bold text-rose-400 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 rounded-lg cursor-pointer flex items-center gap-1"
+                        >
+                          <Ban className="w-3 h-3" /> Disqualify
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Mobile Stage Breakdown Drawer */}
+                  {isExpanded && (
+                    <div className="pt-2 border-t border-app-border space-y-2">
+                      <div className="text-[11px] font-semibold text-app-subtext uppercase">
+                        Stage Telemetry Details:
+                      </div>
+                      {user.stages.length === 0 ? (
+                        <p className="text-xs text-app-subtext italic">No stage records logged yet.</p>
+                      ) : (
+                        user.stages.map((stg) => (
+                          <div
+                            key={stg.id || stg.stage_number}
+                            className="p-2.5 rounded-lg bg-app-surface border border-app-border text-xs font-mono space-y-1"
+                          >
+                            <div className="flex items-center justify-between">
+                              <span className="font-bold text-app-text">Stage {stg.stage_number}</span>
+                              <span className="text-[10px] text-app-subtext">
+                                {stg.duration_seconds !== null ? `${stg.duration_seconds}s duration` : 'Active'}
+                              </span>
+                            </div>
+                            <div className="grid grid-cols-2 gap-x-2 text-[11px] text-app-subtext">
+                              <div>Tab switches: <strong className="text-app-text">{stg.tab_switches}</strong></div>
+                              <div>Fullscreen exits: <strong className="text-app-text">{stg.fullscreen_exits}</strong></div>
+                              <div>Failed keys: <strong className="text-app-text">{stg.password_failed_attempts || 0}</strong></div>
+                              <div>Speedrun: <strong className={stg.flagged_too_fast ? 'text-rose-400' : 'text-app-text'}>{stg.flagged_too_fast ? 'FLAG' : 'OK'}</strong></div>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })
+          )}
+        </div>
+
+        {/* Primary Desktop Monitoring Table (Hidden on small screens) */}
+        <div className="hidden lg:block overflow-x-auto rounded-xl border border-app-border bg-app-surface">
           <table className="w-full text-left text-xs font-mono">
-            <thead className="bg-slate-900 text-slate-400 uppercase text-[10px] tracking-wider border-b border-slate-800">
+            <thead className="bg-app-bg text-app-subtext uppercase text-[10px] tracking-wider border-b border-app-border">
               <tr>
-                <th className="px-4 py-3.5">Participant</th>
-                <th className="px-3 py-3.5">Current Level</th>
+                <th className="px-4 py-3.5 font-sans">Participant</th>
+                <th className="px-3 py-3.5">Level</th>
                 <th className="px-3 py-3.5">Score</th>
-                {/* Total Tab Switch count prominently highlighted */}
-                <th className="px-4 py-3.5 text-center bg-slate-800/40 font-bold text-violet-300">
+                <th className="px-4 py-3.5 text-center bg-app-surface-raised font-bold text-indigo-400">
                   <div className="flex items-center justify-center gap-1">
-                    <Eye className="w-3 h-3 text-violet-400" />
+                    <Eye className="w-3 h-3 text-indigo-400" />
                     <span>Total Tab Switches</span>
                   </div>
                 </th>
                 <th className="px-3 py-3.5 text-center">Fullscreen Exits</th>
                 <th className="px-3 py-3.5 text-center">Hardware / Probes</th>
                 <th className="px-3 py-3.5 text-center">Failed Keys</th>
-                <th className="px-4 py-3.5">Anti-Cheat Status</th>
-                <th className="px-4 py-3.5 text-right">Actions</th>
+                <th className="px-4 py-3.5">Status</th>
+                <th className="px-4 py-3.5 text-right font-sans">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-800/60 bg-slate-950/60">
+            <tbody className="divide-y divide-app-border bg-app-surface">
               {loading ? (
                 <tr>
-                  <td colSpan={9} className="py-12 text-center text-slate-500">
-                    <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2 text-rose-400" />
-                    Connecting to live anti-cheat radar stream...
+                  <td colSpan={9} className="py-12 text-center text-app-subtext">
+                    <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2 text-app-text" />
+                    Connecting to live telemetry feed...
                   </td>
                 </tr>
               ) : filteredUsers.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="py-12 text-center text-slate-500">
+                  <td colSpan={9} className="py-12 text-center text-app-subtext">
                     {telemetryError || 'No contestants found matching the filter.'}
                   </td>
                 </tr>
@@ -610,62 +781,62 @@ export function TelemetryRadarTab({ adminSecret }: TelemetryRadarTabProps) {
                   return (
                     <React.Fragment key={user.user_id}>
                       <tr
-                        className={`transition-colors font-mono ${
+                        className={`transition-colors font-mono hover:bg-app-hover/30 ${
                           isDisqualified
-                            ? 'bg-rose-950/30 border-l-4 border-l-rose-500'
+                            ? 'bg-rose-500/5 border-l-4 border-l-rose-500'
                             : isSuspicious
-                            ? 'bg-amber-950/20 hover:bg-amber-950/30 border-l-4 border-l-amber-500'
+                            ? 'bg-amber-500/5 hover:bg-amber-500/10 border-l-4 border-l-amber-500'
                             : user.is_completed
-                            ? 'bg-purple-950/10 hover:bg-purple-950/20'
-                            : 'hover:bg-slate-900/40'
+                            ? 'bg-indigo-500/5'
+                            : ''
                         }`}
                       >
                         {/* 1. Participant Details */}
                         <td className="px-4 py-3 font-sans">
                           <div className="flex items-center gap-2">
-                            <span className="font-bold text-white text-sm">
+                            <span className="font-bold text-app-text text-sm">
                               {user.name}
                             </span>
                             {user.is_completed && (
-                              <span className="inline-flex items-center gap-1 text-[9px] font-mono px-2 py-0.2 rounded-full bg-purple-500/20 border border-purple-500/40 text-purple-300 font-bold">
-                                <Trophy className="w-2.5 h-2.5 text-purple-400" /> Completed
+                              <span className="inline-flex items-center gap-1 text-[9px] font-mono px-2 py-0.5 rounded-full bg-indigo-500/10 border border-indigo-500/30 text-indigo-400 font-semibold">
+                                <Trophy className="w-2.5 h-2.5" /> Finished
                               </span>
                             )}
                             {isDisqualified && (
-                              <span className="text-[9px] font-mono px-1.5 py-0.2 rounded bg-rose-950 border border-rose-600 text-rose-400 font-bold">
+                              <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-rose-500/20 border border-rose-500/40 text-rose-300 font-bold">
                                 BANNED
                               </span>
                             )}
                           </div>
-                          <div className="text-[11px] text-slate-400 font-mono mt-0.5">
+                          <div className="text-[11px] text-app-subtext font-mono mt-0.5">
                             {user.email}
                           </div>
                         </td>
 
                         {/* 2. Current Level */}
                         <td className="px-3 py-3 font-mono">
-                          <span className="inline-flex items-center gap-1 text-xs font-bold px-2 py-0.5 rounded-lg bg-slate-900 border border-slate-700 text-cyan-300">
-                            <Layers className="w-3 h-3 text-cyan-400" />
+                          <span className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-lg bg-app-surface-raised border border-app-border text-app-text">
+                            <Layers className="w-3 h-3 text-app-subtext" />
                             Stage {user.current_stage}
                           </span>
                         </td>
 
                         {/* 3. Score */}
                         <td className="px-3 py-3 font-mono">
-                          <span className="text-xs font-extrabold text-emerald-400">
+                          <span className="text-xs font-bold text-emerald-400">
                             {user.total_score} PTS
                           </span>
                         </td>
 
-                        {/* 4. TOTAL TAB SWITCHES (Sum across all stages) */}
-                        <td className="px-4 py-3 text-center bg-slate-900/30">
+                        {/* 4. TOTAL TAB SWITCHES */}
+                        <td className="px-4 py-3 text-center bg-app-surface-raised/40">
                           <span
                             className={`inline-flex items-center justify-center font-bold font-mono px-2.5 py-0.5 rounded-lg text-xs ${
                               isHighTabs
-                                ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40 animate-pulse font-extrabold text-sm'
+                                ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40 font-bold'
                                 : user.total_tab_switches > 0
                                 ? 'bg-amber-500/10 text-amber-300 border border-amber-500/20'
-                                : 'text-slate-400 bg-slate-900/60 border border-slate-800'
+                                : 'text-app-subtext bg-app-surface-raised border border-app-border'
                             }`}
                           >
                             {user.total_tab_switches}
@@ -678,7 +849,7 @@ export function TelemetryRadarTab({ adminSecret }: TelemetryRadarTabProps) {
                             className={`inline-flex items-center justify-center font-bold font-mono px-2 py-0.5 rounded-lg text-xs ${
                               user.total_fullscreen_exits > 1
                                 ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                                : 'text-slate-400'
+                                : 'text-app-subtext'
                             }`}
                           >
                             {user.total_fullscreen_exits}
@@ -695,7 +866,7 @@ export function TelemetryRadarTab({ adminSecret }: TelemetryRadarTabProps) {
                               </span>
                             </div>
                           ) : (
-                            <span className="text-slate-500 text-xs">0</span>
+                            <span className="text-app-subtext text-xs">0</span>
                           )}
                         </td>
 
@@ -704,10 +875,10 @@ export function TelemetryRadarTab({ adminSecret }: TelemetryRadarTabProps) {
                           <span
                             className={`text-xs ${
                               user.total_excessive_guesses > 0
-                                ? 'text-rose-400 font-extrabold'
+                                ? 'text-rose-400 font-bold'
                                 : user.total_password_failed_attempts > 0
-                                ? 'text-amber-400 font-bold'
-                                : 'text-slate-500'
+                                ? 'text-amber-400 font-semibold'
+                                : 'text-app-subtext'
                             }`}
                           >
                             {user.total_password_failed_attempts}
@@ -718,30 +889,30 @@ export function TelemetryRadarTab({ adminSecret }: TelemetryRadarTabProps) {
                         <td className="px-4 py-3">
                           {isDisqualified ? (
                             <div className="flex flex-col gap-0.5">
-                              <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 bg-rose-950 text-rose-300 border border-rose-500 rounded-full w-fit">
+                              <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 bg-rose-500/20 text-rose-300 border border-rose-500/40 rounded-full w-fit">
                                 <Ban className="w-3 h-3 text-rose-400" />
                                 DISQUALIFIED
                               </span>
                               {user.flag_reasons.length > 0 && (
-                                <span className="text-[10px] text-rose-400/90 font-sans max-w-[220px] truncate" title={user.flag_reasons[0]}>
+                                <span className="text-[10px] text-rose-300/80 font-sans max-w-[200px] truncate" title={user.flag_reasons[0]}>
                                   {user.flag_reasons[0]}
                                 </span>
                               )}
                             </div>
                           ) : isSuspicious ? (
                             <div className="flex flex-col gap-0.5">
-                              <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full w-fit bg-rose-500/20 text-rose-300 border border-rose-500/40">
-                                <ShieldAlert className="w-3 h-3 text-rose-400" />
+                              <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full w-fit bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                                <ShieldAlert className="w-3 h-3 text-amber-400" />
                                 SUSPICIOUS
                               </span>
                               {user.flag_reasons.length > 0 && (
-                                <span className="text-[10px] text-rose-400/90 font-sans max-w-[220px] truncate" title={user.flag_reasons.join(', ')}>
+                                <span className="text-[10px] text-amber-300/80 font-sans max-w-[200px] truncate" title={user.flag_reasons.join(', ')}>
                                   {user.flag_reasons[0]}
                                 </span>
                               )}
                             </div>
                           ) : (
-                            <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-400">
+                            <span className="inline-flex items-center gap-1 text-[10px] font-medium text-emerald-400">
                               <CheckCircle className="w-3.5 h-3.5" />
                               Clean Session
                             </span>
@@ -750,18 +921,18 @@ export function TelemetryRadarTab({ adminSecret }: TelemetryRadarTabProps) {
 
                         {/* 9. Action Buttons */}
                         <td className="px-4 py-3 text-right">
-                          <div className="flex items-center justify-end gap-1.5">
+                          <div className="flex items-center justify-end gap-1.5 font-sans">
                             {/* Expand Stage Breakdown Accordion */}
                             <button
                               onClick={() => toggleExpandUser(user.user_id)}
-                              className="px-2 py-1 text-[11px] font-semibold rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-700/80 transition-colors cursor-pointer flex items-center gap-1"
+                              className="px-2 py-1 text-[11px] font-medium rounded-lg bg-app-surface-raised hover:bg-app-hover text-app-text border border-app-border transition-colors cursor-pointer flex items-center gap-1"
                               title="Toggle per-stage forensic details"
                             >
                               <span>Stages ({user.stages.length})</span>
                               {isExpanded ? (
-                                <ChevronUp className="w-3 h-3 text-slate-400" />
+                                <ChevronUp className="w-3 h-3 text-app-subtext" />
                               ) : (
-                                <ChevronDown className="w-3 h-3 text-slate-400" />
+                                <ChevronDown className="w-3 h-3 text-app-subtext" />
                               )}
                             </button>
 
@@ -769,10 +940,10 @@ export function TelemetryRadarTab({ adminSecret }: TelemetryRadarTabProps) {
                             {(user.is_flagged || user.flag_reasons.length > 0) && !isDisqualified && (
                               <button
                                 onClick={() => handleClearFlag(user.user_id)}
-                                className="px-2 py-1 text-[11px] font-semibold text-emerald-300 hover:text-white bg-emerald-950/60 hover:bg-emerald-900 rounded-lg border border-emerald-700/60 transition-colors cursor-pointer flex items-center gap-1"
+                                className="px-2 py-1 text-[11px] font-medium text-emerald-400 hover:text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 rounded-lg border border-emerald-500/30 transition-colors cursor-pointer flex items-center gap-1"
                                 title="Clear all anti-cheat flags"
                               >
-                                <CheckCircle className="w-3 h-3 text-emerald-400" />
+                                <CheckCircle className="w-3 h-3" />
                                 <span>Clear</span>
                               </button>
                             )}
@@ -781,10 +952,10 @@ export function TelemetryRadarTab({ adminSecret }: TelemetryRadarTabProps) {
                             {isDisqualified ? (
                               <button
                                 onClick={() => handleReinstate(user.user_id)}
-                                className="px-2 py-1 text-[11px] font-bold text-emerald-300 hover:text-white bg-emerald-950/60 hover:bg-emerald-900 rounded-lg border border-emerald-800/60 transition-colors cursor-pointer flex items-center gap-1"
+                                className="px-2 py-1 text-[11px] font-bold text-emerald-400 hover:text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 rounded-lg border border-emerald-500/30 transition-colors cursor-pointer flex items-center gap-1"
                                 title="Reinstate participant credentials"
                               >
-                                <RotateCcw className="w-3 h-3 text-emerald-400" />
+                                <RotateCcw className="w-3 h-3" />
                                 <span>Reinstate</span>
                               </button>
                             ) : (
@@ -796,10 +967,10 @@ export function TelemetryRadarTab({ adminSecret }: TelemetryRadarTabProps) {
                                     userEmail: user.email,
                                   })
                                 }
-                                className="px-2 py-1 text-[11px] font-bold text-rose-300 hover:text-white bg-rose-950/60 hover:bg-rose-900 rounded-lg border border-rose-800/60 transition-colors cursor-pointer flex items-center gap-1"
+                                className="px-2 py-1 text-[11px] font-bold text-rose-400 hover:text-rose-300 bg-rose-500/10 hover:bg-rose-500/20 rounded-lg border border-rose-500/30 transition-colors cursor-pointer flex items-center gap-1"
                                 title="Disqualify contestant from tournament"
                               >
-                                <Ban className="w-3 h-3 text-rose-400" />
+                                <Ban className="w-3 h-3" />
                                 <span>Disqualify</span>
                               </button>
                             )}
@@ -809,56 +980,56 @@ export function TelemetryRadarTab({ adminSecret }: TelemetryRadarTabProps) {
 
                       {/* Expandable Per-Stage Forensic Drawer */}
                       {isExpanded && (
-                        <tr className="bg-slate-900/70 border-b border-slate-800/80 animate-in fade-in duration-150">
+                        <tr className="bg-app-bg border-b border-app-border">
                           <td colSpan={9} className="p-4 pl-8">
                             <div className="space-y-2">
                               <div className="flex items-center justify-between">
-                                <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
-                                  <Clock className="w-3.5 h-3.5 text-cyan-400" />
-                                  <span>Per-Stage Forensic Breakdown for {user.name}</span>
+                                <h4 className="text-xs font-bold text-app-text uppercase tracking-wider flex items-center gap-1.5 font-sans">
+                                  <Clock className="w-3.5 h-3.5 text-app-subtext" />
+                                  <span>Per-Stage Forensics for {user.name}</span>
                                 </h4>
-                                <span className="text-[10px] text-slate-500 font-mono">
+                                <span className="text-[10px] text-app-subtext font-mono">
                                   User ID: {user.user_id}
                                 </span>
                               </div>
 
                               {user.stages.length === 0 ? (
-                                <p className="text-xs text-slate-500 italic py-2">
+                                <p className="text-xs text-app-subtext italic py-1 font-sans">
                                   No stage-specific telemetry records created yet.
                                 </p>
                               ) : (
-                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 pt-1">
+                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5 pt-1">
                                   {user.stages.map((stg) => (
                                     <div
                                       key={stg.id || stg.stage_number}
-                                      className="p-3 rounded-xl bg-slate-950/80 border border-slate-800 text-xs font-mono space-y-1.5 shadow-xs"
+                                      className="p-3 rounded-xl bg-app-surface border border-app-border text-xs font-mono space-y-1.5"
                                     >
-                                      <div className="flex items-center justify-between border-b border-slate-800 pb-1">
-                                        <span className="font-bold text-cyan-300">
+                                      <div className="flex items-center justify-between border-b border-app-border pb-1">
+                                        <span className="font-bold text-app-text">
                                           Stage {stg.stage_number}
                                         </span>
-                                        <span className="text-[10px] text-slate-400">
-                                          {stg.duration_seconds !== null ? `${stg.duration_seconds}s duration` : 'In Progress'}
+                                        <span className="text-[10px] text-app-subtext">
+                                          {stg.duration_seconds !== null ? `${stg.duration_seconds}s duration` : 'Active'}
                                         </span>
                                       </div>
 
-                                      <div className="grid grid-cols-2 gap-x-2 text-[11px] pt-0.5">
-                                        <div className="text-slate-400">
-                                          Tab Switches: <span className="font-bold text-white">{stg.tab_switches}</span>
+                                      <div className="grid grid-cols-2 gap-x-2 text-[11px] pt-0.5 text-app-subtext">
+                                        <div>
+                                          Tab Switches: <span className="font-bold text-app-text">{stg.tab_switches}</span>
                                         </div>
-                                        <div className="text-slate-400">
-                                          Fullscreen Exits: <span className="font-bold text-white">{stg.fullscreen_exits}</span>
+                                        <div>
+                                          Fullscreen Exits: <span className="font-bold text-app-text">{stg.fullscreen_exits}</span>
                                         </div>
-                                        <div className="text-slate-400">
-                                          Key Attempts: <span className="font-bold text-white">{stg.password_failed_attempts || 0}</span>
+                                        <div>
+                                          Key Attempts: <span className="font-bold text-app-text">{stg.password_failed_attempts || 0}</span>
                                         </div>
-                                        <div className="text-slate-400">
-                                          Speedrun: <span className={stg.flagged_too_fast ? 'text-rose-400 font-bold' : 'text-slate-400'}>{stg.flagged_too_fast ? 'FLAGGED' : 'Normal'}</span>
+                                        <div>
+                                          Speedrun: <span className={stg.flagged_too_fast ? 'text-rose-400 font-bold' : 'text-app-text'}>{stg.flagged_too_fast ? 'FLAGGED' : 'Normal'}</span>
                                         </div>
                                       </div>
 
                                       {stg.flag_reason && (
-                                        <div className="text-[10px] text-rose-400 bg-rose-500/10 p-1.5 rounded border border-rose-500/20 font-sans mt-1">
+                                        <div className="text-[10px] text-rose-300 bg-rose-500/10 p-1.5 rounded border border-rose-500/20 font-sans mt-1">
                                           {stg.flag_reason}
                                         </div>
                                       )}
@@ -881,37 +1052,37 @@ export function TelemetryRadarTab({ adminSecret }: TelemetryRadarTabProps) {
 
       {/* Disqualification Confirmation Modal */}
       {disqualifyCandidate && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-150">
-          <div className="w-full max-w-md p-6 glass-panel rounded-2xl border border-rose-500/60 shadow-2xl space-y-4 text-left bg-slate-950">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
+          <div className="w-full max-w-md p-5 sm:p-6 rounded-2xl border border-rose-500/40 shadow-2xl space-y-4 text-left bg-app-surface">
             <div className="flex items-center gap-3">
-              <div className="p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400">
-                <Ban className="w-6 h-6" />
+              <div className="p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400">
+                <Ban className="w-5 h-5" />
               </div>
               <div>
-                <h3 className="text-sm font-bold text-white">Confirm Participant Disqualification</h3>
-                <p className="text-xs text-rose-400">Irreversible tournament sanction</p>
+                <h3 className="text-sm font-bold text-app-text">Confirm Disqualification</h3>
+                <p className="text-xs text-rose-400">Tournament sanction and access revocation</p>
               </div>
             </div>
 
-            <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800 space-y-1">
-              <div className="text-xs font-bold text-white">{disqualifyCandidate.userName}</div>
-              <div className="text-[11px] font-mono text-slate-400">{disqualifyCandidate.userEmail}</div>
-              <div className="text-[10px] font-mono text-slate-500">ID: {disqualifyCandidate.userId}</div>
+            <div className="p-3 rounded-xl bg-app-bg border border-app-border space-y-1">
+              <div className="text-xs font-bold text-app-text">{disqualifyCandidate.userName}</div>
+              <div className="text-[11px] font-mono text-app-subtext">{disqualifyCandidate.userEmail}</div>
+              <div className="text-[10px] font-mono text-app-subtext/70">ID: {disqualifyCandidate.userId}</div>
             </div>
 
-            <p className="text-xs text-slate-300 leading-relaxed">
-              Disqualifying this participant will immediately lock their arena session, revoke stage decryption permissions, prevent further submissions, and suspend account access with a fair-play violation notice.
+            <p className="text-xs text-app-subtext leading-relaxed">
+              Disqualifying this participant will immediately lock their arena session, revoke stage decryption permissions, prevent further submissions, and suspend account access with a fair-play notice.
             </p>
 
             <div>
-              <label className="block text-[11px] font-semibold text-slate-300 mb-1">
+              <label className="block text-[11px] font-semibold text-app-text mb-1">
                 Disqualification Reason (Displayed to Participant):
               </label>
               <textarea
                 value={disqualifyReason}
                 onChange={(e) => setDisqualifyReason(e.target.value)}
                 rows={2}
-                className="w-full px-3 py-2 text-xs text-white bg-slate-900 border border-slate-700 rounded-xl focus:border-rose-400 focus:outline-none resize-none font-mono"
+                className="w-full px-3 py-2 text-xs text-app-text bg-app-bg border border-app-border rounded-xl focus:border-rose-400 focus:outline-none resize-none font-sans"
               />
             </div>
 
@@ -919,12 +1090,12 @@ export function TelemetryRadarTab({ adminSecret }: TelemetryRadarTabProps) {
               <p className="text-xs text-rose-400 font-medium">{disqualifyError}</p>
             )}
 
-            <div className="flex items-center justify-end gap-3 pt-2">
+            <div className="flex items-center justify-end gap-2.5 pt-2">
               <button
                 type="button"
                 onClick={() => setDisqualifyCandidate(null)}
                 disabled={disqualifying}
-                className="px-4 py-2 text-xs font-semibold text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-xl transition-all cursor-pointer"
+                className="px-4 py-2 text-xs font-semibold text-app-subtext hover:text-app-text bg-app-surface-raised hover:bg-app-hover border border-app-border rounded-xl transition-colors cursor-pointer min-h-[38px]"
               >
                 Cancel
               </button>
@@ -932,17 +1103,17 @@ export function TelemetryRadarTab({ adminSecret }: TelemetryRadarTabProps) {
                 type="button"
                 onClick={handleDisqualifyParticipant}
                 disabled={disqualifying}
-                className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-rose-600 hover:bg-rose-500 rounded-xl shadow-neon-rose transition-all cursor-pointer disabled:opacity-50"
+                className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-rose-600 hover:bg-rose-500 rounded-xl transition-colors cursor-pointer disabled:opacity-50 min-h-[38px]"
               >
                 {disqualifying ? (
                   <>
                     <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    <span>Disqualifying...</span>
+                    <span>Enforcing...</span>
                   </>
                 ) : (
                   <>
                     <Ban className="w-3.5 h-3.5" />
-                    <span>Enforce Disqualification</span>
+                    <span>Disqualify Contestant</span>
                   </>
                 )}
               </button>

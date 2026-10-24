@@ -592,11 +592,11 @@ export function BrevoStudioTab({ adminSecret }: BrevoStudioTabProps) {
   return (
     <div className="space-y-6">
       {/* Top Header Card */}
-      <div className="p-4 sm:p-5 rounded-2xl bg-slate-950/60 border border-slate-800 space-y-4 shadow-lg">
+      <div className="p-4 sm:p-5 rounded-2xl bg-app-surface border border-app-border space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
             <div className="flex items-center gap-2">
-              <Mail className="w-5 h-5 text-cyan-400" />
+              <Mail className="w-5 h-5 text-app-text" />
               <h3 className="text-sm font-bold text-white uppercase tracking-wider">
                 Brevo Studio Bulk Credentials Dispatcher
               </h3>
@@ -608,7 +608,7 @@ export function BrevoStudioTab({ adminSecret }: BrevoStudioTabProps) {
 
           <div className="flex flex-wrap items-center gap-2">
             {/* Brevo Connection Status from .env */}
-            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-950/60 border border-emerald-800/60 text-xs font-mono text-emerald-300">
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-xs font-sans text-emerald-400">
               <Radio className="w-3 h-3 text-emerald-400 animate-pulse" />
               <span>Brevo Active (.env) &bull; IP Whitelisting: Disabled</span>
             </div>
@@ -616,28 +616,28 @@ export function BrevoStudioTab({ adminSecret }: BrevoStudioTabProps) {
             {/* Total Recipients Count Pill */}
             <button
               onClick={() => setIsQueueModalOpen(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-xs font-mono text-slate-300 transition-colors cursor-pointer"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-app-surface-raised hover:bg-app-hover border border-app-border text-xs font-sans text-app-text transition-colors cursor-pointer"
             >
-              <Users className="w-3.5 h-3.5 text-cyan-400" />
+              <Users className="w-3.5 h-3.5 text-app-subtext" />
               <span>{participants.length} Recipient{participants.length === 1 ? '' : 's'}</span>
             </button>
           </div>
         </div>
 
         {/* Test Email Section (Directly using .env credentials) */}
-        <div className="p-3.5 rounded-xl bg-slate-900/60 border border-slate-800/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="p-3.5 rounded-xl bg-app-surface-raised border border-app-border flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex flex-1 items-center gap-2">
             <input
               type="email"
               value={testEmailAddress}
               onChange={(e) => setTestEmailAddress(e.target.value)}
               placeholder="Send test email to (e.g. admin@gmail.com)"
-              className="w-full sm:w-80 px-3 py-1.5 text-xs text-white bg-slate-950 border border-slate-700 rounded-lg focus:border-cyan-400 font-mono shadow-inner outline-none"
+              className="w-full sm:w-80 px-3 py-1.5 text-xs text-app-text bg-app-bg border border-app-border rounded-lg focus:outline-none focus:border-zinc-400 font-sans outline-none min-h-[36px]"
             />
             <button
               onClick={handleSendTestEmail}
               disabled={sendingTest || !testEmailAddress}
-              className="px-3 py-1.5 text-xs font-bold rounded-lg bg-cyan-600 hover:bg-cyan-500 text-slate-950 transition-all cursor-pointer disabled:opacity-50 flex items-center gap-1.5 shrink-0"
+              className="px-3.5 py-1.5 text-xs font-semibold rounded-lg bg-app-text hover:opacity-90 text-app-bg transition-opacity cursor-pointer disabled:opacity-50 flex items-center gap-1.5 shrink-0 min-h-[36px]"
             >
               {sendingTest ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
               <span>Send Test Email</span>
@@ -651,10 +651,10 @@ export function BrevoStudioTab({ adminSecret }: BrevoStudioTabProps) {
 
         {testResult && (
           <div
-            className={`p-2.5 rounded-lg text-xs font-mono flex items-center gap-2 animate-in fade-in duration-200 ${
+            className={`p-2.5 rounded-lg text-xs font-sans flex items-center gap-2 animate-in fade-in duration-200 ${
               testResult.success
-                ? 'bg-emerald-950/60 border border-emerald-800/60 text-emerald-300'
-                : 'bg-rose-950/60 border border-rose-800/60 text-rose-300'
+                ? 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400'
+                : 'bg-rose-500/10 border border-rose-500/20 text-rose-400'
             }`}
           >
             {testResult.success ? <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" /> : <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />}
@@ -663,19 +663,19 @@ export function BrevoStudioTab({ adminSecret }: BrevoStudioTabProps) {
         )}
 
         {/* Action Buttons: Import CSV, Manage Queue, Dispatch */}
-        <div className="flex flex-wrap items-center justify-between gap-3 pt-1 border-t border-slate-800/80">
+        <div className="flex flex-wrap items-center justify-between gap-3 pt-1 border-t border-app-border">
           <div className="flex flex-wrap items-center gap-2">
             <button
               onClick={() => setIsImportModalOpen(true)}
-              className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold rounded-xl bg-slate-900 hover:bg-slate-800 text-cyan-300 border border-cyan-500/30 transition-all cursor-pointer shadow-xs"
+              className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-medium rounded-lg bg-app-surface hover:bg-app-hover text-app-text border border-app-border transition-colors cursor-pointer min-h-[36px]"
             >
-              <Upload className="w-3.5 h-3.5 text-cyan-400" />
+              <Upload className="w-3.5 h-3.5 text-app-subtext" />
               <span>Import Participants CSV</span>
             </button>
 
             <button
               onClick={() => setIsQueueModalOpen(true)}
-              className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 transition-all cursor-pointer"
+              className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-medium rounded-lg bg-app-surface hover:bg-app-hover text-app-text border border-app-border transition-colors cursor-pointer min-h-[36px]"
             >
               <Users className="w-3.5 h-3.5 text-slate-400" />
               <span>Manage Tokens & Queue ({participants.length})</span>
@@ -691,7 +691,7 @@ export function BrevoStudioTab({ adminSecret }: BrevoStudioTabProps) {
 
             <button
               onClick={handleSaveTemplate}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 transition-all cursor-pointer"
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-app-surface hover:bg-app-hover text-app-text border border-app-border transition-colors cursor-pointer min-h-[36px]"
               title="Save template edits locally"
             >
               <Save className="w-3.5 h-3.5 text-slate-400" />
@@ -700,7 +700,7 @@ export function BrevoStudioTab({ adminSecret }: BrevoStudioTabProps) {
 
             <button
               onClick={handleResetTemplate}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-800 transition-all cursor-pointer"
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-app-surface hover:bg-app-hover text-app-subtext hover:text-app-text border border-app-border transition-colors cursor-pointer min-h-[36px]"
               title="Reset to default clean template"
             >
               <RotateCcw className="w-3 h-3 text-slate-400" />
@@ -710,7 +710,7 @@ export function BrevoStudioTab({ adminSecret }: BrevoStudioTabProps) {
             <button
               onClick={handleDispatch}
               disabled={sending || participants.length === 0}
-              className="flex items-center gap-2 px-5 py-2 text-xs font-bold rounded-xl bg-cyan-400 hover:bg-cyan-300 text-slate-950 shadow-sm transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              className="flex items-center gap-2 px-5 py-2 text-xs font-semibold rounded-lg bg-app-text hover:opacity-90 text-app-bg transition-opacity cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed min-h-[38px]"
             >
               {sending ? (
                 <>
@@ -729,7 +729,7 @@ export function BrevoStudioTab({ adminSecret }: BrevoStudioTabProps) {
 
         {/* Results Banner */}
         {progressResult && (
-          <div className="p-3.5 rounded-xl bg-emerald-950/40 border border-emerald-500/30 text-xs font-mono space-y-1 text-emerald-300 animate-in fade-in duration-200">
+          <div className="p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-xs font-sans space-y-1 text-emerald-400 animate-in fade-in duration-200">
             <div className="flex items-center gap-2 font-bold text-sm">
               <CheckCircle2 className="w-4 h-4 text-emerald-400" />
               <span>Bulk Dispatch Completed via {progressResult.engine || 'Brevo'}</span>
@@ -760,7 +760,7 @@ export function BrevoStudioTab({ adminSecret }: BrevoStudioTabProps) {
       </div>
 
       {/* Email Subject Line Configuration */}
-      <div className="p-4 sm:p-5 rounded-2xl bg-slate-950/60 border border-slate-800 space-y-2 shadow-lg">
+      <div className="p-4 sm:p-5 rounded-2xl bg-app-surface border border-app-border space-y-2">
         <label className="block text-xs font-bold text-white uppercase tracking-wider">
           Email Subject Line
         </label>
@@ -769,26 +769,26 @@ export function BrevoStudioTab({ adminSecret }: BrevoStudioTabProps) {
           value={subject}
           onChange={(e) => setSubject(e.target.value)}
           placeholder="e.g. Your AI Club Contest Access Token - Team {{team_name}} ({{name}})"
-          className="w-full px-3.5 py-2 text-xs text-white bg-slate-900 border border-slate-700 rounded-xl focus:border-cyan-400 font-mono shadow-inner outline-none transition-colors"
+          className="w-full px-3.5 py-2 text-xs text-app-text bg-app-bg border border-app-border rounded-xl focus:outline-none focus:border-zinc-400 font-sans outline-none transition-colors"
         />
         <div className="flex items-center justify-between text-[11px] text-slate-400 pt-1">
           <span>Supported dynamic variables in subject:</span>
-          <span className="font-mono text-cyan-400">
+          <span className="font-mono text-app-text font-medium">
             <code>{'{{name}}'}</code>, <code>{'{{team_name}}'}</code>, <code>{'{{token}}'}</code>
           </span>
         </div>
       </div>
 
       {/* Editor & Preview Split Panel */}
-      <div className="p-4 sm:p-5 rounded-2xl bg-slate-950/60 border border-slate-800 space-y-4 shadow-lg">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-slate-800">
+      <div className="p-4 sm:p-5 rounded-2xl bg-app-surface border border-app-border space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-app-border">
           <div className="flex items-center gap-2">
             <button
               onClick={() => setPreviewTab('preview')}
               className={`px-3 py-1.5 text-xs font-semibold rounded-xl transition-colors cursor-pointer flex items-center gap-1.5 ${
                 previewTab === 'preview'
-                  ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-xs'
-                  : 'text-slate-400 hover:text-white'
+                  ? 'bg-app-text text-app-bg'
+                  : 'text-app-subtext hover:text-app-text'
               }`}
             >
               <Eye className="w-3.5 h-3.5" />
@@ -798,8 +798,8 @@ export function BrevoStudioTab({ adminSecret }: BrevoStudioTabProps) {
               onClick={() => setPreviewTab('editor')}
               className={`px-3 py-1.5 text-xs font-semibold rounded-xl transition-colors cursor-pointer flex items-center gap-1.5 ${
                 previewTab === 'editor'
-                  ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-xs'
-                  : 'text-slate-400 hover:text-white'
+                  ? 'bg-app-text text-app-bg'
+                  : 'text-app-subtext hover:text-app-text'
               }`}
             >
               <Sparkles className="w-3.5 h-3.5" />
@@ -809,7 +809,7 @@ export function BrevoStudioTab({ adminSecret }: BrevoStudioTabProps) {
 
           <div className="flex items-center gap-2 text-[11px] font-mono text-slate-400">
             <span>Template Variables:</span>
-            <span className="text-cyan-300">
+            <span className="text-app-text">
               <code>{'{{name}}'}</code>, <code>{'{{token}}'}</code>, <code>{'{{team_name}}'}</code>, <code>{'{{access_link}}'}</code>
             </span>
           </div>
@@ -822,14 +822,14 @@ export function BrevoStudioTab({ adminSecret }: BrevoStudioTabProps) {
               value={htmlTemplate}
               onChange={(e) => setHtmlTemplate(e.target.value)}
               placeholder="Paste or edit HTML email markup here..."
-              className="w-full p-4 text-xs font-mono text-cyan-200 bg-slate-900 border border-slate-800 rounded-xl focus:outline-none focus:border-cyan-400 leading-relaxed shadow-inner"
+              className="w-full p-4 text-xs font-mono text-app-text bg-app-bg border border-app-border rounded-xl focus:outline-none focus:border-zinc-400 leading-relaxed"
             />
             <p className="text-[11px] text-slate-400">
               When dispatched, the exact edited HTML template above will be sent to all participants with their personalized tokens.
             </p>
           </div>
         ) : (
-          <div className="rounded-xl overflow-hidden border border-slate-800 bg-slate-950 p-4">
+          <div className="rounded-xl overflow-hidden border border-app-border bg-white p-4">
             <div
               className="w-full min-h-[480px] overflow-auto"
               dangerouslySetInnerHTML={{ __html: sampleHtml }}
@@ -841,10 +841,10 @@ export function BrevoStudioTab({ adminSecret }: BrevoStudioTabProps) {
       {/* Recipients Queue Modal */}
       {isQueueModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-150">
-          <div className="w-full max-w-4xl p-6 glass-panel rounded-2xl border border-slate-800 shadow-2xl space-y-4 text-left bg-slate-950 flex flex-col max-h-[85vh]">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+          <div className="w-full max-w-4xl p-4 sm:p-6 rounded-2xl border border-app-border shadow-2xl space-y-4 text-left bg-app-surface flex flex-col max-h-[85vh]">
+            <div className="flex items-center justify-between pb-3 border-b border-app-border">
               <div className="flex items-center gap-2.5">
-                <Users className="w-5 h-5 text-cyan-400" />
+                <Users className="w-5 h-5 text-app-subtext" />
                 <div>
                   <h3 className="text-sm font-bold text-white uppercase tracking-wider">
                     Enrolled Contestants & Assigned Tokens ({participants.length})
@@ -862,7 +862,7 @@ export function BrevoStudioTab({ adminSecret }: BrevoStudioTabProps) {
                     value={queueSearch}
                     onChange={(e) => setQueueSearch(e.target.value)}
                     placeholder="Search name or token..."
-                    className="w-full px-2.5 py-1 text-xs text-white bg-slate-900 border border-slate-700 rounded-lg focus:border-cyan-400 font-mono pl-7"
+                    className="w-full px-2.5 py-1 text-xs text-white bg-app-bg border border-app-border rounded-lg focus:border-zinc-400 font-mono pl-7"
                   />
                   <Search className="w-3 h-3 text-slate-500 absolute left-2 top-2" />
                 </div>
@@ -881,9 +881,9 @@ export function BrevoStudioTab({ adminSecret }: BrevoStudioTabProps) {
                 No participants uploaded yet. Import participants via CSV to populate the queue.
               </div>
             ) : (
-              <div className="flex-1 overflow-y-auto rounded-xl border border-slate-800 bg-slate-950">
+              <div className="flex-1 overflow-y-auto rounded-xl border border-app-border bg-app-surface">
                 <table className="w-full text-left text-xs font-mono">
-                  <thead className="bg-slate-900 border-b border-slate-800 text-slate-400 sticky top-0 text-[10px] uppercase">
+                  <thead className="bg-app-bg border-b border-app-border text-app-subtext sticky top-0 text-[10px] uppercase">
                     <tr>
                       <th className="p-2.5">#</th>
                       <th className="p-2.5">Team</th>
@@ -895,10 +895,10 @@ export function BrevoStudioTab({ adminSecret }: BrevoStudioTabProps) {
                   </thead>
                   <tbody className="divide-y divide-slate-800/60">
                     {filteredQueue.map((p, idx) => (
-                      <tr key={p.id || idx} className="hover:bg-slate-900/40">
+                      <tr key={p.id || idx} className="hover:bg-app-hover/30">
                         <td className="p-2.5 text-slate-500 text-[11px]">{idx + 1}</td>
                         <td className="p-2.5">
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-cyan-500/10 border border-cyan-500/25 text-cyan-300 font-semibold text-[11px]">
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-app-surface border border-app-border text-app-text font-semibold text-[11px]">
                             {p.team_name || 'Solo'}
                           </span>
                         </td>
@@ -907,7 +907,7 @@ export function BrevoStudioTab({ adminSecret }: BrevoStudioTabProps) {
                         <td className="p-2.5">
                           <button
                             onClick={() => handleCopyToken(p.access_token)}
-                            className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-slate-900 hover:bg-slate-800 border border-slate-700 text-cyan-400 font-bold font-mono transition-colors cursor-pointer"
+                            className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-app-surface hover:bg-app-hover border border-app-border text-app-text font-semibold font-mono transition-colors cursor-pointer"
                             title="Click to copy token"
                           >
                             <span>{p.access_token}</span>
@@ -933,7 +933,7 @@ export function BrevoStudioTab({ adminSecret }: BrevoStudioTabProps) {
               </div>
             )}
 
-            <div className="flex items-center justify-between pt-2 border-t border-slate-800 text-xs">
+            <div className="flex items-center justify-between pt-2 border-t border-app-border text-xs">
               {participants.length > 0 && (
                 <button
                   onClick={handleClearAllParticipants}
@@ -956,10 +956,10 @@ export function BrevoStudioTab({ adminSecret }: BrevoStudioTabProps) {
       {/* CSV Batch Import Dialog */}
       {isImportModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-150">
-          <div className="w-full max-w-2xl p-6 glass-panel rounded-2xl border border-slate-800 shadow-2xl space-y-4 text-left bg-slate-950 flex flex-col max-h-[85vh]">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+          <div className="w-full max-w-2xl p-4 sm:p-6 rounded-2xl border border-app-border shadow-2xl space-y-4 text-left bg-app-surface flex flex-col max-h-[85vh]">
+            <div className="flex items-center justify-between pb-3 border-b border-app-border">
               <div className="flex items-center gap-2">
-                <Upload className="w-5 h-5 text-cyan-400" />
+                <Upload className="w-5 h-5 text-app-subtext" />
                 <div>
                   <h3 className="text-sm font-bold text-white uppercase tracking-wider">
                     Import Participants via CSV
@@ -990,9 +990,9 @@ export function BrevoStudioTab({ adminSecret }: BrevoStudioTabProps) {
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
-                  className="px-3.5 py-1.5 text-xs font-semibold rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-700 transition-colors cursor-pointer flex items-center gap-1.5"
+                  className="px-3.5 py-1.5 text-xs font-semibold rounded-xl bg-app-surface hover:bg-app-hover text-app-text border border-app-border transition-colors cursor-pointer flex items-center gap-1.5"
                 >
-                  <FileText className="w-3.5 h-3.5 text-cyan-400" />
+                  <FileText className="w-3.5 h-3.5 text-app-subtext" />
                   <span>Choose CSV File</span>
                 </button>
                 <span className="text-[11px] text-slate-500">or paste CSV text directly below</span>
@@ -1003,7 +1003,7 @@ export function BrevoStudioTab({ adminSecret }: BrevoStudioTabProps) {
                 value={rawCsvInput}
                 onChange={(e) => handleCsvTextChange(e.target.value)}
                 placeholder="team_name,team_size,name,email,token&#10;AlphaSquad,duo,Alice Smith,alice@example.com,AI-ALPHA-01&#10;AlphaSquad,duo,Bob Jones,bob@example.com,AI-ALPHA-01"
-                className="w-full p-3 text-xs font-mono text-cyan-200 bg-slate-900 border border-slate-800 rounded-xl focus:outline-none focus:border-cyan-400 leading-relaxed shadow-inner"
+                className="w-full p-3 text-xs font-mono text-app-text bg-app-bg border border-app-border rounded-xl focus:outline-none focus:border-zinc-400 leading-relaxed shadow-inner"
               />
 
               {parseErrors.length > 0 && (
@@ -1023,11 +1023,11 @@ export function BrevoStudioTab({ adminSecret }: BrevoStudioTabProps) {
                       ✓ Tokens Assigned Accurately
                     </span>
                   </div>
-                  <div className="max-h-36 overflow-y-auto rounded-lg border border-slate-800 bg-slate-900/60 p-2 text-xs font-mono">
+                  <div className="max-h-36 overflow-y-auto rounded-lg border border-app-border bg-app-bg p-2 text-xs font-mono">
                     {parsedRecipients.map((r, i) => (
-                      <div key={i} className="flex items-center justify-between py-0.5 border-b border-slate-800/40 text-[11px]">
+                      <div key={i} className="flex items-center justify-between py-0.5 border-b border-app-border/40 text-[11px]">
                         <span className="text-white font-semibold">{r.name} ({r.email})</span>
-                        <span className="text-cyan-400 font-bold">{r.token}</span>
+                        <span className="text-app-subtext font-bold">{r.token}</span>
                       </div>
                     ))}
                   </div>
@@ -1042,7 +1042,7 @@ export function BrevoStudioTab({ adminSecret }: BrevoStudioTabProps) {
               )}
             </div>
 
-            <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-800">
+            <div className="flex items-center justify-end gap-2 pt-3 border-t border-app-border">
               <button
                 type="button"
                 onClick={() => setIsImportModalOpen(false)}
@@ -1054,7 +1054,7 @@ export function BrevoStudioTab({ adminSecret }: BrevoStudioTabProps) {
                 type="button"
                 onClick={handleSaveBatchRecipients}
                 disabled={savingRecipients || parsedRecipients.length === 0}
-                className="px-4 py-1.5 text-xs font-bold rounded-lg bg-cyan-400 hover:bg-cyan-300 text-slate-950 transition-colors cursor-pointer disabled:opacity-50"
+                className="px-4 py-1.5 text-xs font-semibold rounded-lg bg-app-text hover:opacity-90 text-app-bg transition-opacity cursor-pointer disabled:opacity-50 min-h-[36px]"
               >
                 {savingRecipients ? 'Saving...' : `Save ${parsedRecipients.length} Participants`}
               </button>

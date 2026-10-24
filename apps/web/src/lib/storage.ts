@@ -127,6 +127,38 @@ export async function createTokenArchiveUploadUrl(
  * for a participant's unique token archive bundle (outer ZIP containing all stages).
  * URL is intentionally short-lived since the browser caches the blob in IndexedDB after first fetch.
  */
+
+/**
+ * Generates a Supabase Storage Signed Upload URL for a team-unique archive upload.
+ * Ensures each team receives a dedicated storage location, and all members of that team
+ * will download the exact same ZIP archive.
+ */
+export async function createTeamArchiveUploadUrl(
+  teamIdentifier: string
+): Promise<{ uploadUrl: string; token: string; storagePath: string; expiresIn: number }> {
+  await ensureStagesBucketExists();
+  const supabaseAdmin = getSupabaseAdmin();
+
+  const cleanKey = teamIdentifier.replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase();
+  const storagePath = `team-archives/${cleanKey}/archive.zip`;
+  const expiresIn = 600;
+
+  const { data, error } = await supabaseAdmin.storage
+    .from(STAGES_BUCKET)
+    .createSignedUploadUrl(storagePath);
+
+  if (error || !data) {
+    throw new Error(error?.message || 'Failed to create team archive signed upload URL');
+  }
+
+  return {
+    uploadUrl: data.signedUrl,
+    token: data.token,
+    storagePath: data.path || storagePath,
+    expiresIn,
+  };
+}
+
 export async function createTokenArchiveDownloadUrl(
   storagePath: string
 ): Promise<{ downloadUrl: string; expiresIn: number }> {

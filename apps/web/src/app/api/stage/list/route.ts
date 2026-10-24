@@ -47,13 +47,28 @@ export async function POST(req: NextRequest) {
     if (isSupabaseConfigured) {
       try {
         const supabaseAdmin = getSupabaseAdmin();
+        const cleanToken = accessToken.trim().toUpperCase();
 
-        // 1. Check if participant has a per-token archive bundle assigned
-        const { data: archive } = await supabaseAdmin
+        // 1. Check if participant has an archive bundle assigned by access_token
+        let { data: archive } = await supabaseAdmin
           .from('token_archives')
           .select('stage_count')
-          .eq('access_token', accessToken)
+          .eq('access_token', cleanToken)
           .maybeSingle();
+
+        // Fallback: check by team_name if member token not directly mapped
+        if (!archive && user.team_name) {
+          try {
+            const { data: teamArchive } = await supabaseAdmin
+              .from('token_archives')
+              .select('stage_count')
+              .eq('team_name', user.team_name)
+              .order('uploaded_at', { ascending: false })
+              .limit(1)
+              .maybeSingle();
+            if (teamArchive) archive = teamArchive;
+          } catch {}
+        }
 
         if (archive && (archive as any).stage_count > 0) {
           const stageCount = Number((archive as any).stage_count);

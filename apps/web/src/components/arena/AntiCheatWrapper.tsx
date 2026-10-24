@@ -503,7 +503,7 @@ export function AntiCheatWrapper({
       {isMultiMonitorViolation && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-black/80 backdrop-blur-xl animate-in fade-in duration-200">
           <div className="relative max-w-md w-full p-6 text-center bg-app-surface border border-rose-500/40 rounded-3xl shadow-2xl space-y-4 animate-in zoom-in-95 duration-150">
-            <div className="w-14 h-14 mx-auto rounded-2xl bg-rose-950/60 border border-rose-500/40 flex items-center justify-center text-rose-400 shadow-neon-rose">
+            <div className="w-14 h-14 mx-auto rounded-2xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400 ">
               <Tv2 className="w-7 h-7" />
             </div>
 
@@ -534,7 +534,7 @@ export function AntiCheatWrapper({
             <div className="pt-2">
               <button
                 onClick={handleResolveMultiMonitor}
-                className="w-full flex items-center justify-center gap-2 px-4 py-2.5 text-xs font-semibold rounded-xl bg-rose-600 hover:bg-rose-500 text-white transition-colors cursor-pointer shadow-lg shadow-rose-950"
+                className="w-full flex items-center justify-center gap-2 px-4 py-2.5 text-xs font-semibold rounded-xl bg-rose-600 hover:bg-rose-500 text-white transition-colors cursor-pointer "
               >
                 <Maximize2 className="w-4 h-4" />
                 Re-align to Single Display Arena
@@ -548,7 +548,7 @@ export function AntiCheatWrapper({
       {!isMultiMonitorViolation && isWindowSwitchViolation && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-black/80 backdrop-blur-xl animate-in fade-in duration-200">
           <div className="relative max-w-md w-full p-6 text-center bg-app-surface border border-violet-500/40 rounded-3xl shadow-2xl space-y-4 animate-in zoom-in-95 duration-150">
-            <div className="w-14 h-14 mx-auto rounded-2xl bg-violet-950/60 border border-violet-500/40 flex items-center justify-center text-violet-400 shadow-neon-cyan">
+            <div className="w-14 h-14 mx-auto rounded-2xl bg-app-surface-raised border border-app-border flex items-center justify-center text-violet-400 ">
               <AppWindow className="w-7 h-7" />
             </div>
 
@@ -579,7 +579,7 @@ export function AntiCheatWrapper({
             <div className="pt-2">
               <button
                 onClick={handleResumeFromWindowSwitch}
-                className="w-full flex items-center justify-center gap-2 px-4 py-2.5 text-xs font-semibold rounded-xl bg-violet-600 hover:bg-violet-500 text-white transition-colors cursor-pointer shadow-lg shadow-violet-950"
+                className="w-full flex items-center justify-center gap-2 px-4 py-2.5 text-xs font-semibold rounded-xl bg-app-text text-app-bg hover:opacity-90 transition-opacity cursor-pointer"
               >
                 <Maximize2 className="w-4 h-4" />
                 Resume Contest Arena

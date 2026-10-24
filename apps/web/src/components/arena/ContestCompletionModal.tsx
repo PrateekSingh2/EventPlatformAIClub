@@ -78,41 +78,40 @@ export function ContestCompletionModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-md animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-md animate-in fade-in duration-200">
       <div
-        className="w-full max-w-md bg-app-surface border border-amber-500/40 rounded-3xl shadow-2xl p-6 sm:p-7 relative text-app-text space-y-5 animate-in zoom-in-95 duration-200"
+        className="w-full max-w-md bg-app-surface border border-app-border rounded-3xl shadow-2xl p-6 sm:p-7 relative text-app-text space-y-5 animate-in zoom-in-95 duration-200"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
         <div className="flex items-start justify-between">
           <div className="flex items-center space-x-3">
-            <div className="w-12 h-12 rounded-2xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400 shrink-0 shadow-lg">
-              <Trophy className="w-6 h-6" />
+            <div className="w-11 h-11 rounded-2xl bg-amber-500/10 border border-amber-500/25 flex items-center justify-center text-amber-500 shrink-0">
+              <Trophy className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="text-base sm:text-lg font-bold text-white tracking-tight flex items-center gap-1.5">
-                <span>Final Stage Completion</span>
-                <Sparkles className="w-4 h-4 text-amber-400" />
+              <h3 className="text-base sm:text-lg font-bold text-app-text tracking-tight">
+                Final Stage Completion
               </h3>
-              <p className="text-xs text-slate-400 font-mono">
+              <p className="text-xs text-app-subtext font-mono">
                 Terminal Stage Reached ({totalStages} of {totalStages})
               </p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="p-1 rounded-xl text-slate-400 hover:text-white hover:bg-white/5 transition-colors cursor-pointer"
+            className="p-1.5 rounded-xl text-app-subtext hover:text-app-text hover:bg-app-hover border border-app-border transition-colors cursor-pointer min-h-[32px] min-w-[32px] flex items-center justify-center"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
         {/* Narrative Box */}
-        <div className="p-3.5 rounded-2xl bg-white/[0.03] border border-white/10 text-xs text-slate-300 leading-relaxed space-y-1.5">
-          <p className="font-semibold text-amber-300">
+        <div className="p-3.5 rounded-2xl bg-app-surface-raised border border-app-border text-xs text-app-text leading-relaxed space-y-1.5">
+          <p className="font-semibold text-amber-500">
             You have extracted the deepest evidence layer.
           </p>
-          <p className="text-[11px] text-slate-400">
+          <p className="text-[11px] text-app-subtext">
             Enter the <strong>Final Recovery Phrase</strong> stated in the final stage brief (or your conclusion code) to conclude the investigation, permanently lock your score on the leaderboard, and finalize your contest record.
           </p>
         </div>
@@ -120,7 +119,7 @@ export function ContestCompletionModal({
         {/* Form */}
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-1.5">
-            <label className="text-[11px] font-semibold text-slate-300 tracking-wide uppercase">
+            <label className="text-[11px] font-semibold text-app-subtext tracking-wide uppercase">
               Final Recovery Phrase / Decryption Flag
             </label>
             <div className="relative">
@@ -131,20 +130,20 @@ export function ContestCompletionModal({
                 placeholder="e.g. LEDGER-RESTORED-02"
                 disabled={validating || Boolean(successMessage)}
                 autoFocus
-                className="w-full px-4 py-3 rounded-xl bg-app-bg border border-white/15 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-400/20 text-white font-mono text-sm tracking-wide placeholder:text-slate-600 transition-all shadow-inner"
+                className="w-full px-4 py-2.5 rounded-xl bg-app-bg border border-app-border focus:border-amber-500 focus:outline-none text-app-text font-mono text-xs sm:text-sm tracking-wide placeholder:text-app-subtext/40 transition-colors shadow-inner min-h-[44px]"
               />
-              <KeyRound className="w-4 h-4 text-slate-500 absolute right-3.5 top-3.5 pointer-events-none" />
+              <KeyRound className="w-4 h-4 text-app-subtext absolute right-3.5 top-3.5 pointer-events-none" />
             </div>
           </div>
 
           {errorMessage && (
-            <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/25 text-rose-400 text-xs font-medium animate-in fade-in">
+            <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/25 text-rose-500 dark:text-rose-400 text-xs font-medium animate-in fade-in">
               {errorMessage}
             </div>
           )}
 
           {successMessage && (
-            <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/25 text-emerald-400 text-xs font-semibold flex items-center space-x-2 animate-in fade-in">
+            <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/25 text-emerald-500 dark:text-emerald-400 text-xs font-semibold flex items-center space-x-2 animate-in fade-in">
               <CheckCircle2 className="w-4 h-4 shrink-0" />
               <span>{successMessage}</span>
             </div>
@@ -155,14 +154,14 @@ export function ContestCompletionModal({
               type="button"
               onClick={onClose}
               disabled={validating || Boolean(successMessage)}
-              className="flex-1 py-2.5 px-4 rounded-xl border border-white/10 hover:bg-white/5 text-slate-300 text-xs font-semibold transition-all cursor-pointer"
+              className="flex-1 py-2.5 px-4 rounded-xl border border-app-border hover:bg-app-hover text-app-subtext hover:text-app-text text-xs font-semibold transition-colors cursor-pointer min-h-[42px]"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={validating || Boolean(successMessage)}
-              className="flex-1 py-2.5 px-4 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-500 text-slate-950 font-bold text-xs hover:brightness-105 active:scale-[0.98] transition-all cursor-pointer shadow-[0_4px_14px_rgba(245,158,11,0.35)] flex items-center justify-center space-x-2 disabled:opacity-50"
+              className="flex-1 py-2.5 px-4 rounded-xl bg-amber-500 hover:bg-amber-400 text-zinc-950 font-semibold text-xs active:scale-[0.98] transition-colors cursor-pointer flex items-center justify-center space-x-2 disabled:opacity-50 min-h-[42px]"
             >
               {validating ? (
                 <>

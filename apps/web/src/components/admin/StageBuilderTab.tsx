@@ -45,6 +45,17 @@ interface StageBuilderTabProps {
   adminSecret: string;
 }
 
+export interface TeamRosterItem {
+  teamKey: string;
+  teamName: string;
+  teamSize?: string;
+  isSolo: boolean;
+  memberCount: number;
+  members: Array<{ name: string; email: string; token: string }>;
+  tokens: string[];
+  primaryToken: string;
+}
+
 type TabMode = 'bulk' | 'list' | 'create' | 'edit';
 
 export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
@@ -55,14 +66,15 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
   const [bulkZipFiles, setBulkZipFiles] = useState<File[]>([]);
   const [bulkStageCount, setBulkStageCount] = useState<number>(12);
   const [detectingStages, setDetectingStages] = useState(false);
-  const [bulkTokenMappings, setBulkTokenMappings] = useState<string[]>([]);
-  const [availableTokens, setAvailableTokens] = useState<Array<{ token: string; label: string }>>([]);
+  const [bulkTeamMappings, setBulkTeamMappings] = useState<string[]>([]);
+  const [availableTeams, setAvailableTeams] = useState<TeamRosterItem[]>([]);
   const [loadingTokens, setLoadingTokens] = useState(false);
   const [bulkUploading, setBulkUploading] = useState(false);
   const [bulkUploadProgress, setBulkUploadProgress] = useState<string | null>(null);
   const [bulkCommittedArchives, setBulkCommittedArchives] = useState<Array<{
     id: string;
     access_token: string;
+    team_name?: string;
     storage_path: string;
     stage_count: number;
     uploaded_at: string;
@@ -150,7 +162,7 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
     };
   }, [uploadFile, zipPassword, isPasswordProtected]);
 
-  // Fetch available participant & team tokens for auto-mapping
+  // Fetch available teams & participants for strict 1-to-1 unique ZIP mapping
   const fetchAvailableTokens = async () => {
     setLoadingTokens(true);
     try {
@@ -159,23 +171,49 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
       });
       const data = await res.json();
       if (res.ok && data.participants) {
-        const tokenMap = new Map<string, string>();
+        const teamsMap = new Map<string, TeamRosterItem>();
         for (const p of data.participants as any[]) {
-          const t = (p.access_token || '').trim().toUpperCase();
-          if (t && !tokenMap.has(t)) {
-            const label = p.team_name ? `Team: ${p.team_name}` : p.name ? `${p.name} (${p.email})` : t;
-            tokenMap.set(t, label);
+          const token = (p.access_token || '').trim().toUpperCase();
+          if (!token) continue;
+
+          const rawTeamName = (p.team_name || '').trim();
+          const isSolo = !rawTeamName;
+          const teamKey = isSolo ? `solo:${p.email.toLowerCase()}` : rawTeamName.toLowerCase();
+          const displayTeamName = isSolo ? `${p.name || p.email} (Solo)` : rawTeamName;
+
+          if (!teamsMap.has(teamKey)) {
+            teamsMap.set(teamKey, {
+              teamKey,
+              teamName: displayTeamName,
+              teamSize: p.team_size || (isSolo ? 'Solo' : undefined),
+              isSolo,
+              memberCount: 0,
+              members: [],
+              tokens: [],
+              primaryToken: token,
+            });
+          }
+
+          const team = teamsMap.get(teamKey)!;
+          team.memberCount++;
+          team.members.push({
+            name: p.name || p.email.split('@')[0],
+            email: p.email,
+            token,
+          });
+          if (!team.tokens.includes(token)) {
+            team.tokens.push(token);
           }
         }
-        const tokensArray = Array.from(tokenMap.entries()).map(([token, label]) => ({ token, label }));
-        setAvailableTokens(tokensArray);
 
-        // Auto-randomize challenge archives across participants if files already loaded
-        setBulkTokenMappings((prev) => {
+        const teamsArray = Array.from(teamsMap.values());
+        setAvailableTeams(teamsArray);
+
+        // Auto-assign unique teams to zip files if files already loaded
+        setBulkTeamMappings((prev) => {
           if (bulkZipFiles.length === 0) return prev;
           if (prev.length === bulkZipFiles.length && prev.some(Boolean)) return prev;
-          const shuffled = [...tokensArray].sort(() => Math.random() - 0.5);
-          return bulkZipFiles.map((_, i) => shuffled[i % shuffled.length]?.token || `TOKEN-${i + 1}`);
+          return bulkZipFiles.map((_, i) => (i < teamsArray.length ? teamsArray[i].teamKey : ''));
         });
       }
     } catch (err) {
@@ -210,13 +248,12 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
     files.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
     setBulkZipFiles(files);
 
-    // Automatically randomize token assignments across all registered participants
-    if (availableTokens.length > 0) {
-      const shuffled = [...availableTokens].sort(() => Math.random() - 0.5);
-      const randomized = files.map((_, i) => shuffled[i % shuffled.length].token);
-      setBulkTokenMappings(randomized);
+    // 1-to-1 Bijection: Every team gets a unique ZIP archive! No two teams receive the same ZIP.
+    if (availableTeams.length > 0) {
+      const initialMappings = files.map((_, i) => (i < availableTeams.length ? availableTeams[i].teamKey : ''));
+      setBulkTeamMappings(initialMappings);
     } else {
-      setBulkTokenMappings(files.map((_, i) => `TOKEN-${String(i + 1).padStart(3, '0')}`));
+      setBulkTeamMappings(files.map(() => ''));
     }
 
     // In-browser RAM inspection: auto-detect total stage count from first archive
@@ -249,24 +286,25 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
     }
   };
 
-  // Randomly distribute challenge archives across all registered participants in database
+  // Strictly distribute unique challenge archives across all registered teams (1 unique ZIP per team)
   const handleRandomizeAssignments = () => {
-    if (availableTokens.length === 0) {
-      setStatusMessage({ type: 'error', text: 'No registered participant tokens found in database. Ingest participants first.' });
+    if (availableTeams.length === 0) {
+      setStatusMessage({ type: 'error', text: 'No registered teams found in database. Ingest participants first.' });
       return;
     }
-    // Fisher-Yates random shuffle
-    const shuffled = [...availableTokens];
-    for (let i = shuffled.length - 1; i > 0; i--) {
+    // Fisher-Yates random permutation across teams
+    const shuffledTeams = [...availableTeams];
+    for (let i = shuffledTeams.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
-      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+      [shuffledTeams[i], shuffledTeams[j]] = [shuffledTeams[j], shuffledTeams[i]];
     }
 
-    const randomized = bulkZipFiles.map((_, i) => shuffled[i % shuffled.length].token);
-    setBulkTokenMappings(randomized);
+    // 1-to-1 unique mapping: no two teams get the same ZIP!
+    const randomized = bulkZipFiles.map((_, i) => (i < shuffledTeams.length ? shuffledTeams[i].teamKey : ''));
+    setBulkTeamMappings(randomized);
     setStatusMessage({
       type: 'success',
-      text: `Randomly distributed ${bulkZipFiles.length} challenge archive(s) across ${availableTokens.length} registered participant(s)!`,
+      text: `Strict 1-to-1 unique distribution applied: All ${Math.min(bulkZipFiles.length, availableTeams.length)} teams assigned a distinct challenge archive!`,
     });
   };
 
@@ -296,23 +334,42 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
     });
   };
 
-  // Execute bulk upload (Pure ZIP architecture: No CSV needed)
+  // Execute bulk upload with strict unique team distribution
   const handleExecuteBulkUpload = async () => {
     if (bulkZipFiles.length === 0) {
       setStatusMessage({ type: 'error', text: 'Please select the ZIP archives to deploy.' });
       return;
     }
 
-    const missingTokens = bulkTokenMappings.some((t, i) => i < bulkZipFiles.length && (!t || !t.trim()));
-    if (missingTokens) {
-      setStatusMessage({ type: 'error', text: 'All ZIP files must have an assigned access token.' });
+    // Identify which teams are mapped to which ZIP archives
+    const teamsToDeploy: Array<{
+      team: TeamRosterItem;
+      file: File;
+      index: number;
+    }> = [];
+
+    for (let i = 0; i < bulkZipFiles.length; i++) {
+      const teamKey = bulkTeamMappings[i];
+      if (!teamKey) continue;
+      const team = availableTeams.find((t) => t.teamKey === teamKey);
+      if (team) {
+        teamsToDeploy.push({ team, file: bulkZipFiles[i], index: i });
+      }
+    }
+
+    if (teamsToDeploy.length === 0) {
+      setStatusMessage({ type: 'error', text: 'Please assign at least one team to a challenge archive.' });
       return;
     }
 
-    const activeTokens = bulkTokenMappings.slice(0, bulkZipFiles.length).map((t) => t.trim().toUpperCase());
-    const uniqueTokens = new Set(activeTokens);
-    if (uniqueTokens.size !== activeTokens.length) {
-      setStatusMessage({ type: 'error', text: 'Duplicate access tokens detected. Each ZIP file must be mapped to a unique token.' });
+    // STRICT INVARIANT: No two teams can share the same ZIP file, and no team can be assigned multiple ZIP files!
+    const assignedKeys = teamsToDeploy.map((item) => item.team.teamKey);
+    const uniqueKeys = new Set(assignedKeys);
+    if (uniqueKeys.size !== assignedKeys.length) {
+      setStatusMessage({
+        type: 'error',
+        text: 'Duplicate team assignment detected! Each team must receive exactly one unique ZIP archive, and no two teams can share an archive.',
+      });
       return;
     }
 
@@ -320,15 +377,19 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
     setStatusMessage(null);
 
     try {
-      // 1. Request presigned upload targets
-      setBulkUploadProgress(`Requesting upload credentials for ${bulkZipFiles.length} archives...`);
+      // 1. Request presigned upload targets for each team's unique archive
+      setBulkUploadProgress(`Requesting storage endpoints for ${teamsToDeploy.length} unique team archives...`);
       const presignRes = await fetch('/api/admin/stages/bulk-upload', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'presign',
           adminSecret,
-          tokens: activeTokens,
+          teams: teamsToDeploy.map((item) => ({
+            teamKey: item.team.teamKey,
+            teamName: item.team.teamName,
+            tokens: item.team.tokens,
+          })),
         }),
       });
 
@@ -337,26 +398,15 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
         throw new Error(presignData.error || 'Failed to generate signed upload targets');
       }
 
-      const targets: Array<{
-        accessToken: string;
-        uploadUrl: string;
-        token: string;
-        storagePath: string;
-      }> = presignData.uploadTargets;
+      const targets = presignData.uploadTargets;
 
       // 2. Upload each ZIP file directly to Supabase Storage
-      const committedPayload: Array<{
-        accessToken: string;
-        storagePath: string;
-        stageCount: number;
-      }> = [];
-
-      for (let i = 0; i < bulkZipFiles.length; i++) {
-        const file = bulkZipFiles[i];
+      for (let i = 0; i < teamsToDeploy.length; i++) {
+        const { team, file } = teamsToDeploy[i];
         const target = targets[i];
 
         setBulkUploadProgress(
-          `Uploading archive ${i + 1} of ${bulkZipFiles.length}: ${file.name} for token ${target.accessToken}...`
+          `Uploading archive ${i + 1} of ${teamsToDeploy.length}: ${file.name} for team "${team.teamName}" (${team.memberCount} members)...`
         );
 
         let uploaded = false;
@@ -378,38 +428,38 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
             throw new Error(`Failed to upload ${file.name} to storage: ${res.statusText}`);
           }
         }
-
-        committedPayload.push({
-          accessToken: target.accessToken,
-          storagePath: target.storagePath,
-          stageCount: bulkStageCount,
-        });
       }
 
-      // 3. Commit to database
-      setBulkUploadProgress('Registering token archives in database...');
+      // 3. Commit to database: maps the archive to all member tokens of that team
+      setBulkUploadProgress('Registering team archive bindings in database...');
       const commitRes = await fetch('/api/admin/stages/bulk-upload', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'commit',
           adminSecret,
-          archives: committedPayload,
+          archives: teamsToDeploy.map((item, idx) => ({
+            teamKey: item.team.teamKey,
+            teamName: item.team.teamName,
+            tokens: item.team.tokens,
+            storagePath: targets[idx].storagePath,
+            stageCount: bulkStageCount,
+          })),
         }),
       });
 
       const commitData = await commitRes.json();
       if (!commitRes.ok || !commitData.success) {
-        throw new Error(commitData.error || 'Failed to commit token archives');
+        throw new Error(commitData.error || 'Failed to commit team archives');
       }
 
       setStatusMessage({
         type: 'success',
-        text: `Successfully deployed ${committedPayload.length} unique challenge archives (${bulkStageCount} stages each) directly to storage and mapped to participant tokens!`,
+        text: `Successfully deployed ${teamsToDeploy.length} unique challenge archives! Every team has a distinct ZIP, and all team members share their team's unique archive.`,
       });
 
       setBulkZipFiles([]);
-      setBulkTokenMappings([]);
+      setBulkTeamMappings([]);
       await fetchCommittedArchives();
     } catch (err: any) {
       setStatusMessage({
@@ -827,10 +877,10 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
               fetchCommittedArchives();
               fetchAvailableTokens();
             }}
-            className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer min-h-[36px] ${
               mode === 'bulk'
-                ? 'bg-emerald-500 text-slate-950 shadow-neon-emerald'
-                : 'bg-slate-900 border border-slate-700 text-slate-300 hover:text-white hover:bg-slate-800'
+                ? 'bg-app-text text-app-bg'
+                : 'bg-app-surface text-app-subtext hover:text-app-text border border-app-border'
             }`}
           >
             <FileArchive className="w-3.5 h-3.5" />
@@ -846,10 +896,10 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
               setNumberOfTeams(50);
               setStatusMessage(null);
             }}
-            className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer min-h-[36px] ${
               mode === 'create'
-                ? 'bg-cyan-500 text-slate-950 shadow-neon-cyan'
-                : 'bg-slate-900 border border-slate-700 text-slate-300 hover:text-white hover:bg-slate-800'
+                ? 'bg-app-text text-app-bg'
+                : 'bg-app-surface text-app-subtext hover:text-app-text border border-app-border'
             }`}
           >
             <Plus className="w-3.5 h-3.5" />
@@ -863,10 +913,10 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
               setStatusMessage(null);
               fetchContests();
             }}
-            className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer min-h-[36px] ${
               mode === 'list'
-                ? 'bg-amber-500 text-slate-950 shadow-neon-amber'
-                : 'bg-slate-900 border border-slate-700 text-slate-300 hover:text-white hover:bg-slate-800'
+                ? 'bg-app-text text-app-bg'
+                : 'bg-app-surface text-app-subtext hover:text-app-text border border-app-border'
             }`}
           >
             <Edit3 className="w-3.5 h-3.5" />
@@ -899,7 +949,7 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
       {mode === 'bulk' && (
         <div className="space-y-6">
           {/* Header Description Banner */}
-          <div className="p-5 rounded-2xl bg-gradient-to-r from-emerald-950/40 via-slate-900 to-slate-900 border border-emerald-500/30">
+          <div className="p-5 rounded-2xl bg-app-surface border border-app-border">
             <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
               <div>
                 <h3 className="text-sm font-bold text-white flex items-center gap-2">
@@ -907,7 +957,7 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
                   Native Challenge Stage Deployment — Pure ZIPs (No CSV Required)
                 </h3>
                 <p className="text-xs text-slate-300 mt-1 leading-relaxed">
-                  Each ZIP is fully self-contained: <span className="text-emerald-400 font-bold">Stage 1 is unlocked</span> by default, and <span className="text-cyan-400 font-bold">Stages 2..Y are pre-encrypted</span> inside. Decryption is performed natively in the contestant's browser RAM upon entering the correct password (just like Windows File Explorer). <span className="text-slate-400 italic">No passwords or CSV comparison files are ever needed.</span>
+                  Each ZIP is fully self-contained: <span className="text-emerald-400 font-bold">Stage 1 is unlocked</span> by default, and <span className="text-app-text font-bold">Stages 2..Y are pre-encrypted</span> inside. Decryption is performed natively in the contestant's browser RAM upon entering the correct password (just like Windows File Explorer). <span className="text-slate-400 italic">No passwords or CSV comparison files are ever needed.</span>
                 </p>
               </div>
               <div className="shrink-0 flex items-center gap-2">
@@ -917,7 +967,7 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
                     fetchCommittedArchives();
                     fetchAvailableTokens();
                   }}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 hover:text-white transition-colors cursor-pointer"
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs bg-slate-800 hover:bg-slate-700 border border-app-border text-slate-300 hover:text-white transition-colors cursor-pointer"
                 >
                   <RefreshCw className="w-3.5 h-3.5" />
                   <span>Refresh Roster</span>
@@ -927,7 +977,7 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
 
             {/* Architecture Highlights */}
             <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
-              <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800 space-y-1">
+              <div className="p-3 rounded-xl bg-app-surface-raised border border-app-border space-y-1">
                 <div className="font-bold text-slate-200 flex items-center gap-1.5">
                   <span className="w-5 h-5 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-[11px] font-mono">1</span>
                   Drag & Drop X Archives
@@ -936,16 +986,16 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
                   Upload all X multi-stage challenge ZIPs at once. Each ZIP is delivered uniquely to one contestant/team token.
                 </p>
               </div>
-              <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800 space-y-1">
+              <div className="p-3 rounded-xl bg-app-surface-raised border border-app-border space-y-1">
                 <div className="font-bold text-slate-200 flex items-center gap-1.5">
-                  <span className="w-5 h-5 rounded-lg bg-cyan-500/20 text-cyan-400 flex items-center justify-center text-[11px] font-mono">2</span>
+                  <span className="w-5 h-5 rounded-lg bg-app-surface-raised text-app-text flex items-center justify-center text-[11px] font-mono">2</span>
                   Native RAM Decryption
                 </div>
                 <p className="text-[11px] text-slate-400 leading-normal">
                   Like Windows or WinRAR, the browser decrypts the nested ZIP using the ZIP's internal CRC/HMAC headers directly in client RAM.
                 </p>
               </div>
-              <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800 space-y-1">
+              <div className="p-3 rounded-xl bg-app-surface-raised border border-app-border space-y-1">
                 <div className="font-bold text-slate-200 flex items-center gap-1.5">
                   <span className="w-5 h-5 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center text-[11px] font-mono">3</span>
                   Zero Password Clashing
@@ -959,7 +1009,7 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
 
           {/* Upload & Stage Configuration Card */}
           <div className="p-5 rounded-2xl bg-app-surface border border-app-border space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-3 border-b border-slate-800">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-3 border-b border-app-border">
               <div>
                 <h4 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2">
                   <Upload className="w-4 h-4 text-emerald-400" />
@@ -971,7 +1021,7 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
               </div>
 
               {/* Stage Count Configuration */}
-              <div className="flex items-center gap-2.5 bg-slate-900 border border-slate-800 px-3 py-1.5 rounded-xl">
+              <div className="flex items-center gap-2.5 bg-slate-900 border border-app-border px-3 py-1.5 rounded-xl">
                 <span className="text-[11px] text-slate-400 font-medium" title="Nested archives automatically discover each stage dynamically from decrypted inner ZIPs">Nested Stages Architecture:</span>
                 <input
                   type="number"
@@ -979,10 +1029,10 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
                   max={20}
                   value={bulkStageCount}
                   onChange={(e) => setBulkStageCount(Math.max(1, parseInt(e.target.value) || 1))}
-                  className="w-12 px-2 py-0.5 bg-slate-950 border border-slate-700 rounded text-center text-xs font-bold text-emerald-400 font-mono"
+                  className="w-12 px-2 py-0.5 bg-app-bg border border-app-border text-app-text rounded text-center text-xs font-bold text-emerald-400 font-mono"
                 />
                 {detectingStages && (
-                  <span className="text-[10px] text-cyan-400 flex items-center gap-1 font-mono">
+                  <span className="text-[10px] text-app-text flex items-center gap-1 font-mono">
                     <Loader2 className="w-3 h-3 animate-spin" /> Auto-detecting...
                   </span>
                 )}
@@ -990,7 +1040,7 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
             </div>
 
             {/* Drop Zone */}
-            <label className="block border-2 border-dashed border-slate-700 hover:border-emerald-500/60 rounded-2xl p-6 text-center cursor-pointer transition-colors bg-slate-900/40 hover:bg-slate-900/70">
+            <label className="block border-2 border-dashed border-app-border hover:border-emerald-500/60 rounded-2xl p-6 text-center cursor-pointer transition-colors bg-slate-900/40 hover:bg-slate-900/70">
               <Upload className="w-8 h-8 text-emerald-400 mx-auto mb-2 opacity-80" />
               <span className="text-xs font-bold text-slate-200 block">
                 {bulkZipFiles.length === 0
@@ -1013,55 +1063,39 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
           {/* Token Assignment & Archive Preview Table */}
           {bulkZipFiles.length > 0 && (
             <div className="p-5 rounded-2xl bg-app-surface border border-app-border space-y-4 animate-in fade-in duration-200">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-800">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-app-border">
                 <div>
-                  <h4 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2">
-                    <KeyRound className="w-4 h-4 text-amber-400" />
-                    Participant Token Binding ({bulkZipFiles.length} Archives)
-                  </h4>
-                  <p className="text-[11px] text-slate-400 mt-0.5">
-                    Assign each challenge archive to a team token. Unlocking is strictly in-browser via RAM decryption.
+                  <div className="flex items-center gap-2">
+                    <h4 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                      <KeyRound className="w-4 h-4 text-amber-400" />
+                      Unique Team Challenge Archive Binding ({bulkZipFiles.length} Archives)
+                    </h4>
+                    <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 font-semibold">
+                      Strict 1:1 Unique Distribution
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-400 mt-1 max-w-2xl leading-relaxed">
+                    <strong>Rule:</strong> No two different teams can receive the same ZIP archive. All members belonging to the same team will download and verify against their team's exact assigned archive.
                   </p>
                 </div>
 
                 <div className="flex items-center gap-2 flex-wrap">
-                  <div className="flex items-center border border-slate-700 rounded-xl overflow-hidden">
-                    <button
-                      type="button"
-                      onClick={() => handleSortZips('asc')}
-                      disabled={bulkZipFiles.length <= 1}
-                      className="px-2.5 py-1.5 text-[11px] bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white border-r border-slate-700 disabled:opacity-40 cursor-pointer"
-                      title="Sort ZIPs 1→N"
-                    >
-                      Sort 1→N
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleSortZips('desc')}
-                      disabled={bulkZipFiles.length <= 1}
-                      className="px-2.5 py-1.5 text-[11px] bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white disabled:opacity-40 cursor-pointer"
-                      title="Sort ZIPs N→1"
-                    >
-                      Sort N→1
-                    </button>
-                  </div>
-
                   <button
                     type="button"
                     onClick={handleRandomizeAssignments}
-                    disabled={availableTokens.length === 0}
-                    className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/25 transition-all cursor-pointer disabled:opacity-50 font-bold shadow-xs"
-                    title="Randomly distribute challenge archives across all registered participants"
+                    disabled={availableTeams.length === 0}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs bg-app-surface hover:bg-app-hover border border-app-border text-app-text transition-colors cursor-pointer disabled:opacity-50 font-medium min-h-[34px]"
+                    title="Randomly distribute unique challenge archives across all registered teams (1-to-1 bijection)"
                   >
                     <Shuffle className="w-3.5 h-3.5 text-emerald-400" />
-                    <span>🎲 Randomize to All Participants ({availableTokens.length})</span>
+                    <span>🎲 Randomize Unique Distribution ({availableTeams.length} Teams)</span>
                   </button>
 
                   <button
                     type="button"
                     onClick={() => {
                       setBulkZipFiles([]);
-                      setBulkTokenMappings([]);
+                      setBulkTeamMappings([]);
                     }}
                     className="px-2.5 py-1.5 rounded-xl text-xs text-rose-400 hover:bg-rose-500/10 border border-rose-500/20 transition-colors cursor-pointer"
                   >
@@ -1070,22 +1104,61 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
                 </div>
               </div>
 
+              {/* Validation & Team Shortage Banner */}
+              {availableTeams.length > 0 && bulkZipFiles.length < availableTeams.length && (
+                <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/25 text-amber-400 text-xs flex items-start gap-2.5">
+                  <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                  <div className="leading-relaxed">
+                    <span className="font-bold">Team Shortage Warning:</span> You have{' '}
+                    <strong>{availableTeams.length} registered teams</strong>, but selected only{' '}
+                    <strong>{bulkZipFiles.length} ZIP archives</strong>. Because no two teams can share an archive, you must provide at least{' '}
+                    <strong>{availableTeams.length} unique ZIP files</strong> so every team receives a distinct challenge.
+                  </div>
+                </div>
+              )}
+
+              {/* Duplicate Team Conflict Banner */}
+              {(() => {
+                const assigned = bulkTeamMappings.slice(0, bulkZipFiles.length).filter(Boolean);
+                const dupes = assigned.filter((item, index) => assigned.indexOf(item) !== index);
+                if (dupes.length > 0) {
+                  const dupeTeamNames = Array.from(new Set(dupes))
+                    .map((k) => availableTeams.find((t) => t.teamKey === k)?.teamName || k)
+                    .join(', ');
+                  return (
+                    <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/25 text-rose-400 text-xs flex items-start gap-2.5">
+                      <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                      <div className="leading-relaxed">
+                        <span className="font-bold">Duplicate Team Conflict:</span> Team(s) <strong>{dupeTeamNames}</strong> are assigned to multiple archives. No two ZIP archives can be given to the same team. Please make each assignment unique.
+                      </div>
+                    </div>
+                  );
+                }
+                return null;
+              })()}
+
               {/* Roster Table */}
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs border-collapse">
                   <thead>
-                    <tr className="border-b border-slate-800 text-[11px] font-mono text-slate-400">
-                      <th className="py-2.5 px-3">Order</th>
+                    <tr className="border-b border-app-border text-[11px] font-mono text-slate-400">
+                      <th className="py-2.5 px-3">#</th>
                       <th className="py-2.5 px-3">Challenge Archive</th>
-                      <th className="py-2.5 px-3">Stage Structure</th>
-                      <th className="py-2.5 px-3">Assigned Access Token</th>
-                      <th className="py-2.5 px-3">Team / Participant</th>
+                      <th className="py-2.5 px-3">Stages</th>
+                      <th className="py-2.5 px-3 min-w-[220px]">Assigned Team (1:1 Unique)</th>
+                      <th className="py-2.5 px-3">Team Members & Access Tokens</th>
+                      <th className="py-2.5 px-3 text-right">Distribution Status</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800/60 font-mono">
                     {bulkZipFiles.map((zipFile, idx) => {
-                      const currentToken = bulkTokenMappings[idx] || '';
-                      const matchedTokenObj = availableTokens.find((t) => t.token === currentToken);
+                      const currentTeamKey = bulkTeamMappings[idx] || '';
+                      const matchedTeam = availableTeams.find((t) => t.teamKey === currentTeamKey);
+
+                      // Check if this team is duplicated on any other row
+                      const isDuplicate =
+                        Boolean(currentTeamKey) &&
+                        bulkTeamMappings.filter((k, kIdx) => kIdx < bulkZipFiles.length && k === currentTeamKey).length > 1;
 
                       return (
                         <tr key={idx} className="hover:bg-slate-900/50 transition-colors">
@@ -1117,47 +1190,80 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
                           <td className="py-2.5 px-3 text-slate-200">
                             <div className="flex items-center gap-2">
                               <FileArchive className="w-4 h-4 text-emerald-400 shrink-0" />
-                              <span className="truncate max-w-[200px] font-semibold">{zipFile.name}</span>
+                              <span className="truncate max-w-[180px] font-semibold">{zipFile.name}</span>
                               <span className="text-[10px] text-slate-500">({(zipFile.size / 1024 / 1024).toFixed(1)} MB)</span>
                             </div>
                           </td>
                           <td className="py-2.5 px-3">
-                            <div className="flex items-center gap-1.5 flex-wrap">
-                              <span className="px-1.5 py-0.5 rounded text-[10px] bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
-                                S1: Unlocked
-                              </span>
-                              {Array.from({ length: Math.max(0, bulkStageCount - 1) }).map((_, sIdx) => (
-                                <span
-                                  key={sIdx}
-                                  className="px-1.5 py-0.5 rounded text-[10px] bg-cyan-500/10 border border-cyan-500/20 text-cyan-400"
-                                >
-                                  S{sIdx + 2}: Native Encrypted
-                                </span>
-                              ))}
-                            </div>
+                            <span className="px-2 py-0.5 rounded text-[10px] bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-bold">
+                              {bulkStageCount} Stages
+                            </span>
                           </td>
                           <td className="py-2.5 px-3">
-                            <div className="flex items-center gap-2">
-                              <span className="px-2.5 py-1 bg-emerald-950/60 border border-emerald-500/30 rounded-lg text-xs font-mono text-emerald-400 font-bold tracking-wider">
-                                {currentToken || 'PENDING'}
-                              </span>
-                              <span className="px-1.5 py-0.5 rounded text-[10px] bg-slate-800 text-slate-400 border border-slate-700">
-                                🎲 Auto-Randomized
-                              </span>
-                            </div>
+                            <select
+                              value={currentTeamKey}
+                              onChange={(e) => {
+                                const newKey = e.target.value;
+                                setBulkTeamMappings((prev) => {
+                                  const updated = [...prev];
+                                  updated[idx] = newKey;
+                                  return updated;
+                                });
+                              }}
+                              className={`w-full px-2.5 py-1.5 rounded-xl border text-xs font-sans transition-colors cursor-pointer bg-slate-900 ${
+                                isDuplicate
+                                  ? 'border-rose-500 text-rose-400'
+                                  : currentTeamKey
+                                  ? 'border-emerald-500/40 text-slate-100 font-semibold'
+                                  : 'border-app-border text-slate-400'
+                              }`}
+                            >
+                              <option value="">-- Choose Unique Team --</option>
+                              {availableTeams.map((team) => (
+                                <option key={team.teamKey} value={team.teamKey}>
+                                  {team.teamName} ({team.memberCount} {team.memberCount === 1 ? 'member' : 'members'})
+                                </option>
+                              ))}
+                            </select>
                           </td>
                           <td className="py-2.5 px-3 text-slate-300">
-                            {matchedTokenObj ? (
-                              <div className="flex items-center gap-1.5">
-                                <Users className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
-                                <span className="font-semibold text-white text-xs">
-                                  {matchedTokenObj.label}
-                                </span>
+                            {matchedTeam ? (
+                              <div className="space-y-1">
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <Users className="w-3.5 h-3.5 text-app-text shrink-0" />
+                                  <span className="font-bold text-white text-xs">{matchedTeam.teamName}</span>
+                                  <span className="text-[10px] text-slate-400 font-mono">
+                                    ({matchedTeam.memberCount} {matchedTeam.memberCount === 1 ? 'member' : 'members'})
+                                  </span>
+                                </div>
+                                <div className="text-[11px] text-slate-400 flex flex-wrap gap-1 font-sans">
+                                  {matchedTeam.members.map((m, mIdx) => (
+                                    <span key={m.email || mIdx} className="bg-slate-800/80 px-1.5 py-0.2 rounded text-[10px] border border-app-border">
+                                      {m.name} <code className="text-emerald-400 font-mono">[{m.token}]</code>
+                                    </span>
+                                  ))}
+                                </div>
+                                <div className="text-[9px] text-emerald-400/80 font-mono">
+                                  All {matchedTeam.memberCount} member(s) will access this exact archive.
+                                </div>
                               </div>
-                            ) : currentToken ? (
-                              <span className="text-[11px] text-slate-400 font-mono">Token: {currentToken}</span>
                             ) : (
-                              <span className="text-[11px] text-amber-400 italic">Unassigned</span>
+                              <span className="text-[11px] text-amber-400 italic">No team assigned</span>
+                            )}
+                          </td>
+                          <td className="py-2.5 px-3 text-right">
+                            {isDuplicate ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] bg-rose-500/10 border border-rose-500/30 text-rose-400 font-bold">
+                                ⚠ Duplicate Team
+                              </span>
+                            ) : currentTeamKey ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-bold">
+                                ✓ Unique Team (1:1)
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] bg-amber-500/10 border border-amber-500/30 text-amber-400 font-bold">
+                                Pending Selection
+                              </span>
                             )}
                           </td>
                         </tr>
@@ -1168,31 +1274,43 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
               </div>
 
               {/* Deploy Action Bar */}
-              <div className="pt-3 border-t border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="pt-3 border-t border-app-border flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div className="text-[11px] text-slate-400">
-                  {bulkUploadProgress && (
-                    <div className="flex items-center gap-2 text-cyan-400 font-mono">
+                  {bulkUploadProgress ? (
+                    <div className="flex items-center gap-2 text-app-text font-mono">
                       <Loader2 className="w-3.5 h-3.5 animate-spin" />
                       <span>{bulkUploadProgress}</span>
                     </div>
+                  ) : (
+                    <span>
+                      {bulkTeamMappings.filter(Boolean).length} of {bulkZipFiles.length} archives assigned to unique teams.
+                    </span>
                   )}
                 </div>
 
                 <button
                   type="button"
                   onClick={handleExecuteBulkUpload}
-                  disabled={bulkUploading || bulkZipFiles.length === 0}
-                  className="flex items-center justify-center gap-2 px-6 py-2.5 text-xs font-bold text-slate-950 bg-emerald-400 hover:bg-emerald-300 rounded-xl transition-all shadow-neon-emerald disabled:opacity-50 cursor-pointer"
+                  disabled={
+                    bulkUploading ||
+                    bulkZipFiles.length === 0 ||
+                    bulkTeamMappings.slice(0, bulkZipFiles.length).some((k) => !k) ||
+                    (() => {
+                      const assigned = bulkTeamMappings.slice(0, bulkZipFiles.length).filter(Boolean);
+                      return new Set(assigned).size !== assigned.length;
+                    })()
+                  }
+                  className="flex items-center justify-center gap-2 px-6 py-2.5 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-500 rounded-xl transition-colors disabled:opacity-50 cursor-pointer min-h-[40px]"
                 >
                   {bulkUploading ? (
                     <>
                       <Loader2 className="w-4 h-4 animate-spin" />
-                      <span>Deploying Archives...</span>
+                      <span>Deploying Unique Team Archives...</span>
                     </>
                   ) : (
                     <>
                       <Upload className="w-4 h-4" />
-                      <span>Deploy All {bulkZipFiles.length} Challenge Archives</span>
+                      <span>Deploy All {bulkZipFiles.length} Unique Team Archives</span>
                     </>
                   )}
                 </button>
@@ -1204,13 +1322,13 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
           <div className="p-5 rounded-2xl bg-app-surface border border-app-border space-y-3">
             <div className="flex items-center justify-between">
               <h4 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2">
-                <Database className="w-4 h-4 text-cyan-400" />
+                <Database className="w-4 h-4 text-app-text" />
                 Active Deployed Token Archives in Database ({bulkCommittedArchives.length})
               </h4>
               <button
                 type="button"
                 onClick={fetchCommittedArchives}
-                className="text-xs text-cyan-400 hover:underline cursor-pointer flex items-center gap-1"
+                className="text-xs text-app-text hover:underline cursor-pointer flex items-center gap-1"
               >
                 <RefreshCw className="w-3 h-3" />
                 <span>Refresh</span>
@@ -1219,18 +1337,18 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
 
             {loadingCommittedArchives ? (
               <div className="p-6 text-center text-xs text-slate-400 flex items-center justify-center gap-2">
-                <Loader2 className="w-4 h-4 animate-spin text-cyan-400" />
+                <Loader2 className="w-4 h-4 animate-spin text-app-text" />
                 <span>Loading committed archives...</span>
               </div>
             ) : bulkCommittedArchives.length === 0 ? (
-              <div className="p-6 text-center text-xs text-slate-500 bg-slate-950/40 rounded-xl border border-slate-800">
+              <div className="p-6 text-center text-xs text-slate-500 bg-slate-950/40 rounded-xl border border-app-border">
                 No token archives deployed yet. Upload your multi-stage ZIP archives above to deploy.
               </div>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs border-collapse">
                   <thead>
-                    <tr className="border-b border-slate-800 text-[11px] font-mono text-slate-400">
+                    <tr className="border-b border-app-border text-[11px] font-mono text-slate-400">
                       <th className="py-2.5 px-3">#</th>
                       <th className="py-2.5 px-3">Access Token</th>
                       <th className="py-2.5 px-3">Storage Path</th>
@@ -1243,11 +1361,20 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
                     {bulkCommittedArchives.map((arch, idx) => (
                       <tr key={arch.id} className="hover:bg-slate-900/50 transition-colors">
                         <td className="py-2.5 px-3 text-slate-400 font-bold">{idx + 1}</td>
-                        <td className="py-2.5 px-3 font-bold text-emerald-400">{arch.access_token}</td>
-                        <td className="py-2.5 px-3 text-slate-300 text-[11px] truncate max-w-[220px]">
+                        <td className="py-2.5 px-3">
+                          <div className="space-y-0.5">
+                            <span className="font-bold text-white text-xs block">
+                              {arch.team_name || 'Individual Participant'}
+                            </span>
+                            <span className="font-mono text-emerald-400 text-[11px] block">
+                              Token: {arch.access_token}
+                            </span>
+                          </div>
+                        </td>
+                        <td className="py-2.5 px-3 text-slate-300 text-[11px] font-mono truncate max-w-[200px]" title={arch.storage_path}>
                           {arch.storage_path}
                         </td>
-                        <td className="py-2.5 px-3 text-cyan-400 font-bold">
+                        <td className="py-2.5 px-3 text-app-text font-bold">
                           {arch.stage_count} Stages
                         </td>
                         <td className="py-2.5 px-3 text-slate-400 text-[11px]">
@@ -1279,12 +1406,12 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-2">
-              <Layers className="w-4 h-4 text-cyan-400" />
+              <Layers className="w-4 h-4 text-app-text" />
               Available Contests in Database ({contests.length})
             </h3>
             <button
               onClick={fetchContests}
-              className="text-xs text-cyan-400 hover:underline cursor-pointer"
+              className="text-xs text-app-text hover:underline cursor-pointer"
             >
               Refresh Contests
             </button>
@@ -1292,7 +1419,7 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
 
           {loadingContests ? (
             <div className="p-8 text-center text-slate-400 flex items-center justify-center gap-2 text-xs">
-              <Loader2 className="w-4 h-4 animate-spin text-cyan-400" />
+              <Loader2 className="w-4 h-4 animate-spin text-app-text" />
               <span>Loading contests directory...</span>
             </div>
           ) : contests.length === 0 ? (
@@ -1300,7 +1427,7 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
               <p>No contests found in database.</p>
               <button
                 onClick={() => setMode('create')}
-                className="px-4 py-2 rounded-xl bg-cyan-400 text-slate-950 font-bold text-xs cursor-pointer inline-flex items-center gap-1.5"
+                className="px-4 py-2 rounded-xl bg-app-text text-app-bg font-semibold text-xs cursor-pointer inline-flex items-center gap-1.5 hover:opacity-90 transition-opacity"
               >
                 <Plus className="w-3.5 h-3.5" />
                 <span>Create Your First Contest</span>
@@ -1311,7 +1438,7 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
               {contests.map((c) => (
                 <div
                   key={c.id}
-                  className="p-4 sm:p-5 rounded-2xl bg-app-surface border border-app-border space-y-3 relative hover:border-slate-700 transition-colors"
+                  className="p-4 sm:p-5 rounded-2xl bg-app-surface border border-app-border space-y-3 relative hover:border-app-border transition-colors"
                 >
                   <div className="flex items-start justify-between gap-2">
                     <div>
@@ -1332,22 +1459,22 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
                   </div>
 
                   <div className="grid grid-cols-2 gap-2 text-xs font-mono text-slate-300">
-                    <div className="p-2 rounded-xl bg-slate-950/60 border border-slate-800 flex items-center gap-2">
-                      <Users className="w-3.5 h-3.5 text-cyan-400" />
+                    <div className="p-2 rounded-xl bg-app-surface-raised border border-app-border flex items-center gap-2">
+                      <Users className="w-3.5 h-3.5 text-app-text" />
                       <span>{c.teams_count || c.tokens?.length || 0} Teams</span>
                     </div>
-                    <div className="p-2 rounded-xl bg-slate-950/60 border border-slate-800 flex items-center gap-2">
+                    <div className="p-2 rounded-xl bg-app-surface-raised border border-app-border flex items-center gap-2">
                       <KeyRound className="w-3.5 h-3.5 text-amber-400" />
                       <span>{c.tokens?.length || 0} Tokens</span>
                     </div>
                   </div>
 
                   {/* Actions Bar */}
-                  <div className="flex items-center justify-between pt-2 border-t border-slate-800 text-xs">
+                  <div className="flex items-center justify-between pt-2 border-t border-app-border text-xs">
                     <div className="flex items-center gap-2">
                       <button
                         onClick={() => handleStartEditingContest(c)}
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-500/40 text-cyan-300 font-bold transition-colors cursor-pointer"
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-app-surface hover:bg-app-hover border border-app-border text-app-text font-medium transition-colors cursor-pointer"
                         title="Edit stages and rules without regenerating tokens"
                       >
                         <Edit3 className="w-3.5 h-3.5" />
@@ -1388,7 +1515,7 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
         <div className="space-y-6">
           {/* Contest Global Parameters Section */}
           <div className="p-4 sm:p-5 rounded-2xl bg-app-surface border border-app-border space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+            <div className="flex items-center justify-between border-b border-app-border pb-2">
               <div className="flex items-center gap-2">
                 {mode === 'edit' && (
                   <button
@@ -1400,11 +1527,11 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
                   </button>
                 )}
                 <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2">
-                  <Sparkles className="w-4 h-4 text-cyan-400" />
+                  <Sparkles className="w-4 h-4 text-app-text" />
                   {mode === 'create' ? 'Step 1: Setup New Contest Parameters' : `Editing Contest: ${contestTitle}`}
                 </h3>
               </div>
-              <span className="text-[11px] font-mono text-cyan-400">
+              <span className="text-[11px] font-mono text-app-text">
                 {mode === 'create' ? 'New Deployment' : 'Preserving Tokens Mode'}
               </span>
             </div>
@@ -1419,7 +1546,7 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
                   value={contestTitle}
                   onChange={(e) => setContestTitle(e.target.value)}
                   placeholder="e.g. Pixel and Anomaly CTF 2026"
-                  className="w-full px-3 py-2 text-xs text-white bg-slate-900 border border-slate-700 rounded-xl focus:border-cyan-400"
+                  className="w-full px-3 py-2 text-xs text-app-text bg-app-bg border border-app-border rounded-xl focus:outline-none focus:border-zinc-400"
                 />
               </div>
 
@@ -1434,7 +1561,7 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
                   value={numberOfTeams}
                   onChange={(e) => setNumberOfTeams(Math.max(1, parseInt(e.target.value) || 1))}
                   disabled={mode === 'edit'}
-                  className="w-full px-3 py-2 text-xs font-mono text-white bg-slate-900 border border-slate-700 rounded-xl focus:border-cyan-400 disabled:opacity-50"
+                  className="w-full px-3 py-2 text-xs font-mono text-app-text bg-app-bg border border-app-border rounded-xl focus:outline-none focus:border-zinc-400 disabled:opacity-50"
                 />
                 <span className="text-[10px] text-slate-400 mt-1 block">
                   {mode === 'create'
@@ -1445,18 +1572,18 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
             </div>
 
             {/* Instruction Callout */}
-            <div className="p-3 rounded-xl bg-slate-950/80 border border-slate-800 text-xs text-slate-300 flex items-center justify-between gap-2">
+            <div className="p-3 rounded-xl bg-app-surface-raised border border-app-border text-xs text-slate-300 flex items-center justify-between gap-2">
               <div className="flex items-center gap-2">
                 <KeyRound className="w-4 h-4 text-amber-400 shrink-0" />
                 <span>
-                  Tokens format: <code className="text-cyan-400 font-bold font-mono">AX-DEMO-2026</code> (2 letters, 4 letters, 4 digits). One token is valid for one ID only.
+                  Tokens format: <code className="text-app-text font-bold font-mono">AX-DEMO-2026</code> (2 letters, 4 letters, 4 digits). One token is valid for one ID only.
                 </span>
               </div>
               <button
                 type="button"
                 onClick={handleSaveAndDeployContest}
                 disabled={saving || !contestTitle.trim()}
-                className="px-4 py-2 text-xs font-bold text-slate-950 bg-cyan-400 hover:bg-cyan-300 rounded-xl transition-all shadow-neon-cyan disabled:opacity-50 cursor-pointer shrink-0 flex items-center gap-1.5"
+                className="px-4 py-2 text-xs font-semibold text-app-bg bg-app-text hover:opacity-90 rounded-xl transition-opacity disabled:opacity-50 cursor-pointer shrink-0 flex items-center gap-1.5 min-h-[38px]"
               >
                 {saving ? (
                   <>
@@ -1477,14 +1604,14 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             {/* Left Column: Configured Stages in Contest */}
             <div className="lg:col-span-1 space-y-4">
-              <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+              <div className="flex items-center justify-between pb-2 border-b border-app-border">
                 <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
-                  <Layers className="w-4 h-4 text-cyan-400" />
+                  <Layers className="w-4 h-4 text-app-text" />
                   Stages Manifest ({stages.length})
                 </h3>
                 <button
                   onClick={handleNewStage}
-                  className="flex items-center gap-1 text-xs text-cyan-400 hover:text-cyan-300 transition-colors font-semibold cursor-pointer"
+                  className="flex items-center gap-1 text-xs text-app-text hover:text-app-text transition-colors font-semibold cursor-pointer"
                 >
                   <Plus className="w-3.5 h-3.5" />
                   <span>Add Stage</span>
@@ -1493,7 +1620,7 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
 
               {loadingStages ? (
                 <div className="p-8 text-center text-slate-400 flex items-center justify-center gap-2 text-xs">
-                  <Loader2 className="w-4 h-4 animate-spin text-cyan-400" />
+                  <Loader2 className="w-4 h-4 animate-spin text-app-text" />
                   <span>Loading stages...</span>
                 </div>
               ) : stages.length === 0 ? (
@@ -1511,13 +1638,13 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
                         onClick={() => handleSelectStageToEdit(stage)}
                         className={`p-3.5 rounded-xl border transition-all cursor-pointer flex items-center justify-between ${
                           isSelected
-                            ? 'bg-cyan-500/10 border-cyan-500 text-white shadow-neon-cyan'
-                            : 'bg-app-surface border-app-border text-slate-300 hover:bg-slate-800/60'
+                            ? 'bg-app-surface-raised border-app-text text-app-text'
+                            : 'bg-app-surface border-app-border text-app-subtext hover:text-app-text hover:bg-app-hover'
                         }`}
                       >
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2">
-                            <span className="font-mono text-xs font-bold text-cyan-400">
+                            <span className="font-mono text-xs font-bold text-app-text">
                               STAGE {stage.stage_number}
                             </span>
                             {stage.is_password_protected && (
@@ -1546,12 +1673,12 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
               <form onSubmit={handleSaveStage} className="space-y-5">
                 {/* Section 1: General Stage Metadata */}
                 <div className="p-4 sm:p-5 rounded-2xl bg-app-surface border border-app-border space-y-4">
-                  <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                  <div className="flex items-center justify-between border-b border-app-border pb-2">
                     <h3 className="text-xs font-bold text-slate-200 uppercase tracking-wider flex items-center gap-2">
-                      <FileCode className="w-4 h-4 text-cyan-400" />
+                      <FileCode className="w-4 h-4 text-app-text" />
                       Stage {stageNumber} Parameters
                     </h3>
-                    <span className="text-[10px] text-cyan-400 font-mono">Archive & Rules</span>
+                    <span className="text-[10px] text-app-text font-mono">Archive & Rules</span>
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
@@ -1564,7 +1691,7 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
                         min="1"
                         value={stageNumber}
                         onChange={(e) => setStageNumber(parseInt(e.target.value) || 1)}
-                        className="w-full px-3 py-2 text-xs font-mono text-white bg-slate-900 border border-slate-700 rounded-xl focus:border-cyan-400"
+                        className="w-full px-3 py-2 text-xs font-mono text-app-text bg-app-bg border border-app-border rounded-xl focus:outline-none focus:border-zinc-400"
                         required
                       />
                     </div>
@@ -1578,7 +1705,7 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
                         value={title}
                         onChange={(e) => setTitle(e.target.value)}
                         placeholder="e.g. Neural Anomaly Extraction & Data Decryption"
-                        className="w-full px-3 py-2 text-xs text-white bg-slate-900 border border-slate-700 rounded-xl focus:border-cyan-400"
+                        className="w-full px-3 py-2 text-xs text-app-text bg-app-bg border border-app-border rounded-xl focus:outline-none focus:border-zinc-400"
                         required
                       />
                     </div>
@@ -1595,7 +1722,7 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
                         step="10"
                         value={points}
                         onChange={(e) => setPoints(parseInt(e.target.value) || 0)}
-                        className="w-full px-3 py-2 text-xs font-mono text-white bg-slate-900 border border-slate-700 rounded-xl focus:border-cyan-400"
+                        className="w-full px-3 py-2 text-xs font-mono text-app-text bg-app-bg border border-app-border rounded-xl focus:outline-none focus:border-zinc-400"
                       />
                     </div>
 
@@ -1608,7 +1735,7 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
                         min="0"
                         value={minExpectedSeconds}
                         onChange={(e) => setMinExpectedSeconds(parseInt(e.target.value) || 0)}
-                        className="w-full px-3 py-2 text-xs font-mono text-white bg-slate-900 border border-slate-700 rounded-xl focus:border-cyan-400"
+                        className="w-full px-3 py-2 text-xs font-mono text-app-text bg-app-bg border border-app-border rounded-xl focus:outline-none focus:border-zinc-400"
                       />
                     </div>
 
@@ -1621,7 +1748,7 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
                         value={allowedCopyFilename}
                         onChange={(e) => setAllowedCopyFilename(e.target.value)}
                         placeholder="ai_prompt.txt"
-                        className="w-full px-3 py-2 text-xs font-mono text-white bg-slate-900 border border-slate-700 rounded-xl focus:border-cyan-400"
+                        className="w-full px-3 py-2 text-xs font-mono text-app-text bg-app-bg border border-app-border rounded-xl focus:outline-none focus:border-zinc-400"
                       />
                     </div>
                   </div>
@@ -1629,9 +1756,9 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
 
                 {/* Section 2: ZIP Archive & Encryption Settings */}
                 <div className="p-4 sm:p-5 rounded-2xl bg-app-surface border border-app-border space-y-4">
-                  <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                  <div className="flex items-center justify-between border-b border-app-border pb-2">
                     <h3 className="text-xs font-bold text-slate-200 uppercase tracking-wider flex items-center gap-2">
-                      <FileArchive className="w-4 h-4 text-cyan-400" />
+                      <FileArchive className="w-4 h-4 text-app-text" />
                       Stage ZIP Archive & Storage
                     </h3>
                     <span className="text-[10px] text-slate-400 font-mono">In-Memory Preflight Verified</span>
@@ -1644,7 +1771,7 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
                         id="isPasswordProtected"
                         checked={isPasswordProtected}
                         onChange={(e) => setIsPasswordProtected(e.target.checked)}
-                        className="w-4 h-4 rounded text-cyan-500 focus:ring-cyan-400 bg-slate-900 border-slate-700 cursor-pointer"
+                        className="w-4 h-4 rounded text-cyan-500 focus:ring-cyan-400 bg-slate-900 border-app-border cursor-pointer"
                       />
                       <label
                         htmlFor="isPasswordProtected"
@@ -1682,7 +1809,7 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
                         type="file"
                         accept=".zip"
                         onChange={(e) => setUploadFile(e.target.files?.[0] || null)}
-                        className="flex-1 text-xs text-slate-400 file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-slate-800 file:text-cyan-300 hover:file:bg-slate-700 cursor-pointer bg-slate-900 rounded-xl border border-slate-700 p-1"
+                        className="flex-1 text-xs text-slate-400 file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-slate-800 file:text-app-text hover:file:bg-slate-700 cursor-pointer bg-slate-900 rounded-xl border border-app-border p-1"
                       />
 
                       <button
@@ -1694,7 +1821,7 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
                           validatingArchive ||
                           (preflightResult !== null && !preflightResult.valid)
                         }
-                        className="flex items-center justify-center gap-1.5 px-4 py-2 text-xs font-bold text-slate-950 bg-cyan-400 hover:bg-cyan-300 rounded-xl transition-all shadow-neon-cyan disabled:opacity-50 cursor-pointer shrink-0"
+                        className="flex items-center justify-center gap-1.5 px-4 py-2 text-xs font-semibold text-app-bg bg-app-text hover:opacity-90 rounded-xl transition-opacity disabled:opacity-50 cursor-pointer shrink-0 min-h-[38px]"
                       >
                         {uploading ? (
                           <>
@@ -1711,13 +1838,13 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
                     </div>
 
                     {uploadProgress && (
-                      <p className="text-[11px] text-cyan-300 font-mono">{uploadProgress}</p>
+                      <p className="text-[11px] text-app-text font-mono">{uploadProgress}</p>
                     )}
 
                     {/* Preflight Validation Status Display */}
                     {validatingArchive && (
-                      <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 flex items-center gap-2 text-xs text-slate-300 font-mono">
-                        <Loader2 className="w-3.5 h-3.5 animate-spin text-cyan-400" />
+                      <div className="p-3 rounded-xl bg-slate-900 border border-app-border flex items-center gap-2 text-xs text-slate-300 font-mono">
+                        <Loader2 className="w-3.5 h-3.5 animate-spin text-app-text" />
                         <span>Running in-memory decryption pre-flight check...</span>
                       </div>
                     )}
@@ -1762,7 +1889,7 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
                         value={s3Key}
                         onChange={(e) => setS3Key(e.target.value)}
                         placeholder="e.g. stage-1/1729000000-dataset.zip"
-                        className="w-full px-3 py-2 text-xs font-mono text-slate-300 bg-slate-900 border border-slate-700 rounded-xl focus:border-cyan-400"
+                        className="w-full px-3 py-2 text-xs font-mono text-slate-300 bg-app-bg border border-app-border rounded-xl focus:outline-none focus:border-zinc-400"
                       />
                     </div>
                   </div>
@@ -1786,7 +1913,7 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
                         validatingArchive ||
                         (uploadFile !== null && preflightResult !== null && !preflightResult.valid)
                       }
-                      className="flex items-center gap-2 px-5 py-2.5 text-xs font-bold text-slate-200 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-xl transition-all cursor-pointer"
+                      className="flex items-center gap-2 px-5 py-2.5 text-xs font-bold text-slate-200 bg-slate-800 hover:bg-slate-700 border border-app-border rounded-xl transition-all cursor-pointer"
                     >
                       {saving ? (
                         <>
@@ -1805,7 +1932,7 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
                       type="button"
                       onClick={handleSaveAndDeployContest}
                       disabled={saving || !contestTitle.trim()}
-                      className="flex items-center gap-2 px-6 py-2.5 text-xs font-bold text-slate-950 bg-cyan-400 hover:bg-cyan-300 rounded-xl transition-all shadow-neon-cyan disabled:opacity-50 cursor-pointer"
+                      className="flex items-center gap-2 px-6 py-2.5 text-xs font-semibold text-app-bg bg-app-text hover:opacity-90 rounded-xl transition-opacity disabled:opacity-50 cursor-pointer min-h-[40px]"
                     >
                       <Trophy className="w-3.5 h-3.5" />
                       <span>{mode === 'create' ? 'Save & Deploy Contest' : 'Update Contest'}</span>
