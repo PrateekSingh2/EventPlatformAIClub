@@ -68,8 +68,10 @@ BEGIN
     END LOOP;
 END $$;
 
--- 5. Create / Update the leaderboard VIEW with the full tie-breaking order
-CREATE OR REPLACE VIEW leaderboard AS
+-- 5. Drop existing view first so columns can be restructured/reordered
+DROP VIEW IF EXISTS leaderboard CASCADE;
+
+CREATE VIEW leaderboard AS
 SELECT 
     id AS user_id,
     name,
@@ -113,6 +115,8 @@ ORDER BY
     updated_at ASC;
 
 COMMENT ON VIEW leaderboard IS 'Real-time standings view with multi-tier tie-breakers (Score > Total Time > Stage 1 Duration > Stage 2 Duration)';
+
+GRANT SELECT ON leaderboard TO anon, authenticated, service_role;
 
 -- 6. Update complete_stage_and_award_points RPC function
 CREATE OR REPLACE FUNCTION complete_stage_and_award_points(
