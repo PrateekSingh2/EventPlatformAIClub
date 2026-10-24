@@ -1,0 +1,6 @@
+{
+  "framework": "nextjs",
+  "installCommand": "cd ../.. && npx pnpm@11.10.0 install",
+  "buildCommand": "cd ../.. && npx pnpm@11.10.0 turbo run build --filter=web"
+}
+

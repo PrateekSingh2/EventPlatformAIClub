@@ -8,6 +8,7 @@ import { TelemetryRadarTab } from '@/components/admin/TelemetryRadarTab';
 import { ContestLifecycleBar } from '@/components/admin/ContestLifecycleBar';
 import { ContestLifecycleTab } from '@/components/admin/ContestLifecycleTab';
 import { BrevoStudioTab } from '@/components/admin/BrevoStudioTab';
+import { FormDataTab } from '@/components/admin/FormDataTab';
 import {
   Layers,
   Users,
@@ -33,9 +34,10 @@ import {
   ShieldAlert,
   Menu,
   X,
+  ClipboardList,
 } from 'lucide-react';
 
-type AdminTab = 'lifecycle' | 'stages' | 'participants' | 'telemetry' | 'brevo';
+type AdminTab = 'lifecycle' | 'stages' | 'participants' | 'telemetry' | 'brevo' | 'formdata';
 
 interface NavItem {
   id: AdminTab;
@@ -80,6 +82,13 @@ const ADMIN_NAV_ITEMS: NavItem[] = [
     subtitle: 'Email Credentials Dispatch',
     shortLabel: 'Emails',
     icon: Mail,
+  },
+  {
+    id: 'formdata',
+    title: 'Form Data',
+    subtitle: 'Team registration submissions',
+    shortLabel: 'Form',
+    icon: ClipboardList,
   },
 ];
 
@@ -608,6 +617,7 @@ export default function AdminPage() {
             {activeTab === 'participants' && <ParticipantImportTab adminSecret={adminSecret} />}
             {activeTab === 'telemetry' && <TelemetryRadarTab adminSecret={adminSecret} />}
             {activeTab === 'brevo' && <BrevoStudioTab adminSecret={adminSecret} />}
+            {activeTab === 'formdata' && <FormDataTab adminSecret={adminSecret} />}
           </main>
         </div>
 
