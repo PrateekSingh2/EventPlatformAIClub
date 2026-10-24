@@ -115,7 +115,7 @@ export const DEFAULT_CLEAN_MINIMAL_TEMPLATE = `<!DOCTYPE html>
       border-radius: 14px;
       padding: 24px 20px;
       text-align: center;
-      margin-bottom: 26px;
+      margin-bottom: 24px;
     }
     .token-label {
       font-size: 10px;
@@ -141,6 +141,59 @@ export const DEFAULT_CLEAN_MINIMAL_TEMPLATE = `<!DOCTYPE html>
       font-size: 11px;
       color: #64748b;
       margin-top: 10px;
+    }
+    /* Team Roster Section */
+    .team-card {
+      background: #0f172a;
+      border: 1px solid #1e293b;
+      border-radius: 14px;
+      overflow: hidden;
+      margin-bottom: 26px;
+    }
+    .team-header {
+      padding: 12px 18px;
+      background-color: #162032;
+      border-bottom: 1px solid #1e293b;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .team-title {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      color: #38bdf8;
+    }
+    .team-badge {
+      font-size: 10px;
+      font-weight: 700;
+      color: #94a3b8;
+      font-family: 'SFMono-Regular', Consolas, monospace;
+      background: #0b1120;
+      padding: 3px 8px;
+      border-radius: 6px;
+      border: 1px solid #1e293b;
+    }
+    .roster-table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+    }
+    .roster-table th {
+      background-color: #0d1527;
+      color: #64748b;
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      padding: 10px 14px;
+      border-bottom: 1px solid #1e293b;
+    }
+    .roster-table td {
+      padding: 11px 14px;
+      font-size: 13px;
+      color: #cbd5e1;
     }
     .btn-container {
       text-align: center;
@@ -212,7 +265,28 @@ export const DEFAULT_CLEAN_MINIMAL_TEMPLATE = `<!DOCTYPE html>
         <div class="token-card">
           <div class="token-label">Your Dedicated Arena Token</div>
           <div class="token-code">{{token}}</div>
-          <div class="token-subtext">Assigned exclusively to {{email}}</div>
+          <div class="token-subtext">Shared access token for Team {{team_name}} &bull; Assigned to {{email}}</div>
+        </div>
+
+        <!-- Official Team Roster Table -->
+        <div class="team-card">
+          <div class="team-header">
+            <span class="team-title">Official Team Roster</span>
+            <span class="team-badge">{{team_name}} &bull; {{team_size}}</span>
+          </div>
+          <table class="roster-table" width="100%" cellpadding="0" cellspacing="0" border="0">
+            <thead>
+              <tr>
+                <th style="width: 38px; text-align: center;">#</th>
+                <th style="text-align: left;">Participant Name</th>
+                <th style="text-align: left;">Email Address</th>
+                <th style="text-align: center; width: 85px;">Role</th>
+              </tr>
+            </thead>
+            <tbody>
+              {{team_members_table}}
+            </tbody>
+          </table>
         </div>
 
         <!-- Call to Action -->
@@ -238,8 +312,8 @@ export const DEFAULT_CLEAN_MINIMAL_TEMPLATE = `<!DOCTYPE html>
 </body>
 </html>`;
 
-const STORAGE_KEY_TEMPLATE = 'brevo_studio_saved_template_v3';
-const STORAGE_KEY_SUBJECT = 'brevo_studio_saved_subject_v3';
+const STORAGE_KEY_TEMPLATE = 'brevo_studio_saved_template_v4';
+const STORAGE_KEY_SUBJECT = 'brevo_studio_saved_subject_v4';
 
 export function BrevoStudioTab({ adminSecret }: BrevoStudioTabProps) {
   const [participants, setParticipants] = useState<User[]>([]);
@@ -483,7 +557,11 @@ export function BrevoStudioTab({ adminSecret }: BrevoStudioTabProps) {
               email: testEmailAddress.trim(),
               token: 'TEST-TOKEN-2026',
               team_name: 'Admin Test Squad',
-              team_size: 'Solo',
+              team_size: 'Duo',
+              team_members: [
+                { name: 'Test Administrator', email: testEmailAddress.trim() },
+                { name: 'Co-Captain Teammate', email: 'teammate@example.com' },
+              ],
             },
           ],
         }),
@@ -532,14 +610,32 @@ export function BrevoStudioTab({ adminSecret }: BrevoStudioTabProps) {
     handleSaveTemplate();
 
     try {
-      // Map each participant with their exact assigned token
-      const recipientPayload = participants.map((p) => ({
-        name: p.name,
-        email: p.email,
-        token: p.access_token,
-        team_name: p.team_name || p.name,
-        team_size: p.team_size || 'Solo',
-      }));
+      // Build team roster map across all registered participants
+      const teamRosterMap = new Map<string, Array<{ name: string; email: string }>>();
+      participants.forEach((p) => {
+        const teamKey = (p.team_name || p.name || 'Individual').trim().toLowerCase();
+        if (!teamRosterMap.has(teamKey)) {
+          teamRosterMap.set(teamKey, []);
+        }
+        const existing = teamRosterMap.get(teamKey)!;
+        if (!existing.some((m) => m.email.toLowerCase() === p.email.toLowerCase())) {
+          existing.push({ name: p.name, email: p.email });
+        }
+      });
+
+      // Map each participant with their exact assigned token and full team roster
+      const recipientPayload = participants.map((p) => {
+        const teamKey = (p.team_name || p.name || 'Individual').trim().toLowerCase();
+        const roster = teamRosterMap.get(teamKey) || [{ name: p.name, email: p.email }];
+        return {
+          name: p.name,
+          email: p.email,
+          token: p.access_token,
+          team_name: p.team_name || p.name,
+          team_size: p.team_size || (roster.length === 1 ? 'Solo' : roster.length === 2 ? 'Duo' : roster.length === 3 ? 'Trio' : 'Squad'),
+          team_members: roster,
+        };
+      });
 
       const res = await fetch('/api/brevo/send', {
         method: 'POST',
@@ -569,14 +665,46 @@ export function BrevoStudioTab({ adminSecret }: BrevoStudioTabProps) {
     }
   };
 
+  const sampleTableRows = `
+    <tr style="background-color: rgba(6, 182, 212, 0.08);">
+      <td style="padding: 11px 14px; text-align: center; font-size: 11px; font-weight: 700; color: #06b6d4; border-bottom: 1px solid #1e293b;">1</td>
+      <td style="padding: 11px 14px; font-size: 13px; font-weight: 600; color: #ffffff; border-bottom: 1px solid #1e293b;">
+        Vanshika Panwar <span style="color: #22d3ee; font-size: 10px; font-weight: 700;">(Recipient)</span>
+      </td>
+      <td style="padding: 11px 14px; font-size: 12px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #94a3b8; border-bottom: 1px solid #1e293b;">
+        vanshika@example.com
+      </td>
+      <td style="padding: 11px 14px; text-align: center; border-bottom: 1px solid #1e293b;">
+        <span style="display: inline-block; padding: 2px 8px; background: rgba(6, 182, 212, 0.15); border: 1px solid rgba(6, 182, 212, 0.4); border-radius: 6px; color: #22d3ee; font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;">YOU</span>
+      </td>
+    </tr>
+    <tr style="background-color: transparent;">
+      <td style="padding: 11px 14px; text-align: center; font-size: 11px; font-weight: 700; color: #64748b; border-bottom: none;">2</td>
+      <td style="padding: 11px 14px; font-size: 13px; font-weight: 600; color: #f1f5f9; border-bottom: none;">
+        Aarav Sharma
+      </td>
+      <td style="padding: 11px 14px; font-size: 12px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #94a3b8; border-bottom: none;">
+        aarav@example.com
+      </td>
+      <td style="padding: 11px 14px; text-align: center; border-bottom: none;">
+        <span style="display: inline-block; padding: 2px 8px; background: #1e293b; border: 1px solid #334155; border-radius: 6px; color: #94a3b8; font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;">TEAMMATE</span>
+      </td>
+    </tr>
+  `;
+
   // Sample data preview generator
   const sampleHtml = htmlTemplate
     .replace(/\{\{name\}\}/gi, 'Vanshika Panwar')
+    .replace(/\{\{participant_name\}\}/gi, 'Vanshika Panwar')
     .replace(/\{\{team_name\}\}/gi, 'Bit by bit')
+    .replace(/\{\{team\}\}/gi, 'Bit by bit')
     .replace(/\{\{team_size\}\}/gi, 'Duo')
     .replace(/\{\{token\}\}/gi, 'AI-2026-X94B')
     .replace(/\{\{access_token\}\}/gi, 'AI-2026-X94B')
     .replace(/\{\{email\}\}/gi, 'vanshika@example.com')
+    .replace(/\{\{team_members_table\}\}/gi, sampleTableRows)
+    .replace(/\{\{team_members_rows\}\}/gi, sampleTableRows)
+    .replace(/\{\{members_table\}\}/gi, sampleTableRows)
     .replace(
       /\{\{access_link\}\}/gi,
       `${typeof window !== 'undefined' ? window.location.origin : ''}/arena?token=AI-2026-X94B`
@@ -814,7 +942,7 @@ export function BrevoStudioTab({ adminSecret }: BrevoStudioTabProps) {
           <div className="flex items-center gap-2 text-[11px] font-mono text-slate-400">
             <span>Template Variables:</span>
             <span className="text-app-text">
-              <code>{'{{name}}'}</code>, <code>{'{{token}}'}</code>, <code>{'{{team_name}}'}</code>, <code>{'{{access_link}}'}</code>
+              <code>{'{{name}}'}</code>, <code>{'{{token}}'}</code>, <code>{'{{team_name}}'}</code>, <code>{'{{team_size}}'}</code>, <code>{'{{team_members_table}}'}</code>, <code>{'{{access_link}}'}</code>
             </span>
           </div>
         </div>

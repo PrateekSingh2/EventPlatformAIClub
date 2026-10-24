@@ -25,10 +25,12 @@ export interface ParseResult {
  * Parses raw CSV or TSV participant roster in team or tabular format.
  *
  * Capabilities:
- * 1. Intelligent Header Mapping: Automatically detects columns by header name (email, name, token/access_token, team_name, team_size).
- * 2. Exact Token Preservation: If a token is specified in the CSV, that exact token is assigned to that participant/team.
- * 3. Shared Team Tokens: All members belonging to the same team receive the same token.
- * 4. Fallback Support: Supports positional formats (e.g., [team, size, name1, email1, name2, email2...] or [name, email, token?]).
+ * 1. Team-wide horizontal rows: [team_name, team_size, name1, email1, name2, email2, name3, email3...]
+ * 2. Intelligent Header Mapping: Automatically detects headers (email, name, token/access_token, team_name, team_size)
+ *    even when multiple member columns exist in a single row.
+ * 3. Exact Token Preservation: If a token is specified in the CSV, that exact token is assigned to that participant/team.
+ * 4. Shared Team Tokens: All members belonging to the same team receive the exact same token.
+ * 5. Fallback Support: Supports positional formats [name, email, token?] or [email, name, token?].
  */
 export function parseTeamCsv(
   rawText: string,
@@ -54,22 +56,30 @@ export function parseTeamCsv(
   const hasEmailHeader = firstLineParts.some((p) => p.includes('email') || p.includes('mail'));
   const isHeaderRow = hasEmailHeader && !firstLine.includes('@');
 
-  let emailCol = -1;
-  let nameCol = -1;
+  // Detect column indices in header
+  const emailColIndices: number[] = [];
   let tokenCol = -1;
   let teamNameCol = -1;
   let teamSizeCol = -1;
+  let singleNameCol = -1;
 
   if (isHeaderRow) {
     firstLineParts.forEach((header, idx) => {
-      if (header.includes('email') || header === 'mail') emailCol = idx;
-      else if (header.includes('token') || header.includes('key') || header.includes('access_token')) tokenCol = idx;
-      else if (header.includes('team_name') || header.includes('teamname') || header === 'team') teamNameCol = idx;
-      else if (header.includes('team_size') || header.includes('teamsize') || header === 'size') teamSizeCol = idx;
-      else if (header.includes('name') || header.includes('member') || header.includes('participant') || header.includes('student')) nameCol = idx;
+      if (header.includes('email') || header === 'mail') {
+        emailColIndices.push(idx);
+      } else if (header.includes('token') || header.includes('key') || header.includes('access_token')) {
+        tokenCol = idx;
+      } else if (header.includes('team_name') || header.includes('teamname') || header === 'team') {
+        teamNameCol = idx;
+      } else if (header.includes('team_size') || header.includes('teamsize') || header === 'size') {
+        teamSizeCol = idx;
+      } else if (header.includes('name') || header.includes('member') || header.includes('participant') || header.includes('student')) {
+        if (singleNameCol === -1) singleNameCol = idx;
+      }
     });
   }
 
+  const isMultiMemberHeader = isHeaderRow && emailColIndices.length > 1;
   const startLineIdx = isHeaderRow ? 1 : 0;
 
   for (let idx = startLineIdx; idx < lines.length; idx++) {
@@ -83,8 +93,72 @@ export function parseTeamCsv(
       continue;
     }
 
-    // Branch A: Header-based parsing
-    if (isHeaderRow && emailCol >= 0) {
+    // Branch A: Multi-member horizontal row with headers
+    // e.g. [team_name, team_size, name1, email1, name2, email2...]
+    if (isMultiMemberHeader) {
+      const teamName = teamNameCol >= 0 && parts[teamNameCol] ? parts[teamNameCol].trim() : parts[0] || 'Unnamed Team';
+      const teamSize = teamSizeCol >= 0 && parts[teamSizeCol] ? parts[teamSizeCol].trim() : parts[1] || 'Solo';
+      const customToken = tokenCol >= 0 && parts[tokenCol] ? parts[tokenCol].trim().toUpperCase() : '';
+
+      const memberPairs: Array<{ name: string; email: string }> = [];
+
+      for (const emailIdx of emailColIndices) {
+        let mEmail = (parts[emailIdx] || '').toLowerCase().trim();
+        if (!mEmail || !mEmail.includes('@')) continue;
+
+        // Name column is typically the one immediately before email, or search nearby
+        let mName = '';
+        if (emailIdx > 0 && parts[emailIdx - 1] && !parts[emailIdx - 1].includes('@')) {
+          mName = parts[emailIdx - 1].trim();
+        } else if (emailIdx + 1 < parts.length && parts[emailIdx + 1] && !parts[emailIdx + 1].includes('@')) {
+          mName = parts[emailIdx + 1].trim();
+        }
+        if (!mName) mName = mEmail.split('@')[0];
+
+        memberPairs.push({ name: mName, email: mEmail });
+      }
+
+      if (memberPairs.length === 0) {
+        errors.push(`Line ${idx + 1}: No valid member emails found in team "${teamName}".`);
+        continue;
+      }
+
+      const teamKey = teamName.toLowerCase().trim();
+      if (!tokenMap.has(teamKey)) {
+        tokenMap.set(teamKey, customToken || generateContestToken());
+      }
+      const sharedToken = tokenMap.get(teamKey)!;
+
+      if (!teamsMap.has(teamKey)) {
+        teamsMap.set(teamKey, {
+          teamName,
+          teamSize,
+          token: sharedToken,
+          members: [],
+        });
+      }
+      const teamEntry = teamsMap.get(teamKey)!;
+
+      for (const member of memberPairs) {
+        if (seenEmails.has(member.email)) continue;
+        seenEmails.add(member.email);
+
+        teamEntry.members.push({ name: member.name, email: member.email });
+        members.push({
+          teamName,
+          teamSize,
+          name: member.name,
+          email: member.email,
+          token: sharedToken,
+        });
+      }
+      continue;
+    }
+
+    // Branch B: Single-member row with headers
+    // e.g. [name, email, team_name, team_size, token]
+    if (isHeaderRow && emailColIndices.length === 1) {
+      const emailCol = emailColIndices[0];
       const email = (parts[emailCol] || '').toLowerCase().trim();
       if (!email || !email.includes('@')) {
         errors.push(`Line ${idx + 1}: Missing or invalid email address "${email}".`);
@@ -94,7 +168,7 @@ export function parseTeamCsv(
       if (seenEmails.has(email)) continue;
       seenEmails.add(email);
 
-      const name = nameCol >= 0 && parts[nameCol] ? parts[nameCol].trim() : email.split('@')[0];
+      const name = singleNameCol >= 0 && parts[singleNameCol] ? parts[singleNameCol].trim() : email.split('@')[0];
       const customToken = tokenCol >= 0 && parts[tokenCol] ? parts[tokenCol].trim().toUpperCase() : '';
       const teamName = teamNameCol >= 0 && parts[teamNameCol] ? parts[teamNameCol].trim() : name;
       const teamSize = teamSizeCol >= 0 && parts[teamSizeCol] ? parts[teamSizeCol].trim() : 'Solo';
@@ -125,15 +199,19 @@ export function parseTeamCsv(
       continue;
     }
 
-    // Branch B: Positional parsing
+    // Branch C: Positional parsing without headers
     let teamName = '';
     let teamSize = '';
     const memberPairs: Array<{ name: string; email: string; token?: string }> = [];
 
-    const sizeHint = (parts[1] || '').toLowerCase();
+    const sizeHint = (parts[1] || '').toLowerCase().trim();
     const isTeamFormat =
       parts.length >= 4 &&
-      ['solo', 'duo', 'trio', 'squad', '1', '2', '3', '4'].includes(sizeHint);
+      (
+        ['solo', 'duo', 'trio', 'squad', 'team', '1', '2', '3', '4'].some((s) => sizeHint.includes(s)) ||
+        (parts[3] && parts[3].includes('@')) ||
+        (parts[2] && parts[2].includes('@'))
+      );
 
     if (isTeamFormat) {
       teamName = parts[0] || 'Unnamed Team';
@@ -143,6 +221,7 @@ export function parseTeamCsv(
         let mName = parts[i] || '';
         let mEmail = parts[i + 1] || '';
 
+        // If email was placed before name, auto-detect and swap
         if (mName.includes('@') && !mEmail.includes('@')) {
           const temp = mName;
           mName = mEmail || temp.split('@')[0];
@@ -159,7 +238,7 @@ export function parseTeamCsv(
     } else {
       // Legacy 2 or 3-column format: [name, email, token?] or [email, name, token?]
       let mName = parts[0];
-      let mEmail = (parts[1] || '').toLowerCase();
+      let mEmail = (parts[1] || '').toLowerCase().trim();
       const customToken = (parts[2] || '').toUpperCase();
 
       if (mName.includes('@') && !mEmail.includes('@')) {
