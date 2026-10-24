@@ -3,17 +3,33 @@ import { NextRequest, NextResponse } from 'next/server';
 const PUBLIC_PAGE = '/form';
 const PUBLIC_API = '/api/public/team-registration';
 
+/** Naitik Vercel project (form-only public site). Olive / Prateek repo deploys skip this. */
+function isNaitikFormDeploy(): boolean {
+  const owner = (process.env.VERCEL_GIT_REPO_OWNER || '').toLowerCase();
+  const slug = (process.env.VERCEL_GIT_REPO_SLUG || '').toLowerCase();
+  if (owner === 'naitikk-j' && slug === 'event-platform-aiclub') return true;
+
+  const host = [
+    process.env.NEXT_PUBLIC_APP_URL || '',
+    process.env.VERCEL_URL || '',
+    process.env.VERCEL_PROJECT_PRODUCTION_URL || '',
+  ]
+    .join(' ')
+    .toLowerCase();
+
+  return host.includes('event-platform-aiclub.vercel.app');
+}
+
 function isFormOnlyPublicSurface(): boolean {
   if (process.env.NODE_ENV === 'development') {
     return process.env.PUBLIC_FORM_ONLY === '1' || process.env.PUBLIC_FORM_ONLY === 'true';
   }
 
   const flag = (process.env.PUBLIC_FORM_ONLY || '').trim().toLowerCase();
-  if (flag === '1' || flag === 'true' || flag === 'yes') return true;
   if (flag === '0' || flag === 'false' || flag === 'no') return false;
+  if (flag === '1' || flag === 'true' || flag === 'yes') return true;
 
-  const appUrl = (process.env.NEXT_PUBLIC_APP_URL || '').toLowerCase();
-  return appUrl.includes('event-platform-aiclub.vercel.app');
+  return isNaitikFormDeploy();
 }
 
 function isStaticAsset(pathname: string): boolean {
