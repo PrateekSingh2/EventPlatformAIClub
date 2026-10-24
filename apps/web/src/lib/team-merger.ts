@@ -17,9 +17,32 @@ export type MergeGroup = {
   id: string;
   submissionIds: string[];
   teamNames: string[];
+  /** Display / export name: single team keeps name; merged teams use "A X B". */
+  mergedTeamName: string;
   members: TeamMemberPayload[];
   matchReason: string;
 };
+
+export function formatMergedTeamName(teamNames: string[]): string {
+  const unique = Array.from(new Set(teamNames.map((n) => n.trim()).filter(Boolean)));
+  if (unique.length === 0) return '';
+  if (unique.length === 1) return unique[0];
+  return unique.join(' X ');
+}
+
+export function countFilledMembers(sub: TeamSubmission): number {
+  return (sub.members || []).filter((m) => memberIdentityKey(m) !== null || (m.name || '').trim()).length;
+}
+
+/** One row per person with slots 1…n for merged squad display and export. */
+export function normalizeMergedMemberSlots(members: TeamMemberPayload[]): TeamMemberPayload[] {
+  const sorted = [...members].sort((a, b) => {
+    const slot = a.slot - b.slot;
+    if (slot !== 0) return slot;
+    return (a.name || '').localeCompare(b.name || '');
+  });
+  return sorted.map((m, i) => ({ ...m, slot: i + 1 }));
+}
 
 const SLOT_MAX_FOR_MATCH = 3;
 const MIN_SHARED_MEMBERS = 2;
@@ -113,9 +136,48 @@ export function computeAutoMergeGroups(submissions: TeamSubmission[]): MergeGrou
   const byId = new Map(submissions.map((s) => [s.id, s]));
   const rawGroups = uf.groups();
 
-  return Array.from(rawGroups.values()).map((ids) =>
-    buildMergeGroup(ids, byId, `≥${MIN_SHARED_MEMBERS} matching members (slots 1–3)`)
+  const built = Array.from(rawGroups.values()).map((ids) =>
+    buildMergeGroup(
+      ids,
+      byId,
+      ids.length > 1
+        ? `≥${MIN_SHARED_MEMBERS} matching members (slots 1–3)`
+        : 'Single team (not merged)'
+    )
   );
+
+  return pairTwoMemberSquads(built, byId);
+}
+
+/** Pair remaining 2-member teams two-by-two when auto merge is on. */
+function pairTwoMemberSquads(groups: MergeGroup[], byId: Map<string, TeamSubmission>): MergeGroup[] {
+  const merged = groups.filter((g) => g.submissionIds.length > 1);
+  const singles = groups.filter((g) => g.submissionIds.length === 1);
+
+  const pairable = singles
+    .filter((g) => {
+      const sub = byId.get(g.submissionIds[0]);
+      return sub ? countFilledMembers(sub) === 2 : false;
+    })
+    .sort((a, b) => {
+      const ta = byId.get(a.submissionIds[0])?.created_at ?? '';
+      const tb = byId.get(b.submissionIds[0])?.created_at ?? '';
+      return ta.localeCompare(tb);
+    });
+
+  const notPairable = singles.filter((g) => !pairable.some((p) => p.id === g.id));
+  const paired: MergeGroup[] = [];
+
+  for (let i = 0; i < pairable.length; i += 2) {
+    if (i + 1 >= pairable.length) {
+      paired.push(pairable[i]);
+      continue;
+    }
+    const ids = [pairable[i].submissionIds[0], pairable[i + 1].submissionIds[0]];
+    paired.push(buildMergeGroup(ids, byId, 'Paired 2-member squads (auto)'));
+  }
+
+  return [...merged, ...paired, ...notPairable];
 }
 
 export function buildMergeGroup(
@@ -138,12 +200,13 @@ export function buildMergeGroup(
     }
   }
 
-  const members = Array.from(memberByKey.values()).sort((a, b) => a.slot - b.slot);
+  const members = normalizeMergedMemberSlots(Array.from(memberByKey.values()));
 
   return {
     id: submissionIds.slice().sort().join('_'),
     submissionIds: submissionIds.slice(),
     teamNames,
+    mergedTeamName: formatMergedTeamName(teamNames),
     members,
     matchReason,
   };
@@ -197,6 +260,7 @@ export function applyManualMerge(
 }
 
 export type MergerExportRow = {
+  merged_team_name: string;
   merge_group: string;
   team_names: string;
   merge_reason: string;
@@ -211,6 +275,7 @@ export type MergerExportRow = {
 };
 
 export const MERGER_EXPORT_HEADERS: (keyof MergerExportRow)[] = [
+  'merged_team_name',
   'merge_group',
   'team_names',
   'merge_reason',
@@ -237,6 +302,7 @@ export function buildMergerExportRows(
       const members = sub.members?.length ? sub.members : [{ slot: 1, name: '', enrollment_number: '', email: '', branch: '', year: '' }];
       for (const m of members) {
         rows.push({
+          merged_team_name: sub.team_name,
           merge_group: sub.team_name,
           team_names: sub.team_name,
           merge_reason: 'Original submission',
@@ -255,11 +321,13 @@ export function buildMergerExportRows(
   }
 
   for (const group of groups) {
-    const label = group.teamNames.join(' + ');
+    const label = group.mergedTeamName;
+    const sources = group.teamNames.join(', ');
     if (group.members.length === 0) {
       rows.push({
+        merged_team_name: label,
         merge_group: label,
-        team_names: group.teamNames.join(', '),
+        team_names: sources,
         merge_reason: group.matchReason,
         member_slot: '',
         name: '',
@@ -275,8 +343,9 @@ export function buildMergerExportRows(
     for (const m of group.members) {
       const firstSub = subById.get(group.submissionIds[0]);
       rows.push({
+        merged_team_name: label,
         merge_group: label,
-        team_names: group.teamNames.join(', '),
+        team_names: sources,
         merge_reason: group.matchReason,
         member_slot: String(m.slot ?? ''),
         name: m.name ?? '',

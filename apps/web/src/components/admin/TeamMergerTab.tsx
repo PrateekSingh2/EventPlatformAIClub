@@ -126,8 +126,8 @@ export function TeamMergerTab({ adminSecret }: TeamMergerTabProps) {
             Team Merger
           </h2>
           <p className="text-sm text-app-subtext mt-1 max-w-xl">
-            Only teams that answered Yes to a 4th assigned member appear here. Teams with 2+
-            matching members in slots 1–3 auto-group when automatic merge is on.
+            Only teams that answered Yes to a 4th assigned member appear here.             Auto merge pairs overlapping squads or two 2-member teams into one card named
+            Team A X Team B. Exports use the same merged name.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -246,7 +246,12 @@ export function TeamMergerTab({ adminSecret }: TeamMergerTabProps) {
             >
               <div className="px-4 py-3 border-b border-app-border/80 flex flex-wrap items-center justify-between gap-2 bg-app-bg/30">
                 <div>
-                  <h3 className="font-bold text-sm text-app-text">{group.teamNames.join(' + ')}</h3>
+                  <h3 className="font-bold text-sm text-app-text">{group.mergedTeamName}</h3>
+                  {group.submissionIds.length > 1 && (
+                    <p className="text-[11px] text-app-subtext mt-0.5">
+                      Merged from: {group.teamNames.join(', ')}
+                    </p>
+                  )}
                   <p className="text-[11px] text-app-subtext mt-0.5">{group.matchReason}</p>
                 </div>
                 <button
@@ -259,35 +264,30 @@ export function TeamMergerTab({ adminSecret }: TeamMergerTabProps) {
                 </button>
               </div>
 
-              <div className="divide-y divide-app-border/50">
-                {group.submissionIds.map((subId) => {
-                  const sub = submissions.find((s) => s.id === subId);
-                  if (!sub) return null;
-                  return (
-                    <div key={subId} className="px-4 py-3 flex flex-col sm:flex-row sm:items-start gap-3">
-                      {!autoMerge && (
-                        <label className="flex items-center gap-2 shrink-0 pt-1">
+              <div className="px-4 py-3 space-y-3">
+                {!autoMerge && (
+                  <div className="flex flex-wrap gap-3">
+                    {group.submissionIds.map((subId) => {
+                      const sub = submissions.find((s) => s.id === subId);
+                      if (!sub) return null;
+                      return (
+                        <label
+                          key={subId}
+                          className="inline-flex items-center gap-2 text-xs border border-app-border rounded-lg px-2.5 py-1.5"
+                        >
                           <input
                             type="checkbox"
                             checked={selected.has(subId)}
                             onChange={() => toggleSelect(subId)}
                             className="rounded border-app-border"
                           />
-                          <span className="text-[10px] font-mono text-app-subtext">Select</span>
+                          <span className="font-semibold">{sub.team_name}</span>
                         </label>
-                      )}
-                      <div className="flex-1 min-w-0">
-                        <div className="flex flex-wrap items-baseline gap-2 mb-2">
-                          <span className="font-semibold text-sm">{sub.team_name}</span>
-                          <time className="text-[10px] font-mono text-app-subtext">
-                            {new Date(sub.created_at).toLocaleString()}
-                          </time>
-                        </div>
-                        <MemberMiniTable members={sub.members || []} />
-                      </div>
-                    </div>
-                  );
-                })}
+                      );
+                    })}
+                  </div>
+                )}
+                <MemberMiniTable members={group.members} />
               </div>
             </article>
           ))}
@@ -303,9 +303,13 @@ export function TeamMergerTab({ adminSecret }: TeamMergerTabProps) {
             className="max-w-lg w-full max-h-[85vh] overflow-y-auto rounded-2xl border border-app-border bg-app-surface shadow-2xl p-5"
             onClick={(e) => e.stopPropagation()}
           >
-            <h3 className="text-lg font-bold mb-1">Merged preview</h3>
-            <p className="text-xs text-app-subtext mb-4">{previewGroup.matchReason}</p>
-            <p className="text-sm font-semibold mb-3">{previewGroup.teamNames.join(' + ')}</p>
+            <h3 className="text-lg font-bold mb-1">{previewGroup.mergedTeamName}</h3>
+            <p className="text-xs text-app-subtext mb-2">{previewGroup.matchReason}</p>
+            {previewGroup.submissionIds.length > 1 && (
+              <p className="text-xs text-app-subtext mb-4">
+                Merged from: {previewGroup.teamNames.join(', ')}
+              </p>
+            )}
             <MemberMiniTable members={previewGroup.members} />
             <button
               type="button"
