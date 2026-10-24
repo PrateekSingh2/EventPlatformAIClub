@@ -122,4 +122,4 @@ High-stakes coding and AI puzzle hackathons with 150–200 concurrent participan
 ### US-5: Admin Bulk Mailer & Brevo Pooled SMTP
 - **Given** an Admin with 150 participant accounts
 - **When** the Admin clicks "Dispatch Bulk Emails"
-- **Then** the backend pools the Brevo SMTP connection, executes mail delivery in batches of 25 with `Promise.allSettled`, and returns completion metrics without timing out
+- **Then** the backend pools the Brevo SMTP connection, executes mail delivery in batches of 25 with `Promise.allSettled`, and returns completion metrics without timing out.
