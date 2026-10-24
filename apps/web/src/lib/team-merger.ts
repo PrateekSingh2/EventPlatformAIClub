@@ -8,9 +8,9 @@ export type TeamSubmission = {
   created_at: string;
 };
 
-/** Only teams that opted in to assigned 4th member / merger. */
+/** Teams eligible for merger: opted in Yes, or legacy rows before opt-in (null). Excludes explicit No. */
 export function filterMergerEligibleSubmissions(submissions: TeamSubmission[]): TeamSubmission[] {
-  return submissions.filter((s) => s.squad_merge_opt_in === true);
+  return submissions.filter((s) => s.squad_merge_opt_in !== false);
 }
 
 export type MergeGroup = {

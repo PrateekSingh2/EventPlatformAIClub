@@ -37,6 +37,7 @@ export function TeamMergerTab({ adminSecret }: TeamMergerTabProps) {
   const [manualGroupMap, setManualGroupMap] = useState<Map<string, string>>(new Map());
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [previewGroup, setPreviewGroup] = useState<MergeGroup | null>(null);
+  const [excludedOptOutCount, setExcludedOptOutCount] = useState(0);
 
   const fetchSubmissions = useCallback(async () => {
     try {
@@ -52,6 +53,7 @@ export function TeamMergerTab({ adminSecret }: TeamMergerTabProps) {
         return;
       }
       const all: TeamSubmission[] = data.submissions || [];
+      setExcludedOptOutCount(all.filter((s) => s.squad_merge_opt_in === false).length);
       setSubmissions(filterMergerEligibleSubmissions(all));
     } catch {
       setError('Network error while loading submissions');
@@ -126,8 +128,8 @@ export function TeamMergerTab({ adminSecret }: TeamMergerTabProps) {
             Team Merger
           </h2>
           <p className="text-sm text-app-subtext mt-1 max-w-xl">
-            Only teams that answered Yes to a 4th assigned member appear here.             Auto merge pairs overlapping squads or two 2-member teams into one card named
-            Team A X Team B. Exports use the same merged name.
+            Teams that answered No to a 4th member are hidden; older submissions without the prompt are included. Auto merge pairs overlapping squads or two 2-member
+            teams into one card named Team A X Team B.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -228,11 +230,17 @@ export function TeamMergerTab({ adminSecret }: TeamMergerTabProps) {
           <Loader2 className="w-8 h-8 animate-spin text-app-subtext" />
         </div>
       ) : submissions.length === 0 ? (
-        <p className="text-center text-sm text-app-subtext py-16">No team merge submissions yet.</p>
+        <p className="text-center text-sm text-app-subtext py-16">
+          No merger-eligible teams.
+          {excludedOptOutCount > 0
+            ? ` ${excludedOptOutCount} team(s) answered No to squad assignment.`
+            : ' No form submissions yet.'}
+        </p>
       ) : (
         <div className="space-y-4">
           <p className="text-xs font-mono text-app-subtext">
             {submissions.length} submission(s) · {groups.length} group(s)
+            {excludedOptOutCount > 0 ? ` · ${excludedOptOutCount} hidden (squad opt-out)` : ''}
           </p>
 
           {groups.map((group) => (
