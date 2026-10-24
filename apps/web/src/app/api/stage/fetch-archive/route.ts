@@ -136,9 +136,27 @@ export async function POST(req: NextRequest) {
     }
 
     // 5. Generate signed download URL
-    const { downloadUrl, expiresIn } = await createTokenArchiveDownloadUrl(
-      archiveRecord.storage_path
-    );
+    let downloadUrl: string;
+    let expiresIn: number;
+    try {
+      const signed = await createTokenArchiveDownloadUrl(archiveRecord.storage_path);
+      downloadUrl = signed.downloadUrl;
+      expiresIn = signed.expiresIn;
+    } catch (signErr: unknown) {
+      const msg = signErr instanceof Error ? signErr.message : String(signErr);
+      if (msg.includes('ARCHIVE_FILE_MISSING') || /object not found/i.test(msg)) {
+        return NextResponse.json(
+          {
+            error: 'ARCHIVE_FILE_MISSING',
+            message:
+              'Your team is assigned a case study path, but the ZIP file is missing from storage. Ask the organizer to re-upload the pool ZIP and assign teams again.',
+            storage_path: archiveRecord.storage_path,
+          },
+          { status: 404 }
+        );
+      }
+      throw signErr;
+    }
 
     const stageCount = Math.max(1, archiveRecord.stage_count || 1);
 

@@ -7,6 +7,7 @@ import {
   createTeamArchiveUploadUrl,
   listCaseStudyPoolArchives,
   STAGES_BUCKET,
+  storageArchiveExists,
 } from '@/lib/storage';
 import { chunkArray, mapWithConcurrency } from '@/lib/async-pool';
 
@@ -193,6 +194,19 @@ export async function POST(req: NextRequest) {
             );
           }
           storagePathsSeen.add(path);
+        }
+      }
+
+      const uniquePaths = [...new Set(archives.map((a) => a.storagePath.trim()).filter(Boolean))];
+      for (const path of uniquePaths) {
+        const ok = await storageArchiveExists(path);
+        if (!ok) {
+          return NextResponse.json(
+            {
+              error: `Pool ZIP missing in storage: "${path}". Upload (or re-upload) this case study in the pool, then assign again.`,
+            },
+            { status: 400 }
+          );
         }
       }
 

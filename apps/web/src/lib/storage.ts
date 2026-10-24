@@ -2,6 +2,31 @@ import { getSupabaseAdmin } from '@/lib/supabase';
 
 export const STAGES_BUCKET = 'stages';
 
+export function normalizeStoragePath(storagePath: string): string {
+  return storagePath.replace(/^stages\//, '').replace(/^\/+/, '');
+}
+
+/** True when `case-study-pool/<key>/archive.zip` exists in the stages bucket. */
+export async function storageArchiveExists(storagePath: string): Promise<boolean> {
+  const cleanPath = normalizeStoragePath(storagePath);
+  const supabaseAdmin = getSupabaseAdmin();
+  const folder = cleanPath.includes('/') ? cleanPath.slice(0, cleanPath.lastIndexOf('/')) : '';
+  const fileName = cleanPath.includes('/') ? cleanPath.slice(cleanPath.lastIndexOf('/') + 1) : cleanPath;
+
+  if (folder && fileName) {
+    const { data, error } = await supabaseAdmin.storage.from(STAGES_BUCKET).list(folder, {
+      limit: 100,
+      search: fileName,
+    });
+    if (!error && data?.some((o: { name: string }) => o.name === fileName)) {
+      return true;
+    }
+  }
+
+  const { error: downloadErr } = await supabaseAdmin.storage.from(STAGES_BUCKET).download(cleanPath);
+  return !downloadErr;
+}
+
 /**
  * Ensures that the private 'stages' bucket exists in Supabase Storage.
  * Called lazily when uploading or requesting signed URLs.
@@ -156,14 +181,23 @@ export async function listCaseStudyPoolArchives(): Promise<CaseStudyPoolItem[]> 
   }
 
   type PoolListEntry = { name: string; updated_at?: string; created_at?: string };
-  return ((entries || []) as PoolListEntry[])
-    .filter((entry) => Boolean(entry.name) && !entry.name.startsWith('.'))
-    .map((entry) => ({
+  const folders = ((entries || []) as PoolListEntry[]).filter(
+    (entry) => Boolean(entry.name) && !entry.name.startsWith('.')
+  );
+
+  const items: CaseStudyPoolItem[] = [];
+  for (const entry of folders) {
+    const storagePath = `case-study-pool/${entry.name}/archive.zip`;
+    const exists = await storageArchiveExists(storagePath);
+    if (!exists) continue;
+    items.push({
       poolKey: entry.name,
-      storagePath: `case-study-pool/${entry.name}/archive.zip`,
+      storagePath,
       displayName: entry.name.replace(/_/g, ' '),
       uploadedAt: entry.updated_at || entry.created_at,
-    }));
+    });
+  }
+  return items;
 }
 
 export async function createCaseStudyPoolUploadUrl(
@@ -225,14 +259,26 @@ export async function createTokenArchiveDownloadUrl(
   const supabaseAdmin = getSupabaseAdmin();
   const expiresIn = 180;
 
-  const cleanPath = storagePath.replace(/^stages\//, '').replace(/^\/+/, '');
+  const cleanPath = normalizeStoragePath(storagePath);
+  const exists = await storageArchiveExists(cleanPath);
+  if (!exists) {
+    throw new Error(
+      `ARCHIVE_FILE_MISSING: Challenge ZIP not found at "${cleanPath}". Re-upload the case study in Admin → Stage Builder pool and assign again.`
+    );
+  }
 
   const { data, error } = await supabaseAdmin.storage
     .from(STAGES_BUCKET)
     .createSignedUrl(cleanPath, expiresIn);
 
   if (error || !data?.signedUrl) {
-    throw new Error(error?.message || `Failed to generate signed download URL for token archive at ${cleanPath}`);
+    const msg = error?.message || '';
+    if (/object not found/i.test(msg)) {
+      throw new Error(
+        `ARCHIVE_FILE_MISSING: Challenge ZIP not found at "${cleanPath}". Re-upload the case study in Admin → Stage Builder pool and assign again.`
+      );
+    }
+    throw new Error(msg || `Failed to generate signed download URL for token archive at ${cleanPath}`);
   }
 
   return {

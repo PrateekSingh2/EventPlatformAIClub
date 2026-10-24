@@ -349,7 +349,19 @@ function ArenaContent() {
             if (meta?.error === 'NO_TOKEN_ARCHIVE') {
               throw new Error(meta.message || 'No challenge archive is assigned to your team yet.');
             }
-            throw new Error(meta?.error || meta?.message || 'Failed to fetch archive');
+            if (meta?.error === 'ARCHIVE_FILE_MISSING') {
+              throw new Error(
+                meta.message ||
+                  'Challenge ZIP is missing from storage. Contact the organizer to re-upload the pool and assign your team again.'
+              );
+            }
+            const raw = meta?.message || meta?.error || 'Failed to fetch archive';
+            if (/object not found/i.test(String(raw))) {
+              throw new Error(
+                'Challenge ZIP is missing from storage. Contact the organizer to re-upload the pool and assign your team again.'
+              );
+            }
+            throw new Error(raw);
           }
         } catch (fetchErr) {
           const cached = await getCachedTokenArchive(currentToken);
@@ -611,7 +623,14 @@ function ArenaContent() {
           }
         }
       } catch (err: any) {
-        setError(err.message || 'Failed to load stage archive');
+        const msg = err.message || 'Failed to load stage archive';
+        if (/object not found/i.test(msg)) {
+          setError(
+            'Challenge ZIP is missing from storage. Ask the organizer to re-upload case studies in the pool and assign your team again.'
+          );
+        } else {
+          setError(msg);
+        }
       } finally {
         loadingStageRef.current = null;
         setLoading(false);
