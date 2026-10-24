@@ -9,6 +9,7 @@ import { ContestLifecycleBar } from '@/components/admin/ContestLifecycleBar';
 import { ContestLifecycleTab } from '@/components/admin/ContestLifecycleTab';
 import { BrevoStudioTab } from '@/components/admin/BrevoStudioTab';
 import { FormDataTab } from '@/components/admin/FormDataTab';
+import { TeamMergerTab } from '@/components/admin/TeamMergerTab';
 import { Round1RubricTab } from '@/components/admin/Round1RubricTab';
 import {
   Layers,
@@ -33,6 +34,7 @@ import {
   X,
   ClipboardList,
   Award,
+  GitMerge,
 } from 'lucide-react';
 
 type AdminTab =
@@ -42,7 +44,8 @@ type AdminTab =
   | 'telemetry'
   | 'brevo'
   | 'round1'
-  | 'formdata';
+  | 'formdata'
+  | 'teammerger';
 
 interface NavItem {
   id: AdminTab;
@@ -101,6 +104,13 @@ const ADMIN_NAV_ITEMS: NavItem[] = [
     subtitle: 'Team merge submissions',
     shortLabel: 'Form',
     icon: ClipboardList,
+  },
+  {
+    id: 'teammerger',
+    title: 'Team Merger',
+    subtitle: 'Detect & merge duplicate teams',
+    shortLabel: 'Merger',
+    icon: GitMerge,
   },
 ];
 
@@ -532,6 +542,7 @@ export default function AdminPage() {
             {activeTab === 'telemetry' && <TelemetryRadarTab adminSecret={adminSecret} />}
             {activeTab === 'brevo' && <BrevoStudioTab adminSecret={adminSecret} />}
             {activeTab === 'formdata' && <FormDataTab adminSecret={adminSecret} />}
+            {activeTab === 'teammerger' && <TeamMergerTab adminSecret={adminSecret} />}
           </main>
         </div>
       </div>
