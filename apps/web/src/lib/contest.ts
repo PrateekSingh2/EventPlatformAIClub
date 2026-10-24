@@ -1,4 +1,5 @@
-import { getSupabaseAdmin, isSupabaseConfigured, supabase } from './supabase';
+import { getSupabaseAdmin, isSupabaseConfigured } from './supabase';
+import { sendSupabaseBroadcast } from './realtime-broadcast';
 import { ContestSettings, ContestStatus, Contest, Stage } from './types';
 import { generateContestTokenBatch } from './tokens';
 import fs from 'fs';
@@ -121,6 +122,26 @@ export async function getContestSettings(): Promise<ContestSettings> {
         writeLocalCache(state);
         return state;
       }
+
+      if (error) {
+        console.warn('[getContestSettings] Supabase read error:', error.message);
+      } else if (!data) {
+        try {
+          const supabaseAdmin = getSupabaseAdmin();
+          const seed = { ...DEFAULT_SETTINGS };
+          await supabaseAdmin.from('contest_settings').upsert({
+            id: seed.id,
+            status: seed.status,
+            title: seed.title,
+            updated_by: seed.updated_by,
+            updated_at: seed.updated_at,
+          });
+          writeLocalCache(seed);
+          return seed;
+        } catch {
+          // Fall through to cache/default
+        }
+      }
     } catch {
       // Supabase unavailable or table not yet migrated, fall back to cache
     }
@@ -159,22 +180,37 @@ export async function updateContestSettings(
     );
   }
 
+  const nowIso = new Date().toISOString();
+  const resolvedStartTime =
+    options?.startTime !== undefined
+      ? options.startTime
+      : newStatus === 'LIVE' && !current.start_time
+        ? nowIso
+        : current.start_time;
+
+  const resolvedEndTime =
+    options?.endTime !== undefined
+      ? options.endTime
+      : newStatus === 'CONCLUDED'
+        ? nowIso
+        : current.end_time;
+
   const updated: ContestSettings = {
     ...current,
     status: newStatus,
     title: options?.title !== undefined ? options.title : current.title,
-    start_time: options?.startTime !== undefined ? options.startTime : current.start_time,
-    end_time: options?.endTime !== undefined ? options.endTime : current.end_time,
+    start_time: resolvedStartTime,
+    end_time: resolvedEndTime,
     freeze_time:
       newStatus === 'FROZEN'
-        ? new Date().toISOString()
+        ? nowIso
         : newStatus === 'LIVE' && current.status === 'FROZEN'
-        ? null
-        : options?.freezeTime !== undefined
-        ? options.freezeTime
-        : current.freeze_time,
+          ? null
+          : options?.freezeTime !== undefined
+            ? options.freezeTime
+            : current.freeze_time,
     updated_by: options?.adminIdentifier || 'admin',
-    updated_at: new Date().toISOString(),
+    updated_at: nowIso,
   };
 
   // 1. Try to persist to Supabase
@@ -195,9 +231,16 @@ export async function updateContestSettings(
         });
 
       if (error) {
-        console.warn('[updateContestSettings] Supabase upsert error, falling back to local cache:', error.message);
+        const msg = `[updateContestSettings] Supabase upsert failed: ${error.message}`;
+        if (process.env.NODE_ENV === 'production') {
+          throw new Error(msg);
+        }
+        console.warn(msg);
       }
     } catch (err: any) {
+      if (process.env.NODE_ENV === 'production' && isSupabaseConfigured) {
+        throw err;
+      }
       console.warn('[updateContestSettings] Supabase unavailable, cached locally:', err.message);
     }
   }
@@ -207,22 +250,9 @@ export async function updateContestSettings(
 
   // 3. Broadcast update to connected clients via Supabase Realtime channel
   try {
-    const isSupabaseConfigured =
-      process.env.NEXT_PUBLIC_SUPABASE_URL &&
-      !process.env.NEXT_PUBLIC_SUPABASE_URL.includes('your-project-id');
-    if (isSupabaseConfigured) {
-      const channel = supabase.channel('contest-lifecycle');
-      Promise.race([
-        channel.send({
-          type: 'broadcast',
-          event: 'state-change',
-          payload: updated,
-        }),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('Realtime timeout')), 1000)),
-      ]).catch(() => {});
-    }
+    await sendSupabaseBroadcast('contest-lifecycle', 'state-change', updated);
   } catch {
-    // Ignore realtime broadcast delivery warnings if offline
+    // Realtime is best-effort; postgres_changes + polling still refresh clients
   }
 
   return updated;

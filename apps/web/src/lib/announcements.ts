@@ -1,4 +1,5 @@
-import { getSupabaseAdmin, supabase } from './supabase';
+import { getSupabaseAdmin } from './supabase';
+import { sendSupabaseBroadcast } from './realtime-broadcast';
 import { Announcement, AnnouncementUrgency } from './types';
 import fs from 'fs';
 import path from 'path';
@@ -57,7 +58,7 @@ export async function getRecentAnnouncements(limit: number = 10): Promise<Announ
       .order('created_at', { ascending: false })
       .limit(limit);
 
-    if (!error && data && data.length > 0) {
+    if (!error && Array.isArray(data)) {
       const formatted: Announcement[] = data.map((row: any) => ({
         id: row.id,
         message: row.message,
@@ -65,7 +66,9 @@ export async function getRecentAnnouncements(limit: number = 10): Promise<Announ
         created_by: row.created_by || 'admin',
         created_at: row.created_at,
       }));
-      writeCache(formatted);
+      if (formatted.length > 0) {
+        writeCache(formatted);
+      }
       return formatted;
     }
   } catch {
@@ -123,22 +126,9 @@ export async function createAnnouncement(
 
   // 3. Broadcast to all connected clients via Supabase Realtime channel
   try {
-    const isSupabaseConfigured =
-      process.env.NEXT_PUBLIC_SUPABASE_URL &&
-      !process.env.NEXT_PUBLIC_SUPABASE_URL.includes('your-project-id');
-    if (isSupabaseConfigured) {
-      const channel = supabase.channel('admin-broadcasts');
-      Promise.race([
-        channel.send({
-          type: 'broadcast',
-          event: 'announcement',
-          payload: newRecord,
-        }),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('Realtime timeout')), 1000)),
-      ]).catch(() => {});
-    }
+    await sendSupabaseBroadcast('admin-broadcasts', 'announcement', newRecord);
   } catch {
-    // Realtime offline
+    // Realtime is best-effort; INSERT replication + polling still reach clients
   }
 
   return newRecord;

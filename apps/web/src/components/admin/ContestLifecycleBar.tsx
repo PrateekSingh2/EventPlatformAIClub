@@ -2,6 +2,7 @@
 
 import React, { useState } from 'react';
 import { useContestLifecycle } from '@/hooks/useContestLifecycle';
+import { useAdminContestTransition } from '@/hooks/useAdminContestTransition';
 import { ContestStatus } from '@/lib/types';
 import {
   Play,
@@ -18,9 +19,8 @@ interface ContestLifecycleBarProps {
 }
 
 export function ContestLifecycleBar({ adminSecret }: ContestLifecycleBarProps) {
-  const { contestState, loading, refresh } = useContestLifecycle();
-  const [transitioning, setTransitioning] = useState(false);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const { contestState, loading, error: loadError, refresh } = useContestLifecycle();
+  const { transitioning, actionError, transitionTo } = useAdminContestTransition(adminSecret, refresh);
   const [confirmModal, setConfirmModal] = useState<{
     targetStatus: ContestStatus;
     title: string;
@@ -28,32 +28,12 @@ export function ContestLifecycleBar({ adminSecret }: ContestLifecycleBarProps) {
   } | null>(null);
 
   const status = contestState?.status || 'DRAFT';
+  const controlsDisabled = transitioning || !adminSecret.trim();
 
   const handleExecuteTransition = async (targetStatus: ContestStatus) => {
-    setTransitioning(true);
-    setErrorMsg(null);
-    setConfirmModal(null);
-
-    try {
-      const res = await fetch('/api/contest', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          status: targetStatus,
-          adminSecret,
-        }),
-      });
-
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || 'Failed to update contest status');
-      }
-
-      await refresh();
-    } catch (err: any) {
-      setErrorMsg(err.message || 'Transition failed');
-    } finally {
-      setTransitioning(false);
+    const ok = await transitionTo(targetStatus);
+    if (ok) {
+      setConfirmModal(null);
     }
   };
 
@@ -85,6 +65,7 @@ export function ContestLifecycleBar({ adminSecret }: ContestLifecycleBarProps) {
   };
 
   const currentBadge = statusConfig[status] || statusConfig.DRAFT;
+  const bannerError = actionError || loadError;
 
   return (
     <>
@@ -99,7 +80,7 @@ export function ContestLifecycleBar({ adminSecret }: ContestLifecycleBarProps) {
             className={`inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border ${currentBadge.badgeClass}`}
           >
             <span className={`w-1.5 h-1.5 rounded-full ${currentBadge.dotClass}`} />
-            <span>{currentBadge.label}</span>
+            <span>{loading && !contestState ? 'Loading…' : currentBadge.label}</span>
           </div>
 
           {loading && <Loader2 className="w-3.5 h-3.5 animate-spin text-app-subtext" />}
@@ -107,14 +88,13 @@ export function ContestLifecycleBar({ adminSecret }: ContestLifecycleBarProps) {
 
         {/* Action Controls */}
         <div className="flex items-center flex-wrap gap-2 self-start sm:self-auto">
-          {errorMsg && (
-            <span className="text-xs text-rose-400 flex items-center space-x-1">
+          {bannerError && (
+            <span className="text-xs text-rose-400 flex items-center space-x-1 max-w-xs truncate" title={bannerError}>
               <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-              <span>{errorMsg}</span>
+              <span>{bannerError}</span>
             </span>
           )}
 
-          {/* DRAFT -> LIVE */}
           {status === 'DRAFT' && (
             <button
               onClick={() =>
@@ -125,7 +105,7 @@ export function ContestLifecycleBar({ adminSecret }: ContestLifecycleBarProps) {
                     'Transitioning to LIVE unlocks the participant arena, allowing contestants to download challenge archives and submit answers.',
                 })
               }
-              disabled={transitioning}
+              disabled={controlsDisabled}
               className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium transition-colors cursor-pointer disabled:opacity-50"
             >
               <Play className="w-3 h-3 fill-white" />
@@ -133,7 +113,6 @@ export function ContestLifecycleBar({ adminSecret }: ContestLifecycleBarProps) {
             </button>
           )}
 
-          {/* LIVE -> FROZEN */}
           {status === 'LIVE' && (
             <button
               onClick={() =>
@@ -144,7 +123,7 @@ export function ContestLifecycleBar({ adminSecret }: ContestLifecycleBarProps) {
                     'Freezing the contest pauses new stage submissions and freezes the live leaderboard for contestants while keeping telemetry active.',
                 })
               }
-              disabled={transitioning}
+              disabled={controlsDisabled}
               className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-xs font-medium transition-colors cursor-pointer disabled:opacity-50"
             >
               <Pause className="w-3 h-3 fill-white" />
@@ -152,7 +131,6 @@ export function ContestLifecycleBar({ adminSecret }: ContestLifecycleBarProps) {
             </button>
           )}
 
-          {/* FROZEN -> LIVE (Resume) */}
           {status === 'FROZEN' && (
             <button
               onClick={() =>
@@ -163,7 +141,7 @@ export function ContestLifecycleBar({ adminSecret }: ContestLifecycleBarProps) {
                     'Resuming tournament gameplay will re-enable submissions and resume live leaderboard updates.',
                 })
               }
-              disabled={transitioning}
+              disabled={controlsDisabled}
               className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium transition-colors cursor-pointer disabled:opacity-50"
             >
               <Play className="w-3 h-3 fill-white" />
@@ -171,7 +149,6 @@ export function ContestLifecycleBar({ adminSecret }: ContestLifecycleBarProps) {
             </button>
           )}
 
-          {/* (LIVE or FROZEN) -> CONCLUDED */}
           {(status === 'LIVE' || status === 'FROZEN') && (
             <button
               onClick={() =>
@@ -182,7 +159,7 @@ export function ContestLifecycleBar({ adminSecret }: ContestLifecycleBarProps) {
                     'Concluded status finalizes all participant scores and publishes the final official standings. This action closes submissions permanently.',
                 })
               }
-              disabled={transitioning}
+              disabled={controlsDisabled}
               className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-xs font-medium transition-colors cursor-pointer disabled:opacity-50"
             >
               <CheckCircle2 className="w-3 h-3" />
@@ -190,7 +167,6 @@ export function ContestLifecycleBar({ adminSecret }: ContestLifecycleBarProps) {
             </button>
           )}
 
-          {/* CONCLUDED -> Reset to DRAFT */}
           {status === 'CONCLUDED' && (
             <button
               onClick={() =>
@@ -201,7 +177,7 @@ export function ContestLifecycleBar({ adminSecret }: ContestLifecycleBarProps) {
                     'Resetting to DRAFT returns the contest to setup mode and locks the participant arena.',
                 })
               }
-              disabled={transitioning}
+              disabled={controlsDisabled}
               className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg bg-app-surface hover:bg-app-hover border border-app-border text-app-text text-xs font-medium transition-colors cursor-pointer disabled:opacity-50"
             >
               <RotateCcw className="w-3 h-3" />
@@ -211,7 +187,6 @@ export function ContestLifecycleBar({ adminSecret }: ContestLifecycleBarProps) {
         </div>
       </div>
 
-      {/* Confirmation Modal */}
       {confirmModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-xs animate-in fade-in duration-100">
           <div className="w-full max-w-sm sm:max-w-md p-5 sm:p-6 bg-app-surface border border-app-border rounded-2xl shadow-xl space-y-4 text-left">

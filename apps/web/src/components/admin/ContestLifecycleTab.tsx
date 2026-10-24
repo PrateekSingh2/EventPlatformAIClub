@@ -2,9 +2,9 @@
 
 import React, { useState, useEffect } from 'react';
 import { useContestLifecycle } from '@/hooks/useContestLifecycle';
+import { useAdminContestTransition } from '@/hooks/useAdminContestTransition';
 import { ContestStatus, Announcement, AnnouncementUrgency } from '@/lib/types';
 import {
-  Trophy,
   Play,
   Pause,
   CheckCircle2,
@@ -23,7 +23,11 @@ interface ContestLifecycleTabProps {
 }
 
 export function ContestLifecycleTab({ adminSecret }: ContestLifecycleTabProps) {
-  const { contestState, loading, refresh } = useContestLifecycle();
+  const { contestState, loading, error: loadError, refresh } = useContestLifecycle();
+  const { transitioning, actionError, setActionError, transitionTo } = useAdminContestTransition(
+    adminSecret,
+    refresh
+  );
 
   // Announcement composer state
   const [broadcastMessage, setBroadcastMessage] = useState('');
@@ -35,26 +39,48 @@ export function ContestLifecycleTab({ adminSecret }: ContestLifecycleTabProps) {
   } | null>(null);
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
 
-  // Transition state
-  const [transitioning, setTransitioning] = useState(false);
-  const [actionError, setActionError] = useState<string | null>(null);
+  const [confirmModal, setConfirmModal] = useState<{
+    targetStatus: ContestStatus;
+    title: string;
+    description: string;
+  } | null>(null);
 
   const status = contestState?.status || 'DRAFT';
+  const controlsDisabled = transitioning || loading || !adminSecret.trim();
+  const bannerError = actionError || loadError;
+
+  const requestTransition = (targetStatus: ContestStatus, title: string, description: string) => {
+    setActionError(null);
+    setConfirmModal({ targetStatus, title, description });
+  };
 
   // Fetch recent announcements
   const fetchAnnouncements = async () => {
+    if (!adminSecret.trim()) {
+      setHistoryError('Sign in required to load broadcast history.');
+      return;
+    }
     try {
       setLoadingHistory(true);
+      setHistoryError(null);
       const res = await fetch('/api/admin/broadcast', {
-        headers: { 'x-admin-secret': adminSecret },
+        headers: { 'x-admin-secret': adminSecret.trim() },
       });
-      const data = await res.json();
+      let data: { announcements?: Announcement[]; error?: string } = {};
+      try {
+        data = await res.json();
+      } catch {
+        throw new Error('Invalid response from server');
+      }
       if (res.ok && data.announcements) {
         setAnnouncements(data.announcements);
+      } else {
+        setHistoryError(data.error || `Failed to load history (HTTP ${res.status})`);
       }
-    } catch {
-      // Ignore
+    } catch (err: unknown) {
+      setHistoryError(err instanceof Error ? err.message : 'Failed to load broadcast history');
     } finally {
       setLoadingHistory(false);
     }
@@ -65,33 +91,6 @@ export function ContestLifecycleTab({ adminSecret }: ContestLifecycleTabProps) {
       fetchAnnouncements();
     }
   }, [adminSecret]);
-
-  const handleTransition = async (targetStatus: ContestStatus) => {
-    setTransitioning(true);
-    setActionError(null);
-
-    try {
-      const res = await fetch('/api/contest', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          status: targetStatus,
-          adminSecret,
-        }),
-      });
-
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || 'Failed to update contest status');
-      }
-
-      await refresh();
-    } catch (err: any) {
-      setActionError(err.message || 'Transition failed');
-    } finally {
-      setTransitioning(false);
-    }
-  };
 
   const handleSendBroadcast = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -105,13 +104,18 @@ export function ContestLifecycleTab({ adminSecret }: ContestLifecycleTabProps) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          adminSecret,
+          adminSecret: adminSecret.trim(),
           message: broadcastMessage.trim(),
           urgency,
         }),
       });
 
-      const data = await res.json();
+      let data: { success?: boolean; error?: string } = {};
+      try {
+        data = await res.json();
+      } catch {
+        throw new Error('Invalid response from server');
+      }
       if (!res.ok || !data.success) {
         throw new Error(data.error || 'Failed to dispatch broadcast');
       }
@@ -161,10 +165,17 @@ export function ContestLifecycleTab({ adminSecret }: ContestLifecycleTabProps) {
         </a>
       </div>
 
-      {actionError && (
+      {bannerError && (
         <div className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-xs text-rose-400 flex items-center space-x-2">
           <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
-          <span>{actionError}</span>
+          <span>{bannerError}</span>
+        </div>
+      )}
+
+      {loading && !contestState && (
+        <div className="flex items-center gap-2 text-xs text-app-subtext px-1">
+          <Loader2 className="w-4 h-4 animate-spin" />
+          <span>Loading tournament status…</span>
         </div>
       )}
 
@@ -192,8 +203,14 @@ export function ContestLifecycleTab({ adminSecret }: ContestLifecycleTabProps) {
           </div>
           {status === 'DRAFT' ? (
             <button
-              onClick={() => handleTransition('LIVE')}
-              disabled={transitioning}
+              onClick={() =>
+                requestTransition(
+                  'LIVE',
+                  'Start Contest (Live)',
+                  'Unlocks the arena so teams can download archives and submit answers.'
+                )
+              }
+              disabled={controlsDisabled}
               className="w-full py-2 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition-colors flex items-center justify-center space-x-1.5 cursor-pointer disabled:opacity-50 min-h-[38px]"
             >
               <Play className="w-3.5 h-3.5 fill-white" />
@@ -227,16 +244,28 @@ export function ContestLifecycleTab({ adminSecret }: ContestLifecycleTabProps) {
           {status === 'LIVE' ? (
             <div className="flex items-center gap-2 pt-2">
               <button
-                onClick={() => handleTransition('FROZEN')}
-                disabled={transitioning}
+                onClick={() =>
+                  requestTransition(
+                    'FROZEN',
+                    'Freeze submissions',
+                    'Pauses submissions and freezes the leaderboard until you resume.'
+                  )
+                }
+                disabled={controlsDisabled}
                 className="flex-1 py-2 px-2.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold transition-colors flex items-center justify-center space-x-1 cursor-pointer disabled:opacity-50 min-h-[38px]"
               >
                 <Pause className="w-3.5 h-3.5 fill-white" />
                 <span>Freeze</span>
               </button>
               <button
-                onClick={() => handleTransition('CONCLUDED')}
-                disabled={transitioning}
+                onClick={() =>
+                  requestTransition(
+                    'CONCLUDED',
+                    'Conclude contest',
+                    'Closes submissions permanently and publishes final standings.'
+                  )
+                }
+                disabled={controlsDisabled}
                 className="flex-1 py-2 px-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold transition-colors flex items-center justify-center space-x-1 cursor-pointer disabled:opacity-50 min-h-[38px]"
               >
                 <CheckCircle2 className="w-3.5 h-3.5" />
@@ -271,16 +300,24 @@ export function ContestLifecycleTab({ adminSecret }: ContestLifecycleTabProps) {
           {status === 'FROZEN' ? (
             <div className="flex items-center gap-2 pt-2">
               <button
-                onClick={() => handleTransition('LIVE')}
-                disabled={transitioning}
+                onClick={() =>
+                  requestTransition('LIVE', 'Resume contest', 'Re-enables submissions and live leaderboard updates.')
+                }
+                disabled={controlsDisabled}
                 className="flex-1 py-2 px-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition-colors flex items-center justify-center space-x-1 cursor-pointer disabled:opacity-50 min-h-[38px]"
               >
                 <Play className="w-3.5 h-3.5 fill-white" />
                 <span>Resume</span>
               </button>
               <button
-                onClick={() => handleTransition('CONCLUDED')}
-                disabled={transitioning}
+                onClick={() =>
+                  requestTransition(
+                    'CONCLUDED',
+                    'Conclude contest',
+                    'Closes submissions permanently and publishes final standings.'
+                  )
+                }
+                disabled={controlsDisabled}
                 className="flex-1 py-2 px-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold transition-colors flex items-center justify-center space-x-1 cursor-pointer disabled:opacity-50 min-h-[38px]"
               >
                 <CheckCircle2 className="w-3.5 h-3.5" />
@@ -314,8 +351,14 @@ export function ContestLifecycleTab({ adminSecret }: ContestLifecycleTabProps) {
           </div>
           {status === 'CONCLUDED' ? (
             <button
-              onClick={() => handleTransition('DRAFT')}
-              disabled={transitioning}
+              onClick={() =>
+                requestTransition(
+                  'DRAFT',
+                  'Reset to draft',
+                  'Returns to setup mode and locks the participant arena.'
+                )
+              }
+              disabled={controlsDisabled}
               className="w-full py-2 px-3 rounded-xl bg-app-surface hover:bg-app-hover text-app-text border border-app-border text-xs font-medium transition-colors flex items-center justify-center space-x-1.5 cursor-pointer disabled:opacity-50 min-h-[38px]"
             >
               <RotateCcw className="w-3.5 h-3.5 text-app-subtext" />
@@ -454,6 +497,8 @@ export function ContestLifecycleTab({ adminSecret }: ContestLifecycleTabProps) {
                 <Loader2 className="w-4 h-4 animate-spin mx-auto mb-1 text-app-subtext" />
                 Loading history...
               </div>
+            ) : historyError ? (
+              <p className="text-xs text-rose-400 text-center py-6">{historyError}</p>
             ) : announcements.length === 0 ? (
               <p className="text-xs text-app-subtext italic text-center py-6">
                 No previous announcements recorded.
@@ -477,7 +522,9 @@ export function ContestLifecycleTab({ adminSecret }: ContestLifecycleTabProps) {
                       {ann.urgency}
                     </span>
                     <span className="text-app-subtext">
-                      {new Date(ann.created_at).toLocaleTimeString()}
+                      {ann.created_at
+                        ? new Date(ann.created_at).toLocaleString()
+                        : '—'}
                     </span>
                   </div>
                   <p className="text-xs text-app-text line-clamp-2">{ann.message}</p>
@@ -487,6 +534,49 @@ export function ContestLifecycleTab({ adminSecret }: ContestLifecycleTabProps) {
           </div>
         </div>
       </div>
+
+      {confirmModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-xs">
+          <div className="w-full max-w-sm sm:max-w-md p-5 sm:p-6 bg-app-surface border border-app-border rounded-2xl shadow-xl space-y-4 text-left">
+            <h3 className="text-sm font-bold text-app-text">{confirmModal.title}</h3>
+            <p className="text-xs text-app-subtext leading-relaxed">{confirmModal.description}</p>
+            <div className="p-3 rounded-xl bg-app-bg border border-app-border text-xs flex items-center justify-between">
+              <span className="text-app-subtext">State transition</span>
+              <span className="font-semibold text-app-text">
+                {status} → {confirmModal.targetStatus}
+              </span>
+            </div>
+            <div className="flex items-center justify-end space-x-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setConfirmModal(null)}
+                disabled={transitioning}
+                className="px-3.5 py-2 text-xs font-medium text-app-subtext hover:text-app-text bg-app-hover rounded-xl"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  const ok = await transitionTo(confirmModal.targetStatus);
+                  if (ok) setConfirmModal(null);
+                }}
+                disabled={transitioning}
+                className="flex items-center space-x-1.5 px-4 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 rounded-xl disabled:opacity-50"
+              >
+                {transitioning ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Updating…</span>
+                  </>
+                ) : (
+                  <span>Confirm</span>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

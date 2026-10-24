@@ -1,17 +1,115 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useSyncExternalStore } from 'react';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 import { ContestSettings } from '@/lib/types';
 
 type StateListener = (state: ContestSettings) => void;
 type RefreshListener = () => void;
 
+type LifecycleSnapshot = {
+  contestState: ContestSettings | null;
+  loading: boolean;
+  error: string | null;
+};
+
 // Module-level listener registry to share a single Realtime subscription across all components
 const stateListeners = new Set<StateListener>();
 const refreshListeners = new Set<RefreshListener>();
 let sharedChannel: ReturnType<typeof supabase.channel> | null = null;
 let activeHookCount = 0;
+
+let lifecycleSnapshot: LifecycleSnapshot = {
+  contestState: null,
+  loading: true,
+  error: null,
+};
+const snapshotListeners = new Set<() => void>();
+let fetchInFlight: Promise<void> | null = null;
+let pollInterval: ReturnType<typeof setInterval> | null = null;
+
+function emitSnapshot() {
+  snapshotListeners.forEach((listener) => {
+    try {
+      listener();
+    } catch {
+      // Ignore subscriber error
+    }
+  });
+}
+
+function applyContestState(next: ContestSettings) {
+  lifecycleSnapshot = {
+    contestState: next,
+    loading: false,
+    error: null,
+  };
+  emitSnapshot();
+}
+
+async function fetchContestStateShared(): Promise<void> {
+  if (fetchInFlight) {
+    return fetchInFlight;
+  }
+
+  fetchInFlight = (async () => {
+    try {
+      const res = await fetch('/api/contest', {
+        headers: {
+          'Cache-Control': 'no-store, no-cache, must-revalidate',
+          Pragma: 'no-cache',
+        },
+      });
+
+      let data: { success?: boolean; contest?: ContestSettings; error?: string } = {};
+      try {
+        data = await res.json();
+      } catch {
+        data = {};
+      }
+
+      if (res.ok && data.success && data.contest) {
+        applyContestState(data.contest);
+        return;
+      }
+
+      lifecycleSnapshot = {
+        ...lifecycleSnapshot,
+        loading: false,
+        error:
+          data.error ||
+          (res.ok ? 'Contest state unavailable' : `Failed to load contest state (HTTP ${res.status})`),
+      };
+      emitSnapshot();
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Failed to fetch contest state';
+      lifecycleSnapshot = {
+        ...lifecycleSnapshot,
+        loading: false,
+        error: message,
+      };
+      emitSnapshot();
+    } finally {
+      fetchInFlight = null;
+    }
+  })();
+
+  return fetchInFlight;
+}
+
+function startSharedPolling() {
+  if (pollInterval) return;
+  pollInterval = setInterval(() => {
+    fetchContestStateShared();
+  }, 5000);
+}
+
+function stopSharedPolling() {
+  if (pollInterval) {
+    clearInterval(pollInterval);
+    pollInterval = null;
+  }
+}
 
 function subscribeSharedChannel() {
   if (sharedChannel || !isSupabaseConfigured) return;
@@ -20,6 +118,7 @@ function subscribeSharedChannel() {
     .channel('contest-lifecycle')
     .on('broadcast', { event: 'state-change' }, (payload: any) => {
       if (payload?.payload) {
+        applyContestState(payload.payload);
         stateListeners.forEach((listener) => {
           try {
             listener(payload.payload as ContestSettings);
@@ -33,6 +132,7 @@ function subscribeSharedChannel() {
       'postgres_changes',
       { event: '*', schema: 'public', table: 'contest_settings' },
       () => {
+        fetchContestStateShared();
         refreshListeners.forEach((listener) => {
           try {
             listener();
@@ -57,75 +157,58 @@ function unsubscribeSharedChannel() {
   }
 }
 
+function subscribeSnapshot(onStoreChange: () => void) {
+  snapshotListeners.add(onStoreChange);
+  return () => {
+    snapshotListeners.delete(onStoreChange);
+  };
+}
+
+function getSnapshot(): LifecycleSnapshot {
+  return lifecycleSnapshot;
+}
+
 export function useContestLifecycle() {
-  const [contestState, setContestState] = useState<ContestSettings | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const snapshot = useSyncExternalStore(subscribeSnapshot, getSnapshot, getSnapshot);
   const mountedRef = useRef(true);
 
   const fetchState = useCallback(async () => {
-    try {
-      const res = await fetch('/api/contest', {
-        headers: {
-          'Cache-Control': 'no-store, no-cache, must-revalidate',
-          Pragma: 'no-cache',
-        },
-      });
-      const data = await res.json();
-      if (res.ok && data.contest && mountedRef.current) {
-        setContestState(data.contest);
-        setError(null);
-      }
-    } catch (err: any) {
-      if (mountedRef.current) {
-        setError(err.message || 'Failed to fetch contest state');
-      }
-    } finally {
-      if (mountedRef.current) {
-        setLoading(false);
-      }
-    }
+    await fetchContestStateShared();
   }, []);
 
   useEffect(() => {
     mountedRef.current = true;
-    fetchState();
-
-    const onStateUpdate: StateListener = (newState) => {
-      if (mountedRef.current) {
-        setContestState(newState);
-      }
-    };
+    if (lifecycleSnapshot.loading && !fetchInFlight) {
+      fetchContestStateShared();
+    }
 
     const onRefreshNeeded: RefreshListener = () => {
-      fetchState();
+      fetchContestStateShared();
     };
 
-    stateListeners.add(onStateUpdate);
     refreshListeners.add(onRefreshNeeded);
     activeHookCount++;
 
     subscribeSharedChannel();
-
-    // Continuous background ping every 2 seconds for immediate tournament lifecycle shifts
-    const interval = setInterval(() => {
-      fetchState();
-    }, 2000);
+    startSharedPolling();
 
     return () => {
       mountedRef.current = false;
-      clearInterval(interval);
-      stateListeners.delete(onStateUpdate);
       refreshListeners.delete(onRefreshNeeded);
       activeHookCount--;
       unsubscribeSharedChannel();
+      if (activeHookCount <= 0) {
+        stopSharedPolling();
+      }
     };
-  }, [fetchState]);
+  }, []);
+
+  const contestState = snapshot.contestState;
 
   return {
     contestState,
-    loading,
-    error,
+    loading: snapshot.loading,
+    error: snapshot.error,
     refresh: fetchState,
     status: contestState?.status || 'DRAFT',
     isDraft: contestState?.status === 'DRAFT',

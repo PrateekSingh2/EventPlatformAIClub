@@ -134,6 +134,38 @@ export async function createTokenArchiveUploadUrl(
  * will download the exact same ZIP archive.
  */
 /** Shared case-study pool object (upload once, many teams reference the same path). */
+export type CaseStudyPoolItem = {
+  poolKey: string;
+  storagePath: string;
+  displayName: string;
+  uploadedAt?: string;
+};
+
+/** List ZIPs already stored under case-study-pool/ in Supabase Storage. */
+export async function listCaseStudyPoolArchives(): Promise<CaseStudyPoolItem[]> {
+  await ensureStagesBucketExists();
+  const supabaseAdmin = getSupabaseAdmin();
+
+  const { data: entries, error } = await supabaseAdmin.storage.from(STAGES_BUCKET).list('case-study-pool', {
+    limit: 1000,
+    sortBy: { column: 'name', order: 'asc' },
+  });
+
+  if (error) {
+    throw new Error(error.message || 'Failed to list case-study pool');
+  }
+
+  type PoolListEntry = { name: string; updated_at?: string; created_at?: string };
+  return ((entries || []) as PoolListEntry[])
+    .filter((entry) => Boolean(entry.name) && !entry.name.startsWith('.'))
+    .map((entry) => ({
+      poolKey: entry.name,
+      storagePath: `case-study-pool/${entry.name}/archive.zip`,
+      displayName: entry.name.replace(/_/g, ' '),
+      uploadedAt: entry.updated_at || entry.created_at,
+    }));
+}
+
 export async function createCaseStudyPoolUploadUrl(
   poolKey: string
 ): Promise<{ uploadUrl: string; token: string; storagePath: string; expiresIn: number; poolKey: string }> {

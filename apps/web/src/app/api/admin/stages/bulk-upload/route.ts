@@ -5,6 +5,8 @@ import {
   createCaseStudyPoolUploadUrl,
   createTokenArchiveUploadUrl,
   createTeamArchiveUploadUrl,
+  listCaseStudyPoolArchives,
+  STAGES_BUCKET,
 } from '@/lib/storage';
 import { chunkArray, mapWithConcurrency } from '@/lib/async-pool';
 
@@ -288,6 +290,14 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
+    if (req.nextUrl.searchParams.get('listPool') === '1') {
+      if (!isSupabaseConfigured) {
+        return NextResponse.json({ poolItems: [] });
+      }
+      const poolItems = await listCaseStudyPoolArchives();
+      return NextResponse.json({ poolItems });
+    }
+
     if (!isSupabaseConfigured) {
       return NextResponse.json({ archives: [] });
     }
@@ -326,7 +336,7 @@ export async function GET(req: NextRequest) {
 export async function DELETE(req: NextRequest) {
   try {
     const body = await req.json();
-    const { adminSecret, accessToken, teamName, storagePath, purgeAll } = body;
+    const { adminSecret, accessToken, teamName, storagePath, purgeAll, poolKey } = body;
     const secret = adminSecret || req.headers.get('x-admin-secret');
     if (!verifyAdminSecret(secret)) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -359,6 +369,14 @@ export async function DELETE(req: NextRequest) {
         purged: true,
         deletedCount: beforeCount ?? 0,
       });
+    }
+
+    if (poolKey) {
+      const cleanKey = String(poolKey).replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase().slice(0, 80);
+      await supabaseAdmin.storage
+        .from(STAGES_BUCKET)
+        .remove([`case-study-pool/${cleanKey}/archive.zip`]);
+      return NextResponse.json({ success: true, removedPoolKey: cleanKey });
     }
 
     if (storagePath) {
