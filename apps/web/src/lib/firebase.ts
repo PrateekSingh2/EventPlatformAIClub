@@ -59,19 +59,11 @@ export const isFirebaseConfigured = Boolean(
  * and guarantees a working session for contestants without getting stuck
  */
 export async function signInWithGoogle(): Promise<GoogleAuthResult> {
-  // If no genuine API key is configured, immediately return safe mock contestant profile
-  // without triggering an invalid Google Identity Toolkit network request
+  // If no genuine API key is configured, alert the user and prompt email login
   if (!isFirebaseConfigured) {
-    await new Promise((r) => setTimeout(r, 400));
-    return {
-      uid: 'demo-contestant-' + Math.random().toString(36).substring(2, 9),
-      email: 'contestant@aiclub.org',
-      displayName: 'AI Club Contestant',
-      photoURL: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80',
-      idToken: 'mock-google-id-token',
-      isAutoFallback: true,
-      diagnosticNotice: 'Running in Fast Contestant Mode (No real Firebase API key found in .env).',
-    };
+    throw new Error(
+      'Firebase credentials are not configured in Vercel environment variables. Please sign in with your registered team email below.'
+    );
   }
 
   const startTime = Date.now();
@@ -83,8 +75,8 @@ export async function signInWithGoogle(): Promise<GoogleAuthResult> {
 
     return {
       uid: user.uid,
-      email: user.email || 'contestant@aiclub.org',
-      displayName: user.displayName || 'AI Club Contestant',
+      email: user.email || '',
+      displayName: user.displayName || (user.email ? user.email.split('@')[0] : 'Contestant'),
       photoURL: user.photoURL,
       idToken,
     };
@@ -96,43 +88,41 @@ export async function signInWithGoogle(): Promise<GoogleAuthResult> {
       elapsedMs: elapsed,
     });
 
-    // Detect if popup auto-closed or failed due to Firebase configuration / domain mismatch
-    // (If the window closed in under 3.5 seconds, it was an automatic rejection, not a user cancellation)
-    const isAutoClosure =
-      elapsed < 3500 ||
-      err?.code === 'auth/unauthorized-domain' ||
-      err?.code === 'auth/operation-not-allowed' ||
-      err?.code === 'auth/configuration-not-found' ||
-      err?.code === 'auth/popup-blocked' ||
-      err?.code === 'auth/internal-error' ||
-      err?.code === 'auth/network-request-failed' ||
-      err?.code === 'auth/invalid-api-key' ||
-      (typeof err?.code === 'string' && err.code.includes('api-key-not-valid'));
+    const domain = typeof window !== 'undefined' ? window.location.hostname : 'this domain';
 
-    let diagnosticNotice = '';
     if (err?.code === 'auth/unauthorized-domain') {
-      diagnosticNotice = 'Domain not authorized in Firebase Console. Add localhost & 127.0.0.1 to Authentication > Settings > Authorized Domains.';
-    } else if (err?.code === 'auth/operation-not-allowed') {
-      diagnosticNotice = 'Google Sign-in is not enabled in Firebase Console. Go to Authentication > Sign-in method and enable Google.';
-    } else if (elapsed < 3500 && err?.code === 'auth/popup-closed-by-user') {
-      diagnosticNotice = 'Google popup auto-closed by browser or origin policy. Continuing via Fast Contestant Mode.';
+      throw new Error(
+        `Domain "${domain}" is not authorized in Firebase Console. Please add "${domain}" in Firebase Console > Authentication > Settings > Authorized Domains, or sign in using your registered email below.`
+      );
     }
 
-    if (isAutoClosure) {
-      // Seamlessly auto-provision contestant session
-      await new Promise((r) => setTimeout(r, 400));
-      return {
-        uid: 'google-oauth-contestant-' + Math.random().toString(36).substring(2, 9),
-        email: 'contestant@aiclub.org',
-        displayName: 'AI Club Contestant',
-        photoURL: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80',
-        idToken: 'mock-google-id-token',
-        isAutoFallback: true,
-        diagnosticNotice,
-      };
+    if (err?.code === 'auth/operation-not-allowed') {
+      throw new Error(
+        'Google Sign-In is not enabled in Firebase Console. Please enable Google under Authentication > Sign-in method, or sign in using your registered email below.'
+      );
     }
 
-    // User deliberately interacted and closed the window after reading
-    throw new Error('Google Sign-In was closed. Please try signing in again.');
+    if (err?.code === 'auth/popup-blocked') {
+      throw new Error(
+        'The Google Sign-In popup was blocked by your browser. Please allow popups or sign in with your registered email below.'
+      );
+    }
+
+    if (
+      err?.code === 'auth/invalid-api-key' ||
+      (typeof err?.code === 'string' && err.code.includes('api-key-not-valid'))
+    ) {
+      throw new Error(
+        'Invalid Firebase API Key configured. Please verify NEXT_PUBLIC_FIREBASE_API_KEY in Vercel environment variables, or sign in using your registered email below.'
+      );
+    }
+
+    if (err?.code === 'auth/popup-closed-by-user') {
+      throw new Error('Google Sign-In was closed. Please try again or sign in using your registered email below.');
+    }
+
+    throw new Error(
+      err?.message || 'Google Sign-In failed. Please try again or sign in using your registered email below.'
+    );
   }
 }

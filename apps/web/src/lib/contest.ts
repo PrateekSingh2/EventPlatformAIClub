@@ -568,14 +568,6 @@ export async function validateAndActivateToken(params: {
       const isMember = teamMembers.some((m: any) => m.email?.toLowerCase().trim() === cleanEmail);
       const teamName = teamMembers[0]?.team_name || teamMembers[0]?.name || 'Assigned Team';
 
-      if (!isMember) {
-        return {
-          success: false,
-          isFirstActivation: false,
-          error: `Access Denied: Token ${cleanToken} is assigned exclusively to team "${teamName}". Your account (${cleanEmail}) is not a registered member of this team.`,
-        };
-      }
-
       // Fair-Play Team Lock: Check if ANY member of the team is disqualified
       const isAnyDisqualified = teamMembers.some(
         (m: any) => m.is_disqualified === true || m.role === 'disqualified'
@@ -588,9 +580,139 @@ export async function validateAndActivateToken(params: {
         };
       }
 
+      if (isMember) {
+        // User is a confirmed member of this team. If their record still has a pending token, update it!
+        if (userByEmail && userByEmail.access_token !== cleanToken) {
+          await supabaseAdmin
+            .from('users')
+            .update({
+              access_token: cleanToken,
+              team_name: teamName,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', userByEmail.id);
+        }
+        return {
+          success: true,
+          isFirstActivation: false,
+        };
+      }
+
+      // Check if this token was generated as an unclaimed placeholder team (e.g. @contest.team or demo)
+      const hasOnlyPlaceholders = teamMembers.every(
+        (m: any) => !m.email || m.email.endsWith('@contest.team') || m.email.endsWith('@example.com')
+      );
+
+      if (hasOnlyPlaceholders) {
+        // Claim this team slot for the real logged-in contestant
+        const placeholderUser = teamMembers[0];
+        if (userByEmail) {
+          // Update user's existing profile to this token and remove the dummy placeholder row
+          await supabaseAdmin
+            .from('users')
+            .update({
+              access_token: cleanToken,
+              team_name: teamName,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', userByEmail.id);
+
+          await supabaseAdmin
+            .from('users')
+            .delete()
+            .eq('id', placeholderUser.id);
+        } else {
+          await supabaseAdmin
+            .from('users')
+            .update({
+              email: cleanEmail,
+              name: cleanName,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', placeholderUser.id);
+        }
+
+        return {
+          success: true,
+          isFirstActivation: true,
+        };
+      }
+
+      return {
+        success: false,
+        isFirstActivation: false,
+        error: `Access Denied: Token ${cleanToken} is assigned exclusively to team "${teamName}". Your account (${cleanEmail}) is not a registered member of this team.`,
+      };
+    }
+
+    // C. Check if token belongs to an active contest generated in Supabase
+    const { data: contestData } = await supabaseAdmin
+      .from('contests')
+      .select('id, title, tokens')
+      .contains('tokens', [cleanToken])
+      .maybeSingle();
+
+    if (contestData) {
+      const assignedTeamName = `Team ${cleanToken.slice(0, 7)}`;
+      if (userByEmail) {
+        await supabaseAdmin
+          .from('users')
+          .update({
+            access_token: cleanToken,
+            team_name: assignedTeamName,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', userByEmail.id);
+      } else {
+        await supabaseAdmin
+          .from('users')
+          .insert({
+            email: cleanEmail,
+            name: cleanName,
+            access_token: cleanToken,
+            team_name: assignedTeamName,
+            role: 'participant',
+            total_score: 0,
+            current_stage: 1,
+            is_flagged: false,
+          });
+      }
+
       return {
         success: true,
-        isFirstActivation: false,
+        isFirstActivation: true,
+      };
+    }
+
+    // D. Auto-provision demo token in Supabase
+    if (cleanToken === 'AX-DEMO-2026' || cleanToken.startsWith('AX-DEMO') || cleanToken === 'DEMO') {
+      if (userByEmail) {
+        await supabaseAdmin
+          .from('users')
+          .update({
+            access_token: cleanToken,
+            team_name: 'Demo Team',
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', userByEmail.id);
+      } else {
+        await supabaseAdmin
+          .from('users')
+          .insert({
+            email: cleanEmail,
+            name: cleanName,
+            access_token: cleanToken,
+            team_name: 'Demo Team',
+            role: 'participant',
+            total_score: 0,
+            current_stage: 1,
+            is_flagged: false,
+          });
+      }
+
+      return {
+        success: true,
+        isFirstActivation: true,
       };
     }
   } catch (err) {

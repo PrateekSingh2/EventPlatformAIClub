@@ -29,6 +29,7 @@ import {
   EyeOff,
   Sparkles,
   ExternalLink,
+  Mail,
 } from 'lucide-react';
 
 function HomePageContent() {
@@ -52,6 +53,8 @@ function HomePageContent() {
 
   // Authentication & token states
   const [googleLoading, setGoogleLoading] = useState(false);
+  const [emailInput, setEmailInput] = useState('');
+  const [emailLoading, setEmailLoading] = useState(false);
   const [tokenInput, setTokenInput] = useState(incomingToken);
   const [geminiApiKey, setGeminiApiKey] = useState('');
   const [showApiKey, setShowApiKey] = useState(false);
@@ -139,6 +142,66 @@ function HomePageContent() {
     } catch (err: any) {
       setError(err.message || 'Google Sign-In failed.');
       setGoogleLoading(false);
+    }
+  };
+
+  // STEP 1 (Alternative): Handle Direct Registered Email Sign-In
+  const handleEmailSignIn = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanEmail = emailInput.trim().toLowerCase();
+    if (!cleanEmail || !cleanEmail.includes('@') || !cleanEmail.includes('.')) {
+      setError('Please enter a valid registered email address.');
+      return;
+    }
+
+    setEmailLoading(true);
+    setError(null);
+
+    try {
+      const res = await fetch('/api/auth/google', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: cleanEmail,
+          name: cleanEmail.split('@')[0],
+          uid: 'email-contestant-' + Math.random().toString(36).substring(2, 9),
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.authenticated) {
+        setError(data.error || 'Failed to authenticate email. Please verify your address.');
+        setEmailLoading(false);
+        return;
+      }
+
+      const assignedToken =
+        data.user?.access_token && !data.user.access_token.startsWith('PENDING')
+          ? data.user.access_token
+          : null;
+
+      const newSession: ContestantSession = {
+        email: cleanEmail,
+        name: data.user?.name || cleanEmail.split('@')[0],
+        uid: data.user?.id || 'email-user-' + cleanEmail,
+        photoURL: null,
+        assignedToken,
+        teamName: data.user?.team_name || null,
+        teamSize: data.user?.team_size || null,
+        lastLoginAt: Date.now(),
+      };
+
+      setContestantSession(newSession);
+      setCurrentUser(newSession);
+
+      if (assignedToken && !tokenInput) {
+        setTokenInput(assignedToken);
+      }
+
+      setEmailLoading(false);
+    } catch (err: any) {
+      setError(err.message || 'Email authentication failed.');
+      setEmailLoading(false);
     }
   };
 
@@ -237,6 +300,13 @@ function HomePageContent() {
         </div>
 
         <div className="flex items-center space-x-2">
+          <a
+            href="/admin"
+            className="text-[11px] font-mono px-2.5 py-1 rounded-lg border border-app-border bg-app-surface-raised hover:bg-app-hover text-app-subtext hover:text-app-text transition-colors"
+            title="Contest Organizer & Admin Login"
+          >
+            Admin Portal
+          </a>
           <div className="flex items-center space-x-1.5 px-2.5 py-1 rounded-lg bg-app-surface-raised border border-app-border text-[11px] text-app-subtext font-mono">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
             <span>Arena Online</span>
@@ -345,6 +415,51 @@ function HomePageContent() {
                   </>
                 )}
               </button>
+
+              {/* Alternative Divider */}
+              <div className="relative my-2.5 flex items-center justify-center">
+                <div className="border-t border-app-border w-full"></div>
+                <span className="bg-app-surface px-2.5 text-[10px] uppercase font-mono tracking-wider text-app-subtext shrink-0">
+                  or sign in with registered email
+                </span>
+              </div>
+
+              {/* Direct Registered Email Input Form */}
+              <form onSubmit={handleEmailSignIn} className="space-y-2">
+                <div className="relative">
+                  <div className="absolute left-3 top-1/2 -translate-y-1/2 text-app-subtext pointer-events-none">
+                    <Mail className="w-4 h-4" />
+                  </div>
+                  <input
+                    type="email"
+                    value={emailInput}
+                    onChange={(e) => {
+                      setEmailInput(e.target.value);
+                      setError(null);
+                    }}
+                    placeholder="e.g. contestant@team.org"
+                    disabled={emailLoading || googleLoading}
+                    className="w-full pl-9 pr-3 py-2 text-xs text-app-text bg-app-bg border border-app-border rounded-xl focus:outline-none focus:border-zinc-400 font-mono transition-colors min-h-[42px] placeholder:text-app-subtext/40 placeholder:font-sans"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={emailLoading || googleLoading || !emailInput.trim()}
+                  className="w-full py-2.5 px-4 rounded-xl bg-app-surface-raised hover:bg-app-hover border border-app-border text-app-text font-semibold text-xs transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center space-x-1.5 min-h-[40px]"
+                >
+                  {emailLoading ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" />
+                      <span>Verifying email...</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>Continue with Email</span>
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </>
+                  )}
+                </button>
+              </form>
 
               <div className="p-2.5 rounded-lg bg-app-surface-raised border border-app-border text-[11px] text-app-subtext flex items-center space-x-2">
                 <ShieldCheck className="w-3.5 h-3.5 text-app-subtext shrink-0" />
