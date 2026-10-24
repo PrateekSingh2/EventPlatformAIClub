@@ -61,6 +61,46 @@ export function GeminiSparkleIcon({ className = 'w-4 h-4' }: { className?: strin
   );
 }
 
+function CodeBlock({ language, children }: { language?: string; children: React.ReactNode }) {
+  const [copied, setCopied] = useState(false);
+  const codeString = String(children).replace(/\n$/, '');
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(codeString);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <div className="my-2.5 rounded-xl border border-app-border bg-slate-950 overflow-hidden text-left shadow-sm">
+      <div className="flex items-center justify-between px-3 py-1.5 bg-slate-900 border-b border-app-border text-[11px] font-mono text-slate-400">
+        <span className="uppercase text-[10px] font-bold text-indigo-400">{language || 'code'}</span>
+        <button
+          type="button"
+          onClick={handleCopy}
+          className="flex items-center gap-1 text-[11px] text-slate-400 hover:text-white transition-colors cursor-pointer px-2 py-0.5 rounded hover:bg-slate-800"
+          title="Copy code snippet"
+        >
+          {copied ? (
+            <>
+              <Check className="w-3 h-3 text-emerald-400" />
+              <span className="text-emerald-400 font-sans">Copied!</span>
+            </>
+          ) : (
+            <>
+              <Copy className="w-3 h-3" />
+              <span>Copy</span>
+            </>
+          )}
+        </button>
+      </div>
+      <pre className="p-3 text-[12px] font-mono overflow-x-auto text-slate-200 leading-relaxed">
+        <code>{children}</code>
+      </pre>
+    </div>
+  );
+}
+
 export function GeminiTutorDrawer({
   isOpen,
   onClose,
@@ -164,12 +204,15 @@ export function GeminiTutorDrawer({
 
     const systemPrompt =
       systemInstruction ||
-      `You are the official Gemini AI Tutor for the Pixel & Anomaly CTF contest (Stage ${stageNumber}).
-Your role is to guide contestants through the challenge directives in their AI_TUTOR_PROMPT file.
-- Explain algorithms, cryptographic principles, Python analysis scripts, and math steps clearly.
-- Format all math equations using LaTeX syntax with $inline$ and $$block$$ notation.
-- Format all code with clear Markdown fences (\`\`\`python ... \`\`\`).
-- Guide contestants conceptually to understand the problem so they can extract the solution password flag themselves.`;
+      `You are the official Gemini AI Assistant & Tutor for Stage ${stageNumber} of the tournament.
+Your mission is to help contestants solve their challenge directives quickly and effectively.
+
+CORE DIRECTIVES:
+1. DIRECT & PRACTICAL: Give concise, actionable advice. Focus on the core logic, methodology, and Python code implementation.
+2. NO UNNECESSARY MATH: Do NOT provide unsolicited mathematical derivations, complex theorems, formal proofs, or verbose LaTeX formulas unless the user explicitly requests mathematical formulas. Keep explanations simple, intuitive, and plain-English.
+3. STRUCTURED FORMATTING: Use clean Markdown with short sections, clear bullet points, bold key terms, and numbered steps for readability.
+4. SYNTAX-HIGHLIGHTED CODE: Always wrap code inside standard markdown fences (\`\`\`python ... \`\`\`) with brief, helpful inline comments.
+5. GUIDED SOLVING: Guide contestants methodologically on how to implement the solution and extract the stage key themselves without just giving away secrets without understanding.`;
 
     // Order models: prioritize cached working model, then fallback candidates
     const modelsToTry = activeModelRef.current
@@ -354,11 +397,11 @@ Your role is to guide contestants through the challenge directives in their AI_T
       fileContent = `${fileContent.slice(0, 5000)}\n\n[... Truncated ${fileContent.length - 8000} chars for token optimization ...]\n\n${fileContent.slice(-3000)}`;
     }
 
-    const initialQuery = `Please analyze the directives and structure in "${promptFile.name}":\n\n\`\`\`text\n${fileContent}\n\`\`\`\n\nProvide an analysis with mathematical formulas (LaTeX), breakdown of required steps, and guidance to extract the target stage key.`;
+    const initialQuery = `Please analyze the directives and structure in "${promptFile.name}":\n\n\`\`\`text\n${fileContent}\n\`\`\`\n\nProvide a clear, practical breakdown of the task, logic, and actionable steps to solve this stage. Keep explanations direct and avoid unnecessary math derivations.`;
 
     executeGeminiCall(
       initialQuery,
-      `You are the official Gemini AI Tutor for Stage ${stageNumber}. The contestant just sent the ${promptFile.name} directive file. Break down the scenario, explain the math and logic using LaTeX and Markdown, and provide actionable tips.`
+      `You are the official Gemini AI Assistant for Stage ${stageNumber}. The contestant sent the ${promptFile.name} directive file. Provide a concise, clear breakdown of what needs to be accomplished, key logic/code pointers, and actionable guidance without unnecessary math theory.`
     );
   };
 
@@ -528,7 +571,7 @@ Your role is to guide contestants through the challenge directives in their AI_T
                   Consult the Gemini AI Tutor
                 </h4>
                 <p className="text-xs text-app-subtext leading-relaxed">
-                  Send your active stage prompt directive to Gemini for automated conceptual breakdown, LaTeX formulas, and solving hints.
+                  Send your active stage prompt directive to Gemini for a structured breakdown, logic analysis, and step-by-step solving guidance.
                 </p>
               </div>
 
@@ -609,10 +652,83 @@ Your role is to guide contestants through the challenge directives in their AI_T
                     }`}
                   >
                     {msg.sender === 'gemini' ? (
-                      <div className="prose prose-invert prose-headings:text-app-text prose-p:text-app-text prose-code:text-indigo-400 prose-code:bg-app-bg prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-[12px] prose-pre:bg-app-bg prose-pre:border prose-pre:border-app-border prose-pre:rounded-xl prose-pre:p-3 max-w-none">
+                      <div className="prose prose-invert prose-headings:text-app-text prose-p:text-app-text max-w-none text-xs sm:text-[13px] leading-relaxed">
                         <ReactMarkdown
                           remarkPlugins={[remarkGfm, remarkMath]}
                           rehypePlugins={[rehypeKatex]}
+                          components={{
+                            code({ node, inline, className, children, ...props }: any) {
+                              const match = /language-(\w+)/.exec(className || '');
+                              if (!inline && (match || String(children).includes('\n'))) {
+                                return (
+                                  <CodeBlock language={match ? match[1] : undefined}>
+                                    {children}
+                                  </CodeBlock>
+                                );
+                              }
+                              return (
+                                <code
+                                  className="px-1.5 py-0.5 rounded-md bg-indigo-500/10 text-indigo-300 font-mono text-[11px] border border-indigo-500/20"
+                                  {...props}
+                                >
+                                  {children}
+                                </code>
+                              );
+                            },
+                            table({ children }) {
+                              return (
+                                <div className="my-2.5 overflow-x-auto rounded-xl border border-app-border">
+                                  <table className="min-w-full divide-y divide-app-border text-left text-xs">
+                                    {children}
+                                  </table>
+                                </div>
+                              );
+                            },
+                            thead({ children }) {
+                              return <thead className="bg-app-bg text-[11px] font-mono text-app-subtext uppercase">{children}</thead>;
+                            },
+                            th({ children }) {
+                              return <th className="px-3 py-2 font-semibold text-app-text">{children}</th>;
+                            },
+                            td({ children }) {
+                              return <td className="px-3 py-2 border-t border-app-border text-[12px] text-app-text">{children}</td>;
+                            },
+                            h1({ children }) {
+                              return <h1 className="text-sm font-bold text-app-text mt-3 mb-1.5 border-b border-app-border pb-1">{children}</h1>;
+                            },
+                            h2({ children }) {
+                              return <h2 className="text-xs font-bold text-indigo-400 uppercase tracking-wide mt-2.5 mb-1">{children}</h2>;
+                            },
+                            h3({ children }) {
+                              return <h3 className="text-xs font-semibold text-app-text mt-2 mb-1">{children}</h3>;
+                            },
+                            p({ children }) {
+                              return <p className="mb-2 leading-relaxed text-app-text last:mb-0">{children}</p>;
+                            },
+                            ul({ children }) {
+                              return <ul className="list-disc pl-5 my-2 space-y-1 text-app-text">{children}</ul>;
+                            },
+                            ol({ children }) {
+                              return <ol className="list-decimal pl-5 my-2 space-y-1 text-app-text">{children}</ol>;
+                            },
+                            li({ children }) {
+                              return <li className="leading-relaxed">{children}</li>;
+                            },
+                            blockquote({ children }) {
+                              return (
+                                <blockquote className="my-2 border-l-2 border-indigo-500/50 bg-indigo-500/5 px-3 py-1.5 rounded-r-lg text-app-subtext italic">
+                                  {children}
+                                </blockquote>
+                              );
+                            },
+                            a({ href, children }) {
+                              return (
+                                <a href={href} target="_blank" rel="noopener noreferrer" className="text-indigo-400 hover:text-indigo-300 underline font-medium">
+                                  {children}
+                                </a>
+                              );
+                            },
+                          }}
                         >
                           {msg.text}
                         </ReactMarkdown>
@@ -640,7 +756,7 @@ Your role is to guide contestants through the challenge directives in their AI_T
               {loading && (
                 <div className="flex items-center space-x-2 p-3 rounded-2xl bg-app-surface-raised border border-app-border text-xs text-app-subtext animate-pulse">
                   <GeminiSparkleIcon className="w-4 h-4 animate-spin" />
-                  <span>Gemini is generating solution guidance with LaTeX & Markdown...</span>
+                  <span>Gemini is generating step-by-step solution guidance...</span>
                 </div>
               )}
 
