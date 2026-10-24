@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getSupabaseAdmin } from '@/lib/supabase';
+import { sortLeaderboardUsers } from '@/lib/leaderboard-sort';
 
 export const dynamic = 'force-dynamic';
 
@@ -9,20 +10,20 @@ export async function GET() {
 
     const { data: users, error } = await supabaseAdmin
       .from('users')
-      .select('id, name, email, role, access_token, total_score, current_stage, is_flagged, is_disqualified, created_at, updated_at')
+      .select('id, name, email, role, access_token, team_name, team_size, total_score, current_stage, is_flagged, is_disqualified, is_completed, created_at, updated_at, contest_started_at, stage_timestamps, stage_durations, total_time_seconds, last_stage_completed_at')
       .eq('role', 'participant')
-      .order('total_score', { ascending: false })
-      .order('updated_at', { ascending: true })
-      .limit(500);
+      .limit(1000);
 
     if (error) {
       console.warn('[GET /api/leaderboard error]:', error.message);
       return NextResponse.json({ success: false, users: [] }, { status: 500 });
     }
 
+    const sortedUsers = sortLeaderboardUsers(users || []);
+
     return NextResponse.json({
       success: true,
-      users: users || [],
+      users: sortedUsers,
     });
   } catch (err: any) {
     console.error('[API GET /api/leaderboard exception]:', err);

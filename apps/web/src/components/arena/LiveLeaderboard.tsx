@@ -1,9 +1,15 @@
 'use client';
 
-import React, { useEffect, useState, useTransition, useCallback } from 'react';
+import React, { useEffect, useState, useTransition, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 import { User, ContestStatus } from '@/lib/types';
+import {
+  sortLeaderboardUsers,
+  formatDuration,
+  getUserTotalTime,
+  getTieBreakReason,
+} from '@/lib/leaderboard-sort';
 import {
   Trophy,
   X,
@@ -12,6 +18,11 @@ import {
   RotateCw,
   Pause,
   CheckCircle2,
+  Clock,
+  Zap,
+  Info,
+  ChevronRight,
+  Sparkles,
 } from 'lucide-react';
 
 interface LiveLeaderboardProps {
@@ -19,6 +30,7 @@ interface LiveLeaderboardProps {
   onClose: () => void;
   currentUserId?: string;
   currentUserToken?: string;
+  currentUser?: User;
   contestStatus?: ContestStatus;
 }
 
@@ -27,32 +39,34 @@ export function LiveLeaderboard({
   onClose,
   currentUserId,
   currentUserToken,
+  currentUser: propCurrentUser,
   contestStatus = 'LIVE',
 }: LiveLeaderboardProps) {
   const [users, setUsers] = useState<User[]>([]);
   const [search, setSearch] = useState('');
   const [activeTab, setActiveTab] = useState<'all' | 'top5' | 'my-stage'>('all');
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [showRulesInfo, setShowRulesInfo] = useState(false);
+  const [expandedUser, setExpandedUser] = useState<string | null>(null);
   const [, startTransition] = useTransition();
 
   const isFrozen = contestStatus === 'FROZEN';
   const isConcluded = contestStatus === 'CONCLUDED';
 
-  // Combined fetch of leaderboard across all teams and participants
+  // Combined fetch of leaderboard applying deterministic multi-tier tie-breaking
   const fetchLeaderboard = useCallback(async () => {
     try {
-      // 1. Direct real-time fetch from Supabase users table
+      // 1. Direct real-time fetch from Supabase users table with all telemetry columns
       if (isSupabaseConfigured) {
         const { data, error } = await supabase
           .from('users')
-          .select('id, name, email, role, access_token, team_name, team_size, total_score, current_stage, is_flagged, created_at, updated_at')
+          .select('id, name, email, role, access_token, team_name, team_size, total_score, current_stage, is_flagged, is_disqualified, is_completed, created_at, updated_at, contest_started_at, stage_timestamps, stage_durations, total_time_seconds, last_stage_completed_at')
           .eq('role', 'participant')
-          .order('total_score', { ascending: false })
-          .order('updated_at', { ascending: true })
           .limit(500);
 
         if (!error && Array.isArray(data)) {
-          setUsers(data as User[]);
+          const sorted = sortLeaderboardUsers(data as User[]);
+          setUsers(sorted);
           return;
         }
       }
@@ -62,7 +76,8 @@ export function LiveLeaderboard({
       if (res.ok) {
         const json = await res.json();
         if (json.success && Array.isArray(json.users)) {
-          setUsers(json.users as User[]);
+          const sorted = sortLeaderboardUsers(json.users as User[]);
+          setUsers(sorted);
           return;
         }
       }
@@ -70,7 +85,6 @@ export function LiveLeaderboard({
       console.warn('[LiveLeaderboard]: Failed to fetch unified leaderboard', err);
     }
 
-    // Do NOT show mock sample participants. Reflect true database state.
     setUsers([]);
   }, []);
 
@@ -119,32 +133,51 @@ export function LiveLeaderboard({
     setTimeout(() => setIsRefreshing(false), 500);
   };
 
-  if (!isOpen) return null;
+  const currentLoggedInUser = useMemo(() => {
+    return (
+      propCurrentUser ||
+      users.find(
+        (u) =>
+          (currentUserId && u.id === currentUserId) ||
+          (currentUserToken && u.access_token === currentUserToken)
+      )
+    );
+  }, [propCurrentUser, users, currentUserId, currentUserToken]);
 
-  const currentUser = users.find(
-    (u) =>
-      (currentUserId && u.id === currentUserId) ||
-      (currentUserToken && u.access_token === currentUserToken)
-  );
-  const currentUserStage = currentUser?.current_stage || 1;
+  const currentUserRank = useMemo(() => {
+    if (!currentLoggedInUser) return null;
+    const index = users.findIndex(
+      (u) =>
+        u.id === currentLoggedInUser.id ||
+        (u.access_token && u.access_token === currentLoggedInUser.access_token)
+    );
+    return index !== -1 ? index + 1 : null;
+  }, [users, currentLoggedInUser]);
+
+  const currentUserStage = currentLoggedInUser?.current_stage || 1;
 
   // Filter based on active tab and search query
-  const filteredUsers = users
-    .filter((u) => {
-      if (activeTab === 'top5') return true;
-      if (activeTab === 'my-stage') return u.current_stage === currentUserStage;
-      return true;
-    })
-    .filter((u) => {
-      if (!search.trim()) return true;
-      const q = search.toLowerCase();
-      return (
-        u.name.toLowerCase().includes(q) ||
-        (u.email && u.email.toLowerCase().includes(q)) ||
-        (u.access_token && u.access_token.toLowerCase().includes(q))
-      );
-    })
-    .slice(0, activeTab === 'top5' ? 5 : undefined);
+  const filteredUsers = useMemo(() => {
+    return users
+      .filter((u) => {
+        if (activeTab === 'top5') return true;
+        if (activeTab === 'my-stage') return u.current_stage === currentUserStage;
+        return true;
+      })
+      .filter((u) => {
+        if (!search.trim()) return true;
+        const q = search.toLowerCase();
+        return (
+          u.name.toLowerCase().includes(q) ||
+          (u.email && u.email.toLowerCase().includes(q)) ||
+          (u.access_token && u.access_token.toLowerCase().includes(q)) ||
+          (u.team_name && u.team_name.toLowerCase().includes(q))
+        );
+      })
+      .slice(0, activeTab === 'top5' ? 5 : undefined);
+  }, [users, activeTab, currentUserStage, search]);
+
+  if (!isOpen) return null;
 
   return (
     <div
@@ -154,7 +187,7 @@ export function LiveLeaderboard({
       <div className="absolute inset-y-0 right-0 max-w-full flex pl-4 sm:pl-10">
         <aside
           onClick={(e) => e.stopPropagation()}
-          className="w-screen max-w-sm sm:w-96 border-l border-app-border bg-app-surface flex flex-col shadow-2xl select-none h-full"
+          className="w-screen max-w-md sm:w-[440px] border-l border-app-border bg-app-surface flex flex-col shadow-2xl select-none h-full"
         >
           {/* Header */}
           <div className="p-3.5 border-b border-app-border space-y-2">
@@ -164,8 +197,15 @@ export function LiveLeaderboard({
                   <Trophy className="w-4 h-4" />
                 </div>
                 <div>
-                  <h3 className="font-semibold text-xs text-app-text tracking-tight">
+                  <h3 className="font-semibold text-xs text-app-text tracking-tight flex items-center gap-1.5">
                     {isConcluded ? 'Final Standings' : isFrozen ? 'Leaderboard (Frozen)' : 'Live Leaderboard'}
+                    <button
+                      onClick={() => setShowRulesInfo(!showRulesInfo)}
+                      className="text-app-subtext hover:text-app-accent transition-colors p-0.5"
+                      title="Tie-breaking rules"
+                    >
+                      <Info className="w-3.5 h-3.5" />
+                    </button>
                   </h3>
                   <div className="flex items-center gap-1.5 text-[9px] font-mono">
                     {isFrozen ? (
@@ -176,12 +216,12 @@ export function LiveLeaderboard({
                     ) : isConcluded ? (
                       <span className="flex items-center gap-1 text-purple-400 font-bold">
                         <CheckCircle2 className="w-2.5 h-2.5" />
-                        OFFICIAL
+                        OFFICIAL STANDINGS
                       </span>
                     ) : (
                       <span className="flex items-center gap-1 text-emerald-400">
                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping inline-block" />
-                        COMBINED TOURNAMENT SYNC
+                        LIVE REALTIME TIE-BREAK SYNC
                       </span>
                     )}
                   </div>
@@ -208,20 +248,68 @@ export function LiveLeaderboard({
               </div>
             </div>
 
+            {/* Tie-Breaking Rules Information Card */}
+            {showRulesInfo && (
+              <div className="p-2.5 rounded-xl bg-app-surface-raised border border-app-accent/30 text-app-subtext text-[11px] font-mono space-y-1 animate-in fade-in zoom-in-95 duration-150">
+                <div className="font-bold text-app-text flex items-center gap-1 text-[11px]">
+                  <Zap className="w-3 h-3 text-amber-400" />
+                  Official Tie-Breaking Order:
+                </div>
+                <div className="text-[10px] space-y-0.5 text-app-subtext/90">
+                  <p>1. <span className="text-emerald-400 font-semibold">Total Points</span> (Highest score first)</p>
+                  <p>2. <span className="text-cyan-400 font-semibold">Total Completion Time</span> (Lowest time taken to reach stage)</p>
+                  <p>3. <span className="text-amber-400 font-semibold">Stage-by-Stage Duration</span> (Faster Stage 1 duration wins; then Stage 2...)</p>
+                </div>
+              </div>
+            )}
+
             {isFrozen && (
               <div className="p-2 rounded-xl bg-amber-950/60 border border-amber-500/40 text-amber-200 text-[11px] font-mono flex items-center gap-2">
-                <Pause className="w-3.5 h-3.5 fill-amber-400 flex-shrink-0" />
+                <Pause className="w-3.5 h-3.5 fill-amber-400 shrink-0" />
                 <span>Leaderboard is frozen. Submissions are paused and rankings are locked.</span>
               </div>
             )}
 
             {isConcluded && (
               <div className="p-2 rounded-xl bg-purple-950/60 border border-purple-500/40 text-purple-200 text-[11px] font-mono flex items-center gap-2">
-                <CheckCircle2 className="w-3.5 h-3.5 text-purple-400 flex-shrink-0" />
+                <CheckCircle2 className="w-3.5 h-3.5 text-purple-400 shrink-0" />
                 <span>Tournament concluded. Final official standings are locked in read-only form.</span>
               </div>
             )}
           </div>
+
+          {/* Sticky Personal Standing Banner */}
+          {currentLoggedInUser && (
+            <div className="p-2.5 bg-app-accent/10 border-b border-app-accent/25 flex items-center justify-between text-xs">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="w-7 h-7 rounded-lg bg-app-accent text-app-bg font-black flex items-center justify-center text-xs shadow-xs shrink-0 font-mono">
+                  {currentUserRank ? `#${currentUserRank}` : '--'}
+                </div>
+                <div className="truncate min-w-0">
+                  <div className="font-semibold text-app-text truncate flex items-center gap-1.5">
+                    <span className="truncate">{currentLoggedInUser.name}</span>
+                    <span className="text-[9px] px-1.5 py-0.2 rounded bg-app-accent text-app-bg font-mono font-bold">
+                      YOU
+                    </span>
+                  </div>
+                  <div className="text-[10px] text-app-subtext truncate font-mono flex items-center gap-2">
+                    <span>Stage {currentLoggedInUser.current_stage || 1}</span>
+                    <span>&bull;</span>
+                    <span className="text-cyan-400 flex items-center gap-1">
+                      <Clock className="w-2.5 h-2.5" />
+                      {formatDuration(getUserTotalTime(currentLoggedInUser))}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="text-right shrink-0">
+                <div className="font-bold text-app-text font-mono text-sm text-emerald-400">
+                  {currentLoggedInUser.total_score || 0} <span className="text-[10px] text-app-subtext">PTS</span>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Interactive Filter Tabs with Animated Layout Pill */}
           <div className="p-2.5 border-b border-app-border">
@@ -261,7 +349,7 @@ export function LiveLeaderboard({
                 type="text"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search contestant or team..."
+                placeholder="Search contestant, team, or token..."
                 className="w-full px-2.5 py-1.5 pl-8 text-xs text-app-text bg-app-bg border border-app-border rounded-xl shadow-inner focus:outline-none focus:border-app-accent transition-colors placeholder:text-app-subtext/50 font-sans"
               />
               <Search className="w-3.5 h-3.5 text-app-subtext/70 absolute left-2.5 top-2.5" />
@@ -286,9 +374,19 @@ export function LiveLeaderboard({
                     (currentUserId && user.id === currentUserId) ||
                     (currentUserToken && user.access_token === currentUserToken);
 
+                  const userTotalTime = getUserTotalTime(user);
+                  const isExpanded = expandedUser === (user.id || user.access_token);
+
+                  // Detect if tied in score with user directly above
+                  const higherUser = idx > 0 ? filteredUsers[idx - 1] : null;
+                  const tieReasonWithAbove =
+                    higherUser && (higherUser.total_score || 0) === (user.total_score || 0)
+                      ? getTieBreakReason(higherUser, user)
+                      : null;
+
                   return (
                     <motion.div
-                      key={user.id || user.access_token}
+                      key={user.id || user.access_token || idx}
                       layout
                       initial={{ opacity: 0, y: 8, scale: 0.98 }}
                       animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -297,7 +395,8 @@ export function LiveLeaderboard({
                         layout: { type: 'spring', damping: 25, stiffness: 300 },
                         opacity: { duration: 0.2 },
                       }}
-                      className={`p-2.5 rounded-xl border flex items-center justify-between transition-all backdrop-blur-sm ${
+                      onClick={() => setExpandedUser(isExpanded ? null : (user.id || user.access_token))}
+                      className={`p-2.5 rounded-xl border flex flex-col transition-all cursor-pointer backdrop-blur-sm ${
                         isCurrentUser
                           ? 'border-app-accentBorder/80 bg-app-accentBg/70 shadow-[0_4px_12px_rgba(0,0,0,0.25),_inset_0_1px_0_rgba(255,255,255,0.12)] ring-1 ring-app-accent/40'
                           : rank === 1
@@ -309,48 +408,83 @@ export function LiveLeaderboard({
                           : 'border-white/[0.06] bg-app-bg/50 hover:bg-app-hover/50 shadow-[0_2px_6px_rgba(0,0,0,0.2),_inset_0_1px_0_rgba(255,255,255,0.04)]'
                       }`}
                     >
-                      <div className="flex items-center space-x-2.5 truncate min-w-0">
-                        {/* Rank Badge */}
-                        <div
-                          className={`w-5 h-5 rounded-md font-bold text-[10px] flex items-center justify-center shrink-0 shadow-xs ${
-                            rank === 1
-                              ? 'bg-amber-400 text-slate-950 font-black shadow-[0_2px_6px_rgba(251,191,36,0.4)]'
-                              : rank === 2
-                              ? 'bg-slate-300 text-slate-950 font-black shadow-[0_2px_6px_rgba(203,213,225,0.3)]'
-                              : rank === 3
-                              ? 'bg-amber-600 text-white font-black shadow-[0_2px_6px_rgba(217,119,6,0.3)]'
-                              : isCurrentUser
-                              ? 'bg-app-accent text-app-bg font-bold'
-                              : 'bg-app-muted text-app-subtext border border-white/10'
-                          }`}
-                        >
-                          {rank}
-                        </div>
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center space-x-2.5 truncate min-w-0">
+                          {/* Rank Badge */}
+                          <div
+                            className={`w-6 h-6 rounded-lg font-bold text-[10px] flex items-center justify-center shrink-0 shadow-xs ${
+                              rank === 1
+                                ? 'bg-amber-400 text-slate-950 font-black shadow-[0_2px_6px_rgba(251,191,36,0.4)]'
+                                : rank === 2
+                                ? 'bg-slate-300 text-slate-950 font-black shadow-[0_2px_6px_rgba(203,213,225,0.3)]'
+                                : rank === 3
+                                ? 'bg-amber-600 text-white font-black shadow-[0_2px_6px_rgba(217,119,6,0.3)]'
+                                : isCurrentUser
+                                ? 'bg-app-accent text-app-bg font-bold'
+                                : 'bg-app-muted text-app-subtext border border-white/10'
+                            }`}
+                          >
+                            {rank}
+                          </div>
 
-                        {/* Contestant Info */}
-                        <div className="truncate min-w-0">
-                          <div className="font-semibold text-app-text text-xs truncate flex items-center gap-1.5">
-                            <span className="truncate">{user.name}</span>
-                            {rank === 1 && <Flame className="w-3 h-3 text-amber-400 shrink-0 inline" />}
-                            {isCurrentUser && (
-                              <span className="text-[9px] px-1.5 py-0.2 rounded bg-app-accent/20 text-app-accent font-mono font-bold shrink-0">
-                                YOU
+                          {/* Contestant Info */}
+                          <div className="truncate min-w-0">
+                            <div className="font-semibold text-app-text text-xs truncate flex items-center gap-1.5">
+                              <span className="truncate">{user.name}</span>
+                              {rank === 1 && <Flame className="w-3.5 h-3.5 text-amber-400 shrink-0 inline" />}
+                              {isCurrentUser && (
+                                <span className="text-[9px] px-1.5 py-0.2 rounded bg-app-accent/20 text-app-accent font-mono font-bold shrink-0">
+                                  YOU
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-[10px] text-app-subtext truncate font-mono flex items-center gap-1.5">
+                              <span>Stage {user.current_stage || 1}</span>
+                              <span>&bull;</span>
+                              <span className="truncate max-w-[140px]">
+                                {user.team_name ? `Team: ${user.team_name}` : (user.access_token || 'Active')}
                               </span>
-                            )}
+                            </div>
                           </div>
-                          <div className="text-[10px] text-app-subtext truncate font-mono">
-                            Stage {user.current_stage || 1} &bull; {user.team_name ? `Team: ${user.team_name}` : (user.access_token || user.email?.split('@')[0] || 'active')}
+                        </div>
+
+                        {/* Metrics: Total Score & Total Elapsed Time */}
+                        <div className="text-right shrink-0 pl-2">
+                          <div className="text-xs font-bold text-app-text font-mono flex items-center justify-end gap-1">
+                            <span>{user.total_score || 0}</span>
+                            <span className="text-[10px] text-app-subtext">PTS</span>
+                          </div>
+                          <div className="text-[10px] text-emerald-400 font-mono flex items-center justify-end gap-1 mt-0.5" title="Total time to reach completed stage">
+                            <Clock className="w-2.5 h-2.5" />
+                            <span>{formatDuration(userTotalTime)}</span>
                           </div>
                         </div>
                       </div>
 
-                      {/* Points Display */}
-                      <div className="text-right shrink-0 pl-2">
-                        <span className="text-xs font-bold text-app-text font-mono">
-                          {user.total_score || 0}
-                        </span>
-                        <span className="text-[10px] text-app-subtext ml-0.5">PTS</span>
-                      </div>
+                      {/* Tie-breaker reason pill if score is tied with contestant above */}
+                      {tieReasonWithAbove && (
+                        <div className="mt-1.5 pt-1.5 border-t border-white/5 flex items-center gap-1 text-[9px] font-mono text-amber-400/90">
+                          <Zap className="w-2.5 h-2.5 shrink-0 text-amber-400" />
+                          <span className="truncate">Behind #{rank - 1}: {tieReasonWithAbove}</span>
+                        </div>
+                      )}
+
+                      {/* Stage-wise Breakdown (expandable or default if user has stages) */}
+                      {user.stage_durations && Object.keys(user.stage_durations).length > 0 && (
+                        <div className="mt-2 pt-1.5 border-t border-white/5 flex flex-wrap items-center gap-1.5">
+                          {Object.entries(user.stage_durations)
+                            .sort(([a], [b]) => Number(a) - Number(b))
+                            .map(([stg, dur]) => (
+                              <span
+                                key={stg}
+                                className="px-1.5 py-0.5 rounded-md bg-white/5 border border-white/10 text-[9px] font-mono text-app-subtext"
+                                title={`Stage ${stg} completed in ${formatDuration(dur)}`}
+                              >
+                                S{stg}: <span className="text-app-text font-semibold">{formatDuration(dur)}</span>
+                              </span>
+                            ))}
+                        </div>
+                      )}
                     </motion.div>
                   );
                 })}

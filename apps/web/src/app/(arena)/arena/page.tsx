@@ -909,6 +909,7 @@ function ArenaContent() {
           teamName={user?.team_name}
           teamSize={user?.team_size}
           totalScore={user?.total_score || 0}
+          contestStartedAt={user?.contest_started_at}
           isLastStage={isLastStage}
           onOpenCompleteModal={() => setIsCompleteModalOpen(true)}
           contestStatus={status}
@@ -986,6 +987,7 @@ function ArenaContent() {
           onClose={() => setIsLeaderboardOpen(false)}
           currentUserId={user?.id}
           currentUserToken={token}
+          currentUser={user || undefined}
           contestStatus={status}
         />
 

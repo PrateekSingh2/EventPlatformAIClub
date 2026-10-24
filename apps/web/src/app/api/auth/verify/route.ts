@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyAdminSecret, verifyParticipantToken } from '@/lib/auth';
 import { validateAndActivateToken } from '@/lib/contest';
+import { getSupabaseAdmin } from '@/lib/supabase';
 
 export const dynamic = 'force-dynamic';
 
@@ -86,6 +87,24 @@ export async function POST(req: NextRequest) {
           );
         }
 
+        const contestStartedAt =
+          (user as any).contest_started_at ||
+          user.created_at ||
+          new Date().toISOString();
+
+        // If user didn't have contest_started_at recorded yet, save it to Supabase
+        if (!(user as any).contest_started_at && user.id) {
+          try {
+            const supabaseAdmin = getSupabaseAdmin();
+            await supabaseAdmin
+              .from('users')
+              .update({ contest_started_at: contestStartedAt })
+              .eq('id', user.id);
+          } catch (e) {
+            console.warn('[auth/verify]: Could not persist contest_started_at', e);
+          }
+        }
+
         return NextResponse.json({
           authenticated: true,
           role: user.role,
@@ -102,6 +121,11 @@ export async function POST(req: NextRequest) {
             is_flagged: user.is_flagged,
             is_completed: Boolean((user as any).is_completed),
             completed_at: (user as any).completed_at || null,
+            contest_started_at: contestStartedAt,
+            stage_timestamps: (user as any).stage_timestamps || {},
+            stage_durations: (user as any).stage_durations || {},
+            total_time_seconds: (user as any).total_time_seconds || 0,
+            last_stage_completed_at: (user as any).last_stage_completed_at || null,
           },
         });
       }

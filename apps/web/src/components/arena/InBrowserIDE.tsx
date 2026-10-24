@@ -89,6 +89,7 @@ interface InBrowserIDEProps {
   teamName?: string | null;
   teamSize?: string | null;
   totalScore: number;
+  contestStartedAt?: string | null;
   contestStatus?: ContestStatus;
   onSelectStage: (stageNum: number) => void;
   onSelectFile: (file: ParsedFile | null) => void;
@@ -123,6 +124,7 @@ export function InBrowserIDE({
   teamName,
   teamSize,
   totalScore,
+  contestStartedAt,
   contestStatus = 'LIVE',
   onSelectStage,
   onSelectFile,
@@ -138,6 +140,43 @@ export function InBrowserIDE({
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [sidebarVisible, setSidebarVisible] = useState(true);
+
+  // Live Contest Stopwatch / Timer
+  const [elapsedSeconds, setElapsedSeconds] = useState<number>(0);
+  const contestStartTimeRef = useRef<number>(
+    contestStartedAt ? new Date(contestStartedAt).getTime() : Date.now()
+  );
+
+  useEffect(() => {
+    if (contestStartedAt) {
+      const parsed = new Date(contestStartedAt).getTime();
+      if (!isNaN(parsed)) {
+        contestStartTimeRef.current = parsed;
+      }
+    }
+  }, [contestStartedAt]);
+
+  useEffect(() => {
+    const update = () => {
+      const now = Date.now();
+      const diff = Math.max(0, Math.floor((now - contestStartTimeRef.current) / 1000));
+      setElapsedSeconds(diff);
+    };
+    update();
+    const interval = setInterval(update, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const formatTimer = (totalSec: number) => {
+    const hours = Math.floor(totalSec / 3600);
+    const minutes = Math.floor((totalSec % 3600) / 60);
+    const seconds = totalSec % 60;
+    const pad = (n: number) => n.toString().padStart(2, '0');
+    if (hours > 0) {
+      return `${pad(hours)}:${pad(minutes)}:${pad(seconds)}`;
+    }
+    return `${pad(minutes)}:${pad(seconds)}`;
+  };
 
   // Navbar Dropdown States
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
@@ -1013,6 +1052,23 @@ export function InBrowserIDE({
               Contest Sandbox
             </span>
           </div>
+
+          {/* Live Contest Timer / Stopwatch (starts from zero when contest starts) */}
+          <div
+            className="flex items-center gap-1.5 px-2 sm:px-2.5 py-1 rounded-xl bg-app-surface-raised border border-emerald-500/30 text-emerald-400 text-xs font-mono shadow-[0_0_12px_rgba(16,185,129,0.12)] shrink-0 select-none ml-1 sm:ml-2"
+            title={`Contest Live Timer: ${formatTimer(elapsedSeconds)}`}
+          >
+            <span className="relative flex h-2 w-2 shrink-0">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
+            </span>
+            <span className="text-[10px] text-emerald-400/80 font-bold tracking-wider uppercase hidden sm:inline">
+              TIMER
+            </span>
+            <span className="tabular-nums font-bold tracking-wider text-xs sm:text-sm text-emerald-400">
+              {formatTimer(elapsedSeconds)}
+            </span>
+          </div>
           {isFrozen && (
             <span className="flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded bg-amber-500/20 border border-amber-500/40 text-amber-300 font-bold ml-2">
               <Pause className="w-3 h-3 fill-amber-400" />
@@ -1203,9 +1259,14 @@ export function InBrowserIDE({
                     <span className="px-2 py-0.5 rounded-md bg-app-muted border border-app-border text-[10px] font-mono uppercase">
                       {teamSize ? `Team (${teamSize})` : 'Participant'}
                     </span>
-                    <span className="font-bold text-app-accent font-mono">
-                      {totalScore} PTS
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] text-emerald-400 font-mono">
+                        ⏱️ {formatTimer(elapsedSeconds)}
+                      </span>
+                      <span className="font-bold text-app-accent font-mono">
+                        {totalScore} PTS
+                      </span>
+                    </div>
                   </div>
                 </div>
 
