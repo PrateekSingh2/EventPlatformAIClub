@@ -77,6 +77,18 @@ export function GeminiTutorDrawer({
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const activeModelRef = useRef<{ model: string; apiVersion: string } | null>(null);
+  const lastCallRef = useRef<{ userPrompt: string; systemInstruction?: string } | null>(null);
+
+  const CANDIDATE_MODELS = [
+    { model: 'gemini-2.0-flash', apiVersion: 'v1beta' },
+    { model: 'gemini-1.5-flash-latest', apiVersion: 'v1beta' },
+    { model: 'gemini-1.5-flash', apiVersion: 'v1' },
+    { model: 'gemini-2.0-flash-lite', apiVersion: 'v1beta' },
+  ];
+
+  // Helper sleep function for backoff
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
   // Load API key from persistent storage on mount
   useEffect(() => {
@@ -120,156 +132,196 @@ export function GeminiTutorDrawer({
 
   // Call Gemini REST API directly from client browser
   const executeGeminiCall = async (userPrompt: string, systemInstruction?: string) => {
-    if (!apiKey) {
+    const cleanKey = apiKey.trim();
+    if (!cleanKey) {
       setIsEditingKey(true);
-      setError('Please enter your Google Gemini API key to proceed.');
+      setError('Please enter your Google Gemini API key from Google AI Studio to proceed.');
       return;
     }
 
+    lastCallRef.current = { userPrompt, systemInstruction };
     setLoading(true);
     setError(null);
 
     const currentTime = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
 
-    // Append user message to thread
-    const userMsgId = Math.random().toString(36).substring(7);
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: userMsgId,
-        sender: 'user',
-        text: userPrompt,
-        timestamp: currentTime,
-      },
-    ]);
+    // Append user message to thread if not already present as the last message
+    setMessages((prev) => {
+      const lastMsg = prev[prev.length - 1];
+      if (lastMsg && lastMsg.sender === 'user' && lastMsg.text === userPrompt) {
+        return prev;
+      }
+      return [
+        ...prev,
+        {
+          id: Math.random().toString(36).substring(7),
+          sender: 'user',
+          text: userPrompt,
+          timestamp: currentTime,
+        },
+      ];
+    });
 
-    try {
-      let responseText: string | null = null;
-      let lastErrorMessage = '';
-
-      const systemPrompt =
-        systemInstruction ||
-        `You are the official Gemini AI Tutor for the Pixel & Anomaly CTF contest (Stage ${stageNumber}).
+    const systemPrompt =
+      systemInstruction ||
+      `You are the official Gemini AI Tutor for the Pixel & Anomaly CTF contest (Stage ${stageNumber}).
 Your role is to guide contestants through the challenge directives in their AI_TUTOR_PROMPT file.
 - Explain algorithms, cryptographic principles, Python analysis scripts, and math steps clearly.
 - Format all math equations using LaTeX syntax with $inline$ and $$block$$ notation.
 - Format all code with clear Markdown fences (\`\`\`python ... \`\`\`).
 - Guide contestants conceptually to understand the problem so they can extract the solution password flag themselves.`;
 
-      // 1. Dynamically query Google's ModelService.ListModels to detect active models for this key
-      let candidateModels: Array<{ model: string; apiVersion: string }> = [];
+    // Order models: prioritize cached working model, then fallback candidates
+    const modelsToTry = activeModelRef.current
+      ? [
+          activeModelRef.current,
+          ...CANDIDATE_MODELS.filter((m) => m.model !== activeModelRef.current?.model),
+        ]
+      : CANDIDATE_MODELS;
 
-      try {
-        const listRes = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey)}`
-        );
-        if (listRes.ok) {
-          const listData = await listRes.json();
-          const available = (listData?.models || [])
-            .filter((m: any) => m.supportedGenerationMethods?.includes('generateContent'))
-            .map((m: any) => ({
-              model: m.name.replace(/^models\//, ''),
-              apiVersion: 'v1beta',
-            }));
+    let responseText: string | null = null;
+    let fatalError: string | null = null;
 
-          // Prioritize: gemini-2.0-flash > gemini-1.5-flash > gemini-1.5-pro > others
-          const priority = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro'];
-          available.sort((a: any, b: any) => {
-            const aIdx = priority.findIndex((p) => a.model.includes(p));
-            const bIdx = priority.findIndex((p) => b.model.includes(p));
-            if (aIdx !== -1 && bIdx !== -1) return aIdx - bIdx;
-            if (aIdx !== -1) return -1;
-            if (bIdx !== -1) return 1;
-            return 0;
-          });
+    for (let i = 0; i < modelsToTry.length; i++) {
+      const { model, apiVersion } = modelsToTry[i];
+      const endpoint = `https://generativelanguage.googleapis.com/${apiVersion}/models/${model}:generateContent?key=${encodeURIComponent(cleanKey)}`;
 
-          if (available.length > 0) {
-            candidateModels = available;
-          }
-        }
-      } catch (listErr) {
-        console.warn('[Gemini ListModels check failed, using fallback models]:', listErr);
-      }
-
-      // 2. Fallback candidate list if ListModels is unavailable
-      if (candidateModels.length === 0) {
-        candidateModels = [
-          { model: 'gemini-2.0-flash', apiVersion: 'v1beta' },
-          { model: 'gemini-2.0-flash', apiVersion: 'v1' },
-          { model: 'gemini-1.5-flash-latest', apiVersion: 'v1beta' },
-          { model: 'gemini-1.5-flash', apiVersion: 'v1' },
-          { model: 'gemini-2.0-flash-exp', apiVersion: 'v1beta' },
-          { model: 'gemini-1.5-pro-latest', apiVersion: 'v1beta' },
-          { model: 'gemini-1.5-pro', apiVersion: 'v1beta' },
-          { model: 'gemini-1.5-pro', apiVersion: 'v1' },
-        ];
-      }
-
-      // 3. Attempt generation with candidate models
-      for (const { model, apiVersion } of candidateModels) {
-        try {
-          const endpoint = `https://generativelanguage.googleapis.com/${apiVersion}/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
-          const payload = {
-            contents: [
+      const payload = {
+        contents: [
+          {
+            role: 'user',
+            parts: [
               {
-                role: 'user',
-                parts: [
-                  {
-                    text: `${systemPrompt}\n\nUser Question/Directive:\n${userPrompt}`,
-                  },
-                ],
+                text: `${systemPrompt}\n\nUser Directive / Question:\n${userPrompt}`,
               },
             ],
-            generationConfig: {
-              temperature: 0.6,
-              maxOutputTokens: 4096,
-            },
-          };
+          },
+        ],
+        generationConfig: {
+          temperature: 0.6,
+          maxOutputTokens: 2048,
+        },
+      };
 
+      let attempt = 0;
+      let shouldTryNextModel = false;
+
+      while (attempt < 2) {
+        attempt++;
+        try {
           const res = await fetch(endpoint, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+              'Content-Type': 'application/json',
+              'x-goog-api-key': cleanKey,
+            },
             body: JSON.stringify(payload),
           });
 
-          const data = await res.json();
+          // Handle 429: Rate limit / Quota burst
+          if (res.status === 429) {
+            if (attempt === 1) {
+              // Wait 2.5s for rolling burst limit backoff and retry once
+              await sleep(2500);
+              continue;
+            } else {
+              // Still 429: Stop gracefully and advise contestant
+              fatalError =
+                'Google AI Studio Free Tier rate limit reached (15 requests per minute limit). Please wait 10 seconds before asking your next question.';
+              break;
+            }
+          }
+
+          const data = await res.json().catch(() => null);
+
           if (!res.ok) {
-            throw new Error(data?.error?.message || `HTTP ${res.status} from model ${model}`);
+            const serverMsg = (data?.error?.message || `HTTP ${res.status}`).trim();
+
+            // Check for invalid API Key
+            if (
+              res.status === 400 &&
+              (serverMsg.includes('API_KEY_INVALID') ||
+                serverMsg.toLowerCase().includes('api key not valid') ||
+                serverMsg.toLowerCase().includes('key not valid'))
+            ) {
+              fatalError =
+                'Invalid Google Gemini API Key. Please verify your key at https://aistudio.google.com/app/apikey.';
+              break;
+            }
+
+            // Check for Google Cloud project billing required error
+            if (
+              serverMsg.toLowerCase().includes('billing enabled') ||
+              serverMsg.toLowerCase().includes('quota exceeded for quota metric')
+            ) {
+              fatalError =
+                'Your Google Cloud project requires billing or has a 0-quota limit. For a 100% free key with no billing required, generate one at https://aistudio.google.com/app/apikey.';
+              break;
+            }
+
+            // Model not found on this endpoint (404) -> advance to next fallback candidate
+            if (res.status === 404 || serverMsg.includes('not found')) {
+              shouldTryNextModel = true;
+              break;
+            }
+
+            fatalError = serverMsg;
+            break;
           }
 
           const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
           if (rawText) {
             responseText = rawText;
+            activeModelRef.current = { model, apiVersion };
+            break;
+          } else {
+            const finishReason = data?.candidates?.[0]?.finishReason;
+            if (finishReason && finishReason !== 'STOP') {
+              responseText = `[Response generation paused with reason: ${finishReason}. Please refine your prompt.]`;
+              activeModelRef.current = { model, apiVersion };
+              break;
+            }
+            shouldTryNextModel = true;
             break;
           }
-        } catch (mErr: any) {
-          lastErrorMessage = mErr.message || 'Model call failed';
-          // If quota or invalid key, break early
-          if (lastErrorMessage.includes('API_KEY_INVALID') || lastErrorMessage.includes('quota')) {
-            break;
+        } catch (fetchErr: any) {
+          if (attempt === 1) {
+            await sleep(1500);
+            continue;
           }
+          fatalError = fetchErr?.message || 'Network connection to Google Gemini API failed.';
+          break;
         }
       }
 
-      if (!responseText) {
-        throw new Error(
-          lastErrorMessage ||
-            'Could not generate response from Gemini. Please verify your Google AI Studio API key.'
-        );
+      if (responseText || fatalError) {
+        break;
       }
 
-      const geminiMsgId = Math.random().toString(36).substring(7);
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: geminiMsgId,
-          sender: 'gemini',
-          text: responseText!,
-          timestamp: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
-        },
-      ]);
-    } catch (err: any) {
-      setError(err.message || 'Failed to communicate with Google Gemini API.');
+      if (shouldTryNextModel && i < modelsToTry.length - 1) {
+        await sleep(800);
+      }
+    }
+
+    try {
+      if (responseText) {
+        const geminiMsgId = Math.random().toString(36).substring(7);
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: geminiMsgId,
+            sender: 'gemini',
+            text: responseText!,
+            timestamp: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+          },
+        ]);
+        setError(null);
+      } else {
+        setError(
+          fatalError ||
+            'Could not generate response from Gemini. Please verify your Google AI Studio API key at https://aistudio.google.com/app/apikey.'
+        );
+      }
     } finally {
       setLoading(false);
     }
@@ -282,7 +334,13 @@ Your role is to guide contestants through the challenge directives in their AI_T
       return;
     }
 
-    const initialQuery = `Please analyze the directives and structure in "${promptFile.name}":\n\n\`\`\`text\n${promptFile.content}\n\`\`\`\n\nProvide an analysis with mathematical formulas (LaTeX), breakdown of required steps, and guidance to extract the target stage key.`;
+    let fileContent = promptFile.content;
+    // Guard against massive files exceeding TPM limits
+    if (fileContent.length > 8000) {
+      fileContent = `${fileContent.slice(0, 5000)}\n\n[... Truncated ${fileContent.length - 8000} chars for token optimization ...]\n\n${fileContent.slice(-3000)}`;
+    }
+
+    const initialQuery = `Please analyze the directives and structure in "${promptFile.name}":\n\n\`\`\`text\n${fileContent}\n\`\`\`\n\nProvide an analysis with mathematical formulas (LaTeX), breakdown of required steps, and guidance to extract the target stage key.`;
 
     executeGeminiCall(
       initialQuery,
@@ -409,9 +467,36 @@ Your role is to guide contestants through the challenge directives in their AI_T
 
         {/* Error Alert Banner */}
         {error && (
-          <div className="p-3 bg-rose-500/10 border-b border-rose-500/20 text-rose-500 dark:text-rose-400 text-xs flex items-start gap-2 shrink-0">
-            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-            <span className="leading-relaxed">{error}</span>
+          <div className="p-3 bg-rose-500/10 border-b border-rose-500/20 text-rose-500 dark:text-rose-400 text-xs flex flex-col gap-2 shrink-0">
+            <div className="flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+              <span className="leading-relaxed flex-1">{error}</span>
+            </div>
+            <div className="flex items-center gap-2 pl-6">
+              {lastCallRef.current && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (lastCallRef.current) {
+                      executeGeminiCall(lastCallRef.current.userPrompt, lastCallRef.current.systemInstruction);
+                    }
+                  }}
+                  disabled={loading}
+                  className="px-2.5 py-1 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 font-mono text-[11px] flex items-center gap-1 cursor-pointer transition-colors"
+                >
+                  <RotateCcw className="w-3 h-3" />
+                  <span>Retry Request</span>
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setIsEditingKey(true)}
+                className="px-2.5 py-1 rounded-lg bg-app-surface border border-app-border hover:bg-app-hover text-app-text font-mono text-[11px] flex items-center gap-1 cursor-pointer transition-colors"
+              >
+                <Key className="w-3 h-3 text-indigo-400" />
+                <span>Update API Key</span>
+              </button>
+            </div>
           </div>
         )}
 
