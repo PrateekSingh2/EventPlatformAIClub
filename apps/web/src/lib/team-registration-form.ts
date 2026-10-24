@@ -1,6 +1,5 @@
 export type TeamMemberFormFields = {
   name: string;
-  mobile: string;
   enrollment_number: string;
   email: string;
   branch: string;
@@ -17,7 +16,6 @@ export type TeamRegistrationPayload = {
 const MAX_TEAM_NAME = 120;
 const MAX_TEXT = 200;
 const MAX_EMAIL = 254;
-const MOBILE_RE = /^[6-9]\d{9}$/;
 export const TEAM_MEMBER_YEAR_OPTIONS = ['1st', '2nd', '3rd'] as const;
 const YEAR_ALLOWED = new Set<string>(TEAM_MEMBER_YEAR_OPTIONS);
 
@@ -37,7 +35,6 @@ function memberFromRaw(raw: unknown, slot: number): TeamMemberFormFields {
   const obj = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
   return {
     name: cleanText(obj.name, MAX_TEXT),
-    mobile: cleanText(obj.mobile, 15).replace(/\D/g, '').slice(0, 10),
     enrollment_number: cleanText(obj.enrollment_number ?? obj.enrollmentNumber, MAX_TEXT),
     email: cleanEmail(obj.email),
     branch: cleanText(obj.branch, MAX_TEXT),
@@ -55,20 +52,13 @@ function cleanYear(value: unknown): string {
 }
 
 function isMemberEmpty(m: TeamMemberFormFields): boolean {
-  return !m.name && !m.mobile && !m.enrollment_number && !m.email && !m.branch && !m.year;
+  return !m.name && !m.enrollment_number && !m.email && !m.branch && !m.year;
 }
 
 function validateMember(m: TeamMemberFormFields, slot: number, required: boolean): string | null {
   if (!required && isMemberEmpty(m)) return null;
 
   if (!m.name) return `Member ${slot}: name is required`;
-  if (slot === 1) {
-    if (!MOBILE_RE.test(m.mobile)) {
-      return `Member ${slot}: enter a valid 10-digit mobile number`;
-    }
-  } else if (m.mobile && !MOBILE_RE.test(m.mobile)) {
-    return `Member ${slot}: enter a valid 10-digit mobile number or leave blank`;
-  }
   if (!m.enrollment_number) return `Member ${slot}: enrollment number is required`;
   if (!m.email) return `Member ${slot}: valid email is required`;
   if (!m.branch) return `Member ${slot}: branch is required`;
@@ -105,7 +95,7 @@ export function parseTeamRegistrationBody(body: unknown):
   for (let i = 0; i < 4; i++) {
     const slot = i + 1;
     const member = slots[i];
-    const required = slot <= 3;
+    const required = slot === 1;
     const empty = isMemberEmpty(member);
 
     if (required) {
@@ -122,7 +112,7 @@ export function parseTeamRegistrationBody(body: unknown):
 
   const members: TeamMemberPayload[] = slots
     .map((m, i) => ({ slot: i + 1, ...m }))
-    .filter((m) => m.slot <= 3 || !isMemberEmpty(m));
+    .filter((m) => m.slot === 1 || !isMemberEmpty(m));
 
   return { ok: true, data: { team_name, members } };
 }

@@ -50,7 +50,8 @@ export async function POST(req: NextRequest) {
     const port = Number(process.env.BREVO_SMTP_PORT) || 587;
     const smtpUser = process.env.BREVO_SMTP_USER;
     const smtpPass = process.env.BREVO_SMTP_KEY;
-    const brevoApiKey = (customApiKey || process.env.BREVO_API_KEY || process.env.BREVO_SMTP_KEY || '').trim();
+    // Use REST API only with a real v3 API key (xkeysib-). Do not fall back to SMTP key (xsmtpsib-).
+    const brevoApiKey = (customApiKey || process.env.BREVO_API_KEY || '').trim();
     const senderEmail = (customSenderEmail || process.env.BREVO_SENDER_EMAIL || 'contests@aiclub.org').trim();
     const senderName = (customSenderName || process.env.BREVO_SENDER_NAME || 'AI Club Contest Master').trim();
     const appUrl = (process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000').replace(/\/$/, '');
