@@ -5,6 +5,7 @@ import {
   extractZipInBrowser,
   extractStageArchiveInBrowser,
   resolveNextStageZipBlob,
+  verifyStageUnlockPassword,
 } from '@/lib/zip-engine';
 import { enqueueStageProgress } from '@/lib/offline-progress-queue';
 import { getCachedStageArchive, saveStageArchive } from '@/lib/stage-cache';
@@ -219,10 +220,20 @@ export function UnlockNextStageModal({
     if (isOffline) {
       try {
         let offlineValid = false;
-        const targetZip = tokenArchiveBlob ? await resolveTargetZip() : nextStageZipBlob;
-        if (targetZip) {
+        if (tokenArchiveBlob) {
+          offlineValid = await verifyStageUnlockPassword(
+            tokenArchiveBlob,
+            nextStageNumber,
+            cleanPassword
+          );
+          if (!offlineValid) {
+            applyFailureCooldown(undefined, 'Invalid stage key. Decryption failed.');
+            setValidating(false);
+            return;
+          }
+        } else if (nextStageZipBlob) {
           try {
-            await extractStageArchiveInBrowser(targetZip, cleanPassword);
+            await extractStageArchiveInBrowser(nextStageZipBlob, cleanPassword);
             offlineValid = true;
           } catch {
             applyFailureCooldown(undefined, 'Invalid stage key. Decryption failed.');
@@ -284,10 +295,13 @@ export function UnlockNextStageModal({
 
       // ── Token Archive Path (nested archive system) ────────────────────────
       const targetZip = tokenArchiveBlob ? await resolveTargetZip() : nextStageZipBlob;
-      if (targetZip) {
-        try {
-          await extractStageArchiveInBrowser(targetZip, cleanPassword);
-        } catch {
+      if (tokenArchiveBlob) {
+        const unlockOk = await verifyStageUnlockPassword(
+          tokenArchiveBlob,
+          nextStageNumber,
+          cleanPassword
+        );
+        if (!unlockOk) {
           // Password wrong — register failure with server
           let serverCooldown = 0;
           let serverError = 'Invalid stage key. Verification failed.';
@@ -344,6 +358,68 @@ export function UnlockNextStageModal({
             });
           } catch {}
 
+          setSuccessMessage(`Stage ${nextStageNumber} Key Verified! +${pointsAwarded} PTS awarded.`);
+          setTimeout(() => {
+            setPassword('');
+            onUnlockSuccess(nextStageNumber, cleanPassword, pointsAwarded, '');
+            handleClose();
+          }, 1100);
+        } catch (verifyErr: any) {
+          if (!navigator.onLine || verifyErr.name === 'TypeError' || verifyErr.message?.includes('fetch')) {
+            await queueAndProceed('', points);
+            return;
+          }
+          throw verifyErr;
+        }
+        return;
+      }
+
+      if (nextStageZipBlob) {
+        try {
+          await extractStageArchiveInBrowser(nextStageZipBlob, cleanPassword);
+        } catch {
+          let serverCooldown = 0;
+          let serverError = 'Invalid stage key. Verification failed.';
+          try {
+            const attemptRes = await fetch('/api/stage/password-attempt', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ accessToken, stageNumber: nextStageNumber, action: 'failed' }),
+            });
+            const attemptData = await attemptRes.json();
+            serverCooldown = attemptData.cooldownSeconds || 0;
+            if (attemptData.error) serverError = attemptData.error;
+          } catch {}
+          applyFailureCooldown(serverCooldown, serverError);
+          setValidating(false);
+          return;
+        }
+
+        try {
+          const verifyRes = await fetch('/api/stage/verify-stage-password', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              accessToken,
+              stageNumber: nextStageNumber,
+              password: cleanPassword,
+              completedAt: completionIso,
+              completedTimestamp,
+              durationSeconds,
+            }),
+          });
+          const verifyData = await verifyRes.json();
+          if (!verifyRes.ok || !verifyData.success) {
+            if (verifyData.cooldownSeconds > 0) setCooldownSeconds(verifyData.cooldownSeconds);
+            throw new Error(verifyData.error || 'Stage key verification failed.');
+          }
+          const pointsAwarded = verifyData.scoreAwarded || points;
+          localFailedAttemptsRef.current = 0;
+          setCooldownSeconds(0);
+          setPassword('');
+          try {
+            confetti({ particleCount: 100, spread: 70, origin: { y: 0.6 }, colors: ['#e2e8f0', '#34d399', '#f59e0b'] });
+          } catch {}
           setSuccessMessage(`Stage ${nextStageNumber} Key Verified! +${pointsAwarded} PTS awarded.`);
           setTimeout(() => {
             setPassword('');

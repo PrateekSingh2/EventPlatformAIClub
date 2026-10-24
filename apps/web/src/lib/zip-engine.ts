@@ -115,13 +115,19 @@ export async function extractStageArchiveInBrowser(
             zipExtractErr?.name === 'ZipCryptoError' ||
             zipExtractErr?.name === 'AesError'
           ) {
-            await zipReader.close();
-            throw new ZipEngineError(
-              password ? 'INVALID_PASSWORD' : 'PASSWORD_REQUIRED',
-              'Password required to decrypt nested stage archive.'
-            );
+            if (password && nestedEncrypted) {
+              // Current unlock key is not for the *next* nested stage zip (different password per stage).
+              nextZipBlob = undefined;
+            } else {
+              await zipReader.close();
+              throw new ZipEngineError(
+                password ? 'INVALID_PASSWORD' : 'PASSWORD_REQUIRED',
+                'Password required to decrypt nested stage archive.'
+              );
+            }
+          } else {
+            throw zipExtractErr;
           }
-          throw zipExtractErr;
         }
       }
     }
@@ -363,6 +369,22 @@ export async function extractStageZipFromOuter(
     }
   }
   throw new ZipEngineError('EXTRACTION_FAILED', `Stage ${stageNum} nested archive not found in outer ZIP.`);
+}
+
+/** True when `password` decrypts `STAGE_NN.zip` inside the team archive (unlock check only). */
+export async function verifyStageUnlockPassword(
+  outerTokenArchive: Blob,
+  stageNumber: number,
+  password: string
+): Promise<boolean> {
+  const clean = password.trim();
+  if (!clean || stageNumber < 2) return false;
+  try {
+    await extractStageZipFromOuter(outerTokenArchive, stageNumber, clean);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
