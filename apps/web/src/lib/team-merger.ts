@@ -336,6 +336,7 @@ export function manualGroupMapsEqual(a: Map<string, string>, b: Map<string, stri
 
 export type MergerExportRow = {
   merged_team_name: string;
+  team_size: string;
   merge_group: string;
   team_names: string;
   merge_reason: string;
@@ -351,6 +352,7 @@ export type MergerExportRow = {
 
 export const MERGER_EXPORT_HEADERS: (keyof MergerExportRow)[] = [
   'merged_team_name',
+  'team_size',
   'merge_group',
   'team_names',
   'merge_reason',
@@ -364,46 +366,28 @@ export const MERGER_EXPORT_HEADERS: (keyof MergerExportRow)[] = [
   'submitted_at',
 ];
 
-export function buildMergerExportRows(
-  submissions: TeamSubmission[],
-  groups: MergeGroup[],
-  mode: 'full' | 'merged'
+/** Label used in participant import (Solo / Duo / Trio / Squad). */
+export function teamSizeLabelFromMemberCount(count: number): string {
+  if (count <= 1) return 'Solo';
+  if (count === 2) return 'Duo';
+  if (count === 3) return 'Trio';
+  return 'Squad';
+}
+
+function mergerRowsForGroup(
+  group: MergeGroup,
+  subById: Map<string, TeamSubmission>
 ): MergerExportRow[] {
-  const subById = new Map(submissions.map((s) => [s.id, s]));
-  const rows: MergerExportRow[] = [];
+  const label = group.mergedTeamName;
+  const sources = group.teamNames.join(', ');
+  const activeMembers = group.members.filter((m) => (m.email || '').trim() || (m.name || '').trim());
+  const team_size = teamSizeLabelFromMemberCount(activeMembers.length || group.members.length);
 
-  if (mode === 'full') {
-    for (const sub of submissions) {
-      const members = sub.members?.length ? sub.members : [{ slot: 1, name: '', enrollment_number: '', email: '', branch: '', year: '' }];
-      for (const m of members) {
-        rows.push({
-          merged_team_name: sub.team_name,
-          merge_group: sub.team_name,
-          team_names: sub.team_name,
-          merge_reason: 'Original submission',
-          member_slot: String(m.slot ?? ''),
-          name: m.name ?? '',
-          enrollment_number: m.enrollment_number ?? '',
-          email: m.email ?? '',
-          branch: m.branch ?? '',
-          year: m.year ?? '',
-          submission_id: sub.id,
-          submitted_at: sub.created_at,
-        });
-      }
-    }
-    return rows;
-  }
-
-  const exportGroups =
-    mode === 'merged' ? groups.filter((g) => g.submissionIds.length > 1) : groups;
-
-  for (const group of exportGroups) {
-    const label = group.mergedTeamName;
-    const sources = group.teamNames.join(', ');
-    if (group.members.length === 0) {
-      rows.push({
+  if (group.members.length === 0) {
+    return [
+      {
         merged_team_name: label,
+        team_size,
         merge_group: label,
         team_names: sources,
         merge_reason: group.matchReason,
@@ -415,26 +399,42 @@ export function buildMergerExportRows(
         year: '',
         submission_id: group.submissionIds.join('|'),
         submitted_at: '',
-      });
-      continue;
-    }
-    for (const m of group.members) {
-      const firstSub = subById.get(group.submissionIds[0]);
-      rows.push({
-        merged_team_name: label,
-        merge_group: label,
-        team_names: sources,
-        merge_reason: group.matchReason,
-        member_slot: String(m.slot ?? ''),
-        name: m.name ?? '',
-        enrollment_number: m.enrollment_number ?? '',
-        email: m.email ?? '',
-        branch: m.branch ?? '',
-        year: m.year ?? '',
-        submission_id: group.submissionIds.join('|'),
-        submitted_at: firstSub?.created_at ?? '',
-      });
-    }
+      },
+    ];
+  }
+
+  const firstSub = subById.get(group.submissionIds[0]);
+  return group.members.map((m) => ({
+    merged_team_name: label,
+    team_size,
+    merge_group: label,
+    team_names: sources,
+    merge_reason: group.matchReason,
+    member_slot: String(m.slot ?? ''),
+    name: m.name ?? '',
+    enrollment_number: m.enrollment_number ?? '',
+    email: m.email ?? '',
+    branch: m.branch ?? '',
+    year: m.year ?? '',
+    submission_id: group.submissionIds.join('|'),
+    submitted_at: firstSub?.created_at ?? '',
+  }));
+}
+
+export function buildMergerExportRows(
+  submissions: TeamSubmission[],
+  groups: MergeGroup[],
+  mode: 'full' | 'merged'
+): MergerExportRow[] {
+  const subById = new Map(submissions.map((s) => [s.id, s]));
+  const rows: MergerExportRow[] = [];
+
+  /** Full export = every roster row with current merge-group team names (paste into participant import). */
+  const exportGroups =
+    mode === 'merged' ? groups.filter((g) => g.submissionIds.length > 1) : groups;
+
+  for (const group of exportGroups) {
+    rows.push(...mergerRowsForGroup(group, subById));
   }
 
   return rows;

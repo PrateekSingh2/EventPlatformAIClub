@@ -191,7 +191,10 @@ export function ParticipantImportTab({ adminSecret }: ParticipantImportTabProps)
               <span>Team Roster Importer & Token Provisioning</span>
             </h3>
             <p className="text-xs text-app-subtext">
-              Paste team CSV (format: <code>teamname, team size, member1 name, member1 email, ...</code>).
+              Paste roster CSV: classic{' '}
+              <code className="text-[10px]">team, size, name, email, …</code> or a{' '}
+              <strong className="font-semibold text-app-text">Team Merger → Export roster for ingest</strong> file
+              (same columns, merged team names preserved).
             </p>
           </div>
 

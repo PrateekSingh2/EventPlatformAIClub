@@ -36,6 +36,10 @@ export function FormDataTab({ adminSecret }: FormDataTabProps) {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
+  const [importTsv, setImportTsv] = useState('');
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState<string | null>(null);
 
   const fetchSubmissions = useCallback(async () => {
     try {
@@ -98,6 +102,39 @@ export function FormDataTab({ adminSecret }: FormDataTabProps) {
     );
   };
 
+  const runGoogleFormImport = async () => {
+    if (!importTsv.trim()) return;
+    setImporting(true);
+    setImportResult(null);
+    setError(null);
+    try {
+      const res = await fetch('/api/admin/form-submissions/import', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-admin-secret': adminSecret,
+        },
+        body: JSON.stringify({ tsv: importTsv }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        setError(data.error || 'Import failed');
+        return;
+      }
+      setImportResult(
+        `Imported ${data.parsed} teams (${data.inserted} new, ${data.updated} updated).` +
+          (data.errors?.length ? ` Errors: ${data.errors.length}` : '')
+      );
+      setImportTsv('');
+      setImportOpen(false);
+      await fetchSubmissions();
+    } catch {
+      setError('Network error during import');
+    } finally {
+      setImporting(false);
+    }
+  };
+
   const exportExcel = () => {
     const rows = buildExportRows(filtered);
     const sheet = XLSX.utils.json_to_sheet(rows, { header: [...EXPORT_HEADERS] });
@@ -119,6 +156,16 @@ export function FormDataTab({ adminSecret }: FormDataTabProps) {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              setImportOpen((v) => !v);
+              setImportResult(null);
+            }}
+            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-xl border border-app-border hover:bg-app-hover"
+          >
+            Import TSV
+          </button>
           <button
             type="button"
             onClick={fetchSubmissions}
@@ -148,6 +195,44 @@ export function FormDataTab({ adminSecret }: FormDataTabProps) {
           </button>
         </div>
       </div>
+
+      {importOpen && (
+        <div className="rounded-2xl border border-app-border bg-app-surface/60 p-4 space-y-3">
+          <p className="text-xs text-app-subtext">
+            Paste a Google Form responses export (tab-separated, including header row).
+          </p>
+          <textarea
+            value={importTsv}
+            onChange={(e) => setImportTsv(e.target.value)}
+            rows={8}
+            className="w-full rounded-xl border border-app-border bg-app-bg px-3 py-2 text-xs font-mono"
+            placeholder="Timestamp&#9;Team Name :&#9;..."
+          />
+          <div className="flex gap-2">
+            <button
+              type="button"
+              disabled={importing || !importTsv.trim()}
+              onClick={runGoogleFormImport}
+              className="px-3 py-2 text-xs font-semibold rounded-xl bg-app-accent text-app-bg disabled:opacity-50"
+            >
+              {importing ? 'Importing…' : 'Run import'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setImportOpen(false)}
+              className="px-3 py-2 text-xs font-semibold rounded-xl border border-app-border"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {importResult && (
+        <div className="text-sm text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-500/25 rounded-xl px-4 py-3">
+          {importResult}
+        </div>
+      )}
 
       <div className="relative">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-app-subtext" />

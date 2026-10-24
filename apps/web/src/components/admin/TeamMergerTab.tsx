@@ -102,7 +102,7 @@ export function TeamMergerTab({ adminSecret }: TeamMergerTabProps) {
       }
       const all: TeamSubmission[] = data.submissions || [];
       setExcludedOptOutCount(all.filter((s) => s.squad_merge_opt_in === false).length);
-      setSubmissions(filterMergerEligibleSubmissions(all));
+      setSubmissions(all);
     } catch {
       setError('Network error while loading submissions');
       setSubmissions([]);
@@ -161,12 +161,17 @@ export function TeamMergerTab({ adminSecret }: TeamMergerTabProps) {
     });
   };
 
+  const mergerEligible = useMemo(
+    () => filterMergerEligibleSubmissions(submissions),
+    [submissions]
+  );
+
   const groups = useMemo(() => {
     if (autoMerge) {
-      return computeAutoMergeGroups(submissions);
+      return computeAutoMergeGroups(mergerEligible);
     }
     return buildManualMergeGroups(submissions, manualGroupMap);
-  }, [autoMerge, submissions, manualGroupMap]);
+  }, [autoMerge, submissions, mergerEligible, manualGroupMap]);
 
   const toggleSelect = (id: string) => {
     setSelected((prev) => {
@@ -231,8 +236,8 @@ export function TeamMergerTab({ adminSecret }: TeamMergerTabProps) {
             Team Merger
           </h2>
           <p className="text-sm text-app-subtext mt-1 max-w-xl">
-            Teams that answered No to a 4th member are hidden; older submissions without the prompt are included. Auto merge pairs overlapping squads or two 2-member
-            teams into one card named Team A X Team B.
+            All form registrations appear here. Auto merge only considers eligible teams (not full 4-member squads or squad opt-out No). Manual merge can combine any
+            selection into one card named Team A X Team B.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -290,7 +295,7 @@ export function TeamMergerTab({ adminSecret }: TeamMergerTabProps) {
           className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-xl border border-app-border hover:bg-app-hover disabled:opacity-50"
         >
           <Download className="w-3.5 h-3.5" />
-          Export all (CSV)
+          Export roster for ingest (CSV)
         </button>
         <button
           type="button"
@@ -299,7 +304,7 @@ export function TeamMergerTab({ adminSecret }: TeamMergerTabProps) {
           className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-xl border border-app-border hover:bg-app-hover disabled:opacity-50"
         >
           <FileSpreadsheet className="w-3.5 h-3.5" />
-          Export all (Excel)
+          Export roster for ingest (Excel)
         </button>
         <button
           type="button"
@@ -334,16 +339,17 @@ export function TeamMergerTab({ adminSecret }: TeamMergerTabProps) {
         </div>
       ) : submissions.length === 0 ? (
         <p className="text-center text-sm text-app-subtext py-16">
-          No merger-eligible teams.
+          No form submissions yet.
           {excludedOptOutCount > 0
-            ? ` ${excludedOptOutCount} team(s) answered No to squad assignment.`
-            : ' No form submissions yet.'}
+            ? ` (${excludedOptOutCount} team(s) opted out of squad assignment.)`
+            : ''}
         </p>
       ) : (
         <div className="space-y-4">
           <p className="text-xs font-mono text-app-subtext">
-            {submissions.length} submission(s) · {groups.length} group(s)
-            {excludedOptOutCount > 0 ? ` · ${excludedOptOutCount} hidden (squad opt-out)` : ''}
+            {submissions.length} submission(s) · {mergerEligible.length} auto-merge eligible · {groups.length}{' '}
+            group(s)
+            {excludedOptOutCount > 0 ? ` · ${excludedOptOutCount} squad opt-out` : ''}
           </p>
 
           {groups.map((group) => (
