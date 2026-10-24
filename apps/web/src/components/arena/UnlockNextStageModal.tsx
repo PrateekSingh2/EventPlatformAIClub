@@ -151,7 +151,7 @@ export function UnlockNextStageModal({
       if (!tokenArchiveBlob) return nextStageZipBlob ?? null;
       return resolveNextStageZipBlob(tokenArchiveBlob, nextStageNumber, {
         prefetched: nextStageZipBlob,
-        stagePasswords,
+        stagePasswords: { ...stagePasswords, [nextStageNumber]: cleanPassword },
       });
     };
 

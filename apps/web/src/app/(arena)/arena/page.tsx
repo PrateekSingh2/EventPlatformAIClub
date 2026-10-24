@@ -24,7 +24,7 @@ import { useContestLifecycle } from '@/hooks/useContestLifecycle';
 import { useAdminBroadcasts } from '@/hooks/useAdminBroadcasts';
 import { initializeProgressQueueListeners } from '@/lib/offline-progress-queue';
 import { saveStageArchive, getCachedStageArchive, saveTokenArchive, getCachedTokenArchive, clearTokenArchive } from '@/lib/stage-cache';
-import { extractInnerZipBlob, resolveStageOneBlob, resolveNextStageZipBlob } from '@/lib/zip-engine';
+import { resolveStageOneBlob, resolveNextStageZipBlob } from '@/lib/zip-engine';
 import { supabase } from '@/lib/supabase';
 import {
   getContestantSession,
@@ -458,8 +458,9 @@ function ArenaContent() {
                 })) || undefined;
             }
 
-            if (stageTwoBlob) {
-              rememberNextStageZip(2, stageTwoBlob);
+            const hasMoreStages = Boolean(stageTwoBlob || result.hasNextZip || tokenArchiveStageCount > 1);
+            if (hasMoreStages) {
+              if (stageTwoBlob) rememberNextStageZip(2, stageTwoBlob);
               setIsLastStage(false);
               setStages((prev) => {
                 const s1 = prev.find((s) => s.stageNumber === 1) || {
@@ -499,7 +500,9 @@ function ArenaContent() {
             // If not directly present in ref (e.g. page refreshed into Stage N), replay extraction from stage 1
             if (!stageBlob) {
               try {
-                stageBlob = await extractInnerZipBlob(tokenArchive, `stage${stageNum}.zip`);
+                stageBlob = (await resolveNextStageZipBlob(tokenArchive, stageNum, {
+                  stagePasswords: unlockedStagePasswordsRef.current,
+                })) as Blob;
                 rememberNextStageZip(stageNum, stageBlob);
               } catch {
                 let currentBlob = await resolveStageOneBlob(tokenArchive);

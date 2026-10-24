@@ -19,6 +19,7 @@ import {
   applyManualMerge,
   applyManualUnmerge,
   buildManualMergeGroups,
+  buildManualGroupMapAllSquadsOfFour,
   buildMergerExportRows,
   computeAutoMergeGroups,
   filterMergerEligibleSubmissions,
@@ -83,6 +84,7 @@ export function TeamMergerTab({ adminSecret }: TeamMergerTabProps) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [previewGroup, setPreviewGroup] = useState<MergeGroup | null>(null);
   const [excludedOptOutCount, setExcludedOptOutCount] = useState(0);
+  const [packMessage, setPackMessage] = useState<string | null>(null);
   const fetchGeneration = useRef(0);
 
   const fetchSubmissions = useCallback(async () => {
@@ -182,6 +184,24 @@ export function TeamMergerTab({ adminSecret }: TeamMergerTabProps) {
     });
   };
 
+  const packAllSquadsOfFour = () => {
+    if (submissions.length === 0) return;
+    setError(null);
+    setPackMessage(null);
+    if (autoMerge) {
+      writeStoredAutoMerge(false);
+      setAutoMerge(false);
+    }
+    const next = buildManualGroupMapAllSquadsOfFour(submissions);
+    persistManualGroupMap(next);
+    setSelected(new Set());
+    const mergedTeams = new Set(next.values()).size;
+    const rowsInGroups = next.size;
+    setPackMessage(
+      `Packed ${rowsInGroups} registration(s) into ${mergedTeams} manual squad group(s) (target 4 members). Export roster for ingest when ready.`
+    );
+  };
+
   const runManualMerge = () => {
     const ids = Array.from(selected);
     if (ids.length < 2) {
@@ -255,6 +275,15 @@ export function TeamMergerTab({ adminSecret }: TeamMergerTabProps) {
           </button>
           <button
             type="button"
+            disabled={submissions.length === 0 || loading}
+            onClick={packAllSquadsOfFour}
+            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-xl border border-violet-500/40 bg-violet-500/10 text-violet-700 dark:text-violet-300 hover:bg-violet-500/15 disabled:opacity-50"
+          >
+            <GitMerge className="w-3.5 h-3.5" />
+            Pack all → squads of 4
+          </button>
+          <button
+            type="button"
             onClick={fetchSubmissions}
             disabled={loading}
             className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-xl border border-app-border hover:bg-app-hover"
@@ -284,6 +313,12 @@ export function TeamMergerTab({ adminSecret }: TeamMergerTabProps) {
           >
             Clear selection
           </button>
+        </div>
+      )}
+
+      {packMessage && (
+        <div className="text-sm text-violet-600 dark:text-violet-400 bg-violet-500/10 border border-violet-500/25 rounded-xl px-4 py-3">
+          {packMessage}
         </div>
       )}
 

@@ -97,23 +97,32 @@ export async function extractStageArchiveInBrowser(
 
     if (nextZipEntry) {
       nextZipFilename = nextZipEntry.filename.split('/').pop() || nextZipEntry.filename;
-      try {
-        const uintWriter = new Uint8ArrayWriter();
-        const nextZipBytes = await (nextZipEntry as any).getData(uintWriter, { password });
-        nextZipBlob = new Blob([nextZipBytes], { type: 'application/zip' });
-      } catch (zipExtractErr: any) {
-        if (
-          zipExtractErr?.message?.toLowerCase().includes('password') ||
-          zipExtractErr?.name === 'ZipCryptoError' ||
-          zipExtractErr?.name === 'AesError'
-        ) {
-          await zipReader.close();
-          throw new ZipEngineError(
-            password ? 'INVALID_PASSWORD' : 'PASSWORD_REQUIRED',
-            'Password required to decrypt nested stage archive.'
+      const nestedEncrypted = Boolean((nextZipEntry as any).encrypted);
+      if (nestedEncrypted && !password) {
+        // Case-study outer layout: STAGE_02.zip is present but locked until unlock flow.
+        nextZipBlob = undefined;
+      } else {
+        try {
+          const uintWriter = new Uint8ArrayWriter();
+          const nextZipBytes = await (nextZipEntry as any).getData(
+            uintWriter,
+            password ? { password } : undefined
           );
+          nextZipBlob = new Blob([nextZipBytes], { type: 'application/zip' });
+        } catch (zipExtractErr: any) {
+          if (
+            zipExtractErr?.message?.toLowerCase().includes('password') ||
+            zipExtractErr?.name === 'ZipCryptoError' ||
+            zipExtractErr?.name === 'AesError'
+          ) {
+            await zipReader.close();
+            throw new ZipEngineError(
+              password ? 'INVALID_PASSWORD' : 'PASSWORD_REQUIRED',
+              'Password required to decrypt nested stage archive.'
+            );
+          }
+          throw zipExtractErr;
         }
-        throw zipExtractErr;
       }
     }
 
@@ -261,7 +270,7 @@ export async function extractStageArchiveInBrowser(
 
     return {
       files: parsedFiles,
-      hasNextZip: Boolean(nextZipBlob),
+      hasNextZip: Boolean(nextZipBlob || nextZipEntry),
       nextZipBlob,
       nextZipFilename,
       stageTitle: detectedStageTitle,
@@ -294,12 +303,19 @@ export async function extractZipInBrowser(
 /**
  * Extracts a single inner (nested) ZIP file entry from an outer ZIP blob.
  */
+/** Basenames used for nested stage archives (demo + case-study packs). */
+export function stageZipBasenames(stageNum: number): string[] {
+  const pad = String(stageNum).padStart(2, '0');
+  return [`stage${stageNum}.zip`, `stage_${stageNum}.zip`, `STAGE_${pad}.zip`, `Stage_${pad}.zip`];
+}
+
 export async function extractInnerZipBlob(
   outerZipBlob: Blob,
-  innerZipEntryName: string
+  innerZipEntryName: string,
+  password?: string
 ): Promise<Blob> {
   const blobReader = new BlobReader(outerZipBlob);
-  const zipReader = new ZipReader(blobReader);
+  const zipReader = new ZipReader(blobReader, password ? { password } : undefined);
   const entries = await zipReader.getEntries();
 
   const target = entries.find(
@@ -311,15 +327,6 @@ export async function extractInnerZipBlob(
   );
 
   if (!target) {
-    // If not found by name, pick the first .zip file inside
-    const anyZip = entries.find((e: any) => !e.directory && e.filename.toLowerCase().endsWith('.zip'));
-    if (anyZip) {
-      const uintWriter = new Uint8ArrayWriter();
-      const uint8Array = await (anyZip as any).getData(uintWriter);
-      await zipReader.close();
-      return new Blob([uint8Array], { type: 'application/zip' });
-    }
-
     await zipReader.close();
     throw new ZipEngineError(
       'EXTRACTION_FAILED',
@@ -327,23 +334,51 @@ export async function extractInnerZipBlob(
     );
   }
 
+  if ((target as any).encrypted && !password) {
+    await zipReader.close();
+    throw new ZipEngineError(
+      'PASSWORD_REQUIRED',
+      'Password required to decrypt nested stage archive.'
+    );
+  }
+
   const uintWriter = new Uint8ArrayWriter();
-  const uint8Array = await (target as any).getData(uintWriter);
+  const uint8Array = await (target as any).getData(uintWriter, password ? { password } : undefined);
   await zipReader.close();
   return new Blob([uint8Array], { type: 'application/zip' });
+}
+
+/** Pull stage N's nested zip from an outer team archive (supports STAGE_NN.zip naming). */
+export async function extractStageZipFromOuter(
+  outerZipBlob: Blob,
+  stageNum: number,
+  password?: string
+): Promise<Blob> {
+  for (const name of stageZipBasenames(stageNum)) {
+    try {
+      return await extractInnerZipBlob(outerZipBlob, name, password);
+    } catch (err) {
+      if (err instanceof ZipEngineError && err.code === 'EXTRACTION_FAILED') continue;
+      throw err;
+    }
+  }
+  throw new ZipEngineError('EXTRACTION_FAILED', `Stage ${stageNum} nested archive not found in outer ZIP.`);
 }
 
 /**
  * Lists all file entries inside an outer ZIP blob without extracting.
  */
-function pickNextStageZipEntry(validEntries: { filename: string; directory?: boolean }[], currentStage = 1) {
+function pickNextStageZipEntry(
+  validEntries: { filename: string; directory?: boolean; encrypted?: boolean }[],
+  currentStage = 1
+) {
   const zips = validEntries.filter((e) => !e.directory && e.filename.toLowerCase().endsWith('.zip'));
   if (zips.length === 0) return null;
 
   const numbered = zips
     .map((entry) => {
       const base = entry.filename.split('/').pop() || entry.filename;
-      const match = base.match(/^stage_?(\d+)\.zip$/i);
+      const match = base.match(/^(?:stage_?|STAGE_)(\d+)\.zip$/i);
       return match ? { entry, stageNum: parseInt(match[1], 10) } : null;
     })
     .filter((x): x is { entry: (typeof zips)[0]; stageNum: number } => x !== null)
@@ -353,7 +388,10 @@ function pickNextStageZipEntry(validEntries: { filename: string; directory?: boo
   if (explicitNext) return explicitNext.entry;
 
   if (currentStage === 1) {
-    const notStage1 = zips.find((e) => !/stage1\.zip$/i.test(e.filename.split('/').pop() || ''));
+    const notStage1 = zips.find((e) => {
+      const base = e.filename.split('/').pop() || '';
+      return !/^(?:stage_?1|STAGE_01)\.zip$/i.test(base);
+    });
     return notStage1 || zips[0];
   }
 
@@ -366,10 +404,10 @@ export async function countStagesInOuterArchive(blob: Blob): Promise<number> {
   const stageNums = new Set<number>([1]);
 
   for (const entry of entries) {
-    const zipMatch = entry.filename.match(/stage_?(\d+)\.zip/i);
+    const zipMatch = entry.filename.match(/(?:^|[/\\])(?:stage_?|STAGE_)(\d+)\.zip$/i);
     if (zipMatch) stageNums.add(parseInt(zipMatch[1], 10));
 
-    const dirMatch = entry.filename.match(/^stage_?(\d+)[/\\]/i);
+    const dirMatch = entry.filename.match(/(?:^|[/\\])(?:stage_?|STAGE_)(\d+)[/\\]/i);
     if (dirMatch) stageNums.add(parseInt(dirMatch[1], 10));
   }
 
@@ -401,21 +439,51 @@ export async function resolveNextStageZipBlob(
   if (options?.prefetched) return options.prefetched;
   if (nextStageNumber < 2) return null;
 
+  const passwords = options?.stagePasswords ?? {};
+
   try {
-    return await extractInnerZipBlob(outerTokenArchive, `stage${nextStageNumber}.zip`);
-  } catch {
-    // Nested-chain archives embed the next stage inside the previous stage blob.
+    return await extractStageZipFromOuter(outerTokenArchive, nextStageNumber, passwords[nextStageNumber]);
+  } catch (err) {
+    if (err instanceof ZipEngineError && err.code === 'PASSWORD_REQUIRED' && !passwords[nextStageNumber]) {
+      return null;
+    }
+    if (!(err instanceof ZipEngineError && err.code === 'EXTRACTION_FAILED')) {
+      throw err;
+    }
   }
 
   try {
     let currentBlob = await resolveStageOneBlob(outerTokenArchive);
-    for (let stage = 1; stage < nextStageNumber; stage++) {
-      const password = stage === 1 ? undefined : options?.stagePasswords?.[stage];
-      const result = await extractStageArchiveInBrowser(currentBlob, password, '', stage);
-      if (!result.nextZipBlob) {
-        return stage === nextStageNumber - 1 ? currentBlob : null;
+    for (let stage = 2; stage <= nextStageNumber; stage++) {
+      const stagePass = passwords[stage];
+      try {
+        currentBlob = await extractStageZipFromOuter(currentBlob, stage, stagePass);
+        continue;
+      } catch (innerErr) {
+        if (innerErr instanceof ZipEngineError && innerErr.code === 'PASSWORD_REQUIRED' && !stagePass) {
+          return null;
+        }
+        if (!(innerErr instanceof ZipEngineError && innerErr.code === 'EXTRACTION_FAILED')) {
+          throw innerErr;
+        }
       }
-      currentBlob = result.nextZipBlob;
+
+      const parentStage = stage - 1;
+      const parentPass = parentStage >= 2 ? passwords[parentStage] : undefined;
+      const extracted = await extractStageArchiveInBrowser(currentBlob, parentPass, '', parentStage);
+      if (extracted.nextZipBlob) {
+        currentBlob = extracted.nextZipBlob;
+        continue;
+      }
+      if (extracted.hasNextZip) {
+        if (!stagePass) return null;
+        const withPass = await extractStageArchiveInBrowser(currentBlob, stagePass, '', parentStage);
+        if (!withPass.nextZipBlob) return null;
+        currentBlob = withPass.nextZipBlob;
+        continue;
+      }
+      if (stage === nextStageNumber) return currentBlob;
+      return null;
     }
     return currentBlob;
   } catch {

@@ -261,6 +261,86 @@ export function buildManualMergeGroups(
   });
 }
 
+function assignBinToMap(map: Map<string, string>, submissionIds: string[]) {
+  if (submissionIds.length === 0) return;
+  const leader = submissionIds.slice().sort()[0];
+  for (const id of submissionIds) {
+    map.set(id, leader);
+  }
+}
+
+/** Every solo registration → merged squads of 4 submissions (FIFO by signup time). */
+export function buildManualGroupMapSolosInFours(submissions: TeamSubmission[]): Map<string, string> {
+  const map = new Map<string, string>();
+  const solos = submissions
+    .filter((s) => s.squad_merge_opt_in !== false && countFilledMembers(s) === 1)
+    .sort((a, b) => a.created_at.localeCompare(b.created_at));
+
+  for (let i = 0; i < solos.length; i += MAX_SQUAD_MEMBERS) {
+    const chunk = solos.slice(i, i + MAX_SQUAD_MEMBERS).map((s) => s.id);
+    if (chunk.length >= 2) {
+      assignBinToMap(map, chunk);
+    }
+  }
+  return map;
+}
+
+/**
+ * Pack solo / duo / trio submissions into merged groups totaling up to 4 members each.
+ * Full 4-member form squads are left untouched.
+ */
+export function buildManualGroupMapPackToFourMembers(submissions: TeamSubmission[]): Map<string, string> {
+  const map = new Map<string, string>();
+  const pool = submissions
+    .filter((s) => {
+      if (s.squad_merge_opt_in === false) return false;
+      const n = countFilledMembers(s);
+      return n > 0 && n < MAX_SQUAD_MEMBERS;
+    })
+    .sort((a, b) => a.created_at.localeCompare(b.created_at));
+
+  type Bin = { ids: string[]; memberCount: number };
+  const openBins: Bin[] = [];
+
+  for (const sub of pool) {
+    const n = countFilledMembers(sub);
+    let placed = false;
+
+    for (const bin of openBins) {
+      if (bin.memberCount + n <= MAX_SQUAD_MEMBERS) {
+        bin.ids.push(sub.id);
+        bin.memberCount += n;
+        placed = true;
+        break;
+      }
+    }
+
+    if (!placed) {
+      openBins.push({ ids: [sub.id], memberCount: n });
+    }
+  }
+
+  for (const bin of openBins) {
+    if (bin.ids.length > 1) {
+      assignBinToMap(map, bin.ids);
+    }
+  }
+
+  return map;
+}
+
+/** Solos in fours, then bin-pack remaining incomplete teams to 4 members. */
+export function buildManualGroupMapAllSquadsOfFour(submissions: TeamSubmission[]): Map<string, string> {
+  const map = buildManualGroupMapSolosInFours(submissions);
+  const alreadyGrouped = new Set(map.keys());
+  const rest = submissions.filter((s) => !alreadyGrouped.has(s.id));
+  const packed = buildManualGroupMapPackToFourMembers(rest);
+  for (const [id, leader] of packed) {
+    map.set(id, leader);
+  }
+  return map;
+}
+
 export function applyManualMerge(
   groupMap: Map<string, string>,
   selectedIds: string[],
