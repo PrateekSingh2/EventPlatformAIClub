@@ -1,7 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyAdminSecret } from '@/lib/auth';
 import { getSupabaseAdmin, isSupabaseConfigured } from '@/lib/supabase';
-import { createTokenArchiveUploadUrl, createTeamArchiveUploadUrl } from '@/lib/storage';
+import {
+  createCaseStudyPoolUploadUrl,
+  createTokenArchiveUploadUrl,
+  createTeamArchiveUploadUrl,
+} from '@/lib/storage';
+import { chunkArray, mapWithConcurrency } from '@/lib/async-pool';
+
+const PRESIGN_CONCURRENCY = 15;
+const TOKEN_UPSERT_CHUNK = 200;
 
 /**
  * POST /api/admin/stages/bulk-upload
@@ -65,29 +73,18 @@ export async function POST(req: NextRequest) {
           );
         }
 
-        const results: Array<{
-          teamKey: string;
-          teamName: string;
-          tokens: string[];
-          accessToken: string;
-          uploadUrl: string;
-          token: string;
-          storagePath: string;
-          expiresIn: number;
-        }> = [];
-
-        for (const team of teams) {
+        const presigned = await mapWithConcurrency(teams, PRESIGN_CONCURRENCY, async (team) => {
           const urlData = await createTeamArchiveUploadUrl(team.teamKey);
-          results.push({
+          return {
             teamKey: team.teamKey,
             teamName: team.teamName,
             tokens: team.tokens,
             accessToken: team.tokens[0] || team.teamKey,
             ...urlData,
-          });
-        }
+          };
+        });
 
-        return NextResponse.json({ success: true, uploadTargets: results });
+        return NextResponse.json({ success: true, uploadTargets: presigned });
       }
 
       // Legacy fallback: per-token upload targets
@@ -111,8 +108,22 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'teams or tokens array is required' }, { status: 400 });
     }
 
+    if (action === 'presign-pool') {
+      const { items } = body as { items?: Array<{ poolKey: string }> };
+      if (!Array.isArray(items) || items.length === 0) {
+        return NextResponse.json({ error: 'items array with poolKey is required' }, { status: 400 });
+      }
+
+      const poolTargets = await mapWithConcurrency(items, PRESIGN_CONCURRENCY, async (item) => {
+        return createCaseStudyPoolUploadUrl(item.poolKey);
+      });
+
+      return NextResponse.json({ success: true, poolTargets });
+    }
+
     // ── Action: commit ─────────────────────────────────────────────────────────
-    if (action === 'commit') {
+    if (action === 'commit' || action === 'commit-pool') {
+      const allowSharedStoragePaths = action === 'commit-pool' || Boolean(body.allowSharedStoragePaths);
       const { archives } = body as {
         archives: Array<{
           accessToken?: string;
@@ -122,6 +133,7 @@ export async function POST(req: NextRequest) {
           storagePath: string;
           stageCount: number;
           passwords?: string[];
+          poolKey?: string;
         }>;
       };
 
@@ -129,96 +141,106 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: 'archives array is required' }, { status: 400 });
       }
 
-      // STRICT VALIDATION: No two different teams can have the same ZIP archive storagePath
-      const storagePathsSeen = new Set<string>();
-      for (const arch of archives) {
-        const path = arch.storagePath.trim();
-        if (storagePathsSeen.has(path)) {
-          return NextResponse.json(
-            {
-              error: `Uniqueness violation: Archive "${path}" is mapped to multiple teams. Every team must receive a unique challenge archive.`,
-            },
-            { status: 400 }
-          );
+      if (!allowSharedStoragePaths) {
+        const storagePathsSeen = new Set<string>();
+        for (const arch of archives) {
+          const path = arch.storagePath.trim();
+          if (storagePathsSeen.has(path)) {
+            return NextResponse.json(
+              {
+                error: `Uniqueness violation: Archive "${path}" is mapped to multiple teams. Use pool distribution to reuse case studies.`,
+              },
+              { status: 400 }
+            );
+          }
+          storagePathsSeen.add(path);
         }
-        storagePathsSeen.add(path);
       }
 
       const supabaseAdmin = getSupabaseAdmin();
       const committed: string[] = [];
       const errors: Array<{ target: string; error: string }> = [];
+      const uploadedAt = new Date().toISOString();
+
+      type TokenRow = {
+        access_token: string;
+        team_name: string | null;
+        storage_path: string;
+        stage_count: number;
+        uploaded_at: string;
+      };
+
+      const tokenRows: TokenRow[] = [];
+      const passwordMeta: Array<{ teamName: string; primaryToken: string; passwords?: string[] }> = [];
 
       for (const arch of archives) {
         const { accessToken, teamName, tokens, storagePath, stageCount, passwords } = arch;
-        const targetTokens = (tokens && tokens.length > 0)
-          ? tokens
-          : accessToken
-          ? [accessToken]
-          : [];
+        const targetTokens =
+          tokens && tokens.length > 0 ? tokens : accessToken ? [accessToken] : [];
 
         if (targetTokens.length === 0) {
           errors.push({ target: teamName || 'Unknown Team', error: 'No tokens found for team archive' });
           continue;
         }
 
-        try {
-          let primaryArchiveId: string | null = null;
+        for (const token of targetTokens) {
+          tokenRows.push({
+            access_token: token.trim().toUpperCase(),
+            team_name: teamName || null,
+            storage_path: storagePath,
+            stage_count: stageCount,
+            uploaded_at: uploadedAt,
+          });
+        }
 
-          // Upsert archive record for EVERY token belonging to this team
-          // This guarantees all members of the team download and verify against the same ZIP!
-          for (const token of targetTokens) {
-            const cleanToken = token.trim().toUpperCase();
-            const { data: archiveRow, error: archiveErr } = await supabaseAdmin
-              .from('token_archives')
-              .upsert(
-                {
-                  access_token: cleanToken,
-                  team_name: teamName || null,
-                  storage_path: storagePath,
-                  stage_count: stageCount,
-                  uploaded_at: new Date().toISOString(),
-                },
-                { onConflict: 'access_token' }
-              )
-              .select('id')
-              .single();
+        passwordMeta.push({
+          teamName: teamName || targetTokens[0],
+          primaryToken: targetTokens[0].trim().toUpperCase(),
+          passwords,
+        });
+        committed.push(teamName || targetTokens[0]);
+      }
 
-            if (archiveErr || !archiveRow) {
-              console.warn(`[token_archives upsert warning for ${cleanToken}]:`, archiveErr?.message);
-            } else if (!primaryArchiveId) {
-              primaryArchiveId = (archiveRow as any).id as string;
-            }
-          }
-
-          // If passwords are provided (optional), save them to stage_passwords
-          if (primaryArchiveId && passwords && Array.isArray(passwords) && passwords.length > 0) {
-            await supabaseAdmin
-              .from('stage_passwords')
-              .delete()
-              .eq('token_archive_id', primaryArchiveId);
-
-            const passwordRows = passwords.map((pw, idx) => ({
-              token_archive_id: primaryArchiveId,
-              stage_number: idx + 2, // stages 2, 3, 4, …
-              password: pw,
-            }));
-
-            const { error: pwErr } = await supabaseAdmin
-              .from('stage_passwords')
-              .insert(passwordRows);
-
-            if (pwErr) {
-              console.warn('[stage_passwords insert warning]:', pwErr.message);
-            }
-          }
-
-          committed.push(teamName || targetTokens[0]);
-        } catch (err: any) {
-          errors.push({ target: teamName || targetTokens[0], error: err.message });
+      for (const chunk of chunkArray(tokenRows, TOKEN_UPSERT_CHUNK)) {
+        const { error: upsertErr } = await supabaseAdmin
+          .from('token_archives')
+          .upsert(chunk, { onConflict: 'access_token' });
+        if (upsertErr) {
+          errors.push({ target: 'batch-upsert', error: upsertErr.message });
+          break;
         }
       }
 
-      return NextResponse.json({ success: true, committed, errors });
+      for (const meta of passwordMeta) {
+        if (!meta.passwords?.length) continue;
+        try {
+          const { data: archiveRow } = await supabaseAdmin
+            .from('token_archives')
+            .select('id')
+            .eq('access_token', meta.primaryToken)
+            .maybeSingle();
+
+          const primaryArchiveId = archiveRow?.id as string | undefined;
+          if (!primaryArchiveId) continue;
+
+          await supabaseAdmin.from('stage_passwords').delete().eq('token_archive_id', primaryArchiveId);
+
+          const passwordRows = meta.passwords.map((pw, idx) => ({
+            token_archive_id: primaryArchiveId,
+            stage_number: idx + 2,
+            password: pw,
+          }));
+
+          const { error: pwErr } = await supabaseAdmin.from('stage_passwords').insert(passwordRows);
+          if (pwErr) {
+            console.warn('[stage_passwords insert warning]:', pwErr.message);
+          }
+        } catch (err: any) {
+          console.warn('[stage_passwords optional write]:', err.message);
+        }
+      }
+
+      return NextResponse.json({ success: errors.length === 0, committed, errors });
     }
 
     return NextResponse.json({ error: 'Invalid action. Use presign or commit.' }, { status: 400 });

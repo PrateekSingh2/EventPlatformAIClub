@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { Stage, Contest, PreflightValidationResult } from '@/lib/types';
 import { validateArchiveDecryption, extractInnerZipBlob, countStagesInOuterArchive } from '@/lib/zip-engine';
+import { mapWithConcurrency } from '@/lib/async-pool';
 import { downloadTokensFile } from '@/lib/tokens';
 import { supabase } from '@/lib/supabase';
 import {
@@ -57,6 +58,47 @@ export interface TeamRosterItem {
 }
 
 type TabMode = 'bulk' | 'list' | 'create' | 'edit';
+type BulkDistributionMode = 'pool' | 'unique';
+
+const UPLOAD_CONCURRENCY = 4;
+
+function makePoolKey(fileName: string, index: number): string {
+  const base = fileName
+    .replace(/\.zip$/i, '')
+    .replace(/[^a-zA-Z0-9_-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48);
+  return `${base || 'case-study'}-${index + 1}`.toLowerCase();
+}
+
+async function uploadZipToStorageTarget(
+  file: File,
+  target: { storagePath: string; token: string; uploadUrl?: string }
+): Promise<void> {
+  let uploaded = false;
+  try {
+    const { error: uploadErr } = await supabase.storage
+      .from('stages')
+      .uploadToSignedUrl(target.storagePath, target.token, file);
+    if (!uploadErr) uploaded = true;
+  } catch {}
+
+  if (!uploaded && target.uploadUrl) {
+    const res = await fetch(target.uploadUrl, {
+      method: 'PUT',
+      body: file,
+      headers: { 'Content-Type': file.type || 'application/zip' },
+    });
+    if (!res.ok) {
+      throw new Error(`Failed to upload ${file.name} to storage: ${res.statusText}`);
+    }
+    uploaded = true;
+  }
+
+  if (!uploaded) {
+    throw new Error(`Failed to upload ${file.name}`);
+  }
+}
 
 export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
   // Mode State: 'list' (shows all contests), 'create' (new contest), 'edit' (edit existing)
@@ -67,6 +109,9 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
   const [bulkStageCount, setBulkStageCount] = useState<number>(12);
   const [detectingStages, setDetectingStages] = useState(false);
   const [bulkTeamMappings, setBulkTeamMappings] = useState<string[]>([]);
+  const [distributionMode, setDistributionMode] = useState<BulkDistributionMode>('pool');
+  /** teamKey → index in bulkZipFiles (pool mode; reuse allowed) */
+  const [teamPoolZipIndex, setTeamPoolZipIndex] = useState<Record<string, number>>({});
   const [availableTeams, setAvailableTeams] = useState<TeamRosterItem[]>([]);
   const [loadingTokens, setLoadingTokens] = useState(false);
   const [bulkUploading, setBulkUploading] = useState(false);
@@ -267,6 +312,35 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
         setDetectingStages(false);
       }
     }
+
+    if (distributionMode === 'pool' && availableTeams.length > 0 && files.length > 0) {
+      const next: Record<string, number> = {};
+      for (const team of availableTeams) {
+        next[team.teamKey] = Math.floor(Math.random() * files.length);
+      }
+      setTeamPoolZipIndex(next);
+    }
+  };
+
+  const handleRandomizePoolToAllTeams = () => {
+    if (availableTeams.length === 0) {
+      setStatusMessage({ type: 'error', text: 'No registered teams found. Refresh roster first.' });
+      return;
+    }
+    if (bulkZipFiles.length === 0) {
+      setStatusMessage({ type: 'error', text: 'Add case-study ZIPs to the pool first.' });
+      return;
+    }
+
+    const next: Record<string, number> = {};
+    for (const team of availableTeams) {
+      next[team.teamKey] = Math.floor(Math.random() * bulkZipFiles.length);
+    }
+    setTeamPoolZipIndex(next);
+    setStatusMessage({
+      type: 'success',
+      text: `Random pool assignment: all ${availableTeams.length} teams mapped to ${bulkZipFiles.length} case-study ZIP(s). Reuse is allowed when teams exceed pool size.`,
+    });
   };
 
   // Strictly distribute unique challenge archives across all registered teams (1 unique ZIP per team)
@@ -399,9 +473,8 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
       }>;
       const targetByTeamKey = new Map(targets.map((t) => [t.teamKey, t]));
 
-      // 2. Upload each ZIP file directly to Supabase Storage
-      for (let i = 0; i < teamsToDeploy.length; i++) {
-        const { team, file } = teamsToDeploy[i];
+      await mapWithConcurrency(teamsToDeploy, UPLOAD_CONCURRENCY, async (item, i) => {
+        const { team, file } = item;
         const target = targetByTeamKey.get(team.teamKey);
         if (!target) {
           throw new Error(`Missing upload target for team "${team.teamName}"`);
@@ -410,30 +483,8 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
         setBulkUploadProgress(
           `Uploading archive ${i + 1} of ${teamsToDeploy.length}: ${file.name} for team "${team.teamName}" (${team.memberCount} members)...`
         );
-
-        let uploaded = false;
-        try {
-          const { error: uploadErr } = await supabase.storage
-            .from('stages')
-            .uploadToSignedUrl(target.storagePath, target.token, file);
-          if (!uploadErr) uploaded = true;
-        } catch {}
-
-        if (!uploaded && target.uploadUrl) {
-          const res = await fetch(target.uploadUrl, {
-            method: 'PUT',
-            body: file,
-            headers: { 'Content-Type': file.type || 'application/zip' },
-          });
-          if (!res.ok) {
-            throw new Error(`Failed to upload ${file.name} to storage: ${res.statusText}`);
-          }
-          uploaded = true;
-        }
-        if (!uploaded) {
-          throw new Error(`Failed to upload ${file.name} for team "${team.teamName}"`);
-        }
-      }
+        await uploadZipToStorageTarget(file, target);
+      });
 
       // 3. Commit to database: maps the archive to all member tokens of that team
       setBulkUploadProgress('Registering team archive bindings in database...');
@@ -484,6 +535,117 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
         type: 'error',
         text: err.message || 'Bulk upload failed',
       });
+    } finally {
+      setBulkUploading(false);
+      setBulkUploadProgress(null);
+    }
+  };
+
+  const handleExecutePoolDistribution = async () => {
+    if (bulkZipFiles.length === 0) {
+      setStatusMessage({ type: 'error', text: 'Add at least one case-study ZIP to the pool.' });
+      return;
+    }
+    if (availableTeams.length === 0) {
+      setStatusMessage({ type: 'error', text: 'No registered teams found. Refresh roster first.' });
+      return;
+    }
+
+    const unassigned = availableTeams.filter((t) => teamPoolZipIndex[t.teamKey] === undefined);
+    if (unassigned.length > 0) {
+      setStatusMessage({
+        type: 'error',
+        text: `${unassigned.length} team(s) not assigned. Click "Random assign all teams" first.`,
+      });
+      return;
+    }
+
+    setBulkUploading(true);
+    setStatusMessage(null);
+
+    try {
+      const poolKeys = bulkZipFiles.map((f, i) => makePoolKey(f.name, i));
+
+      setBulkUploadProgress(`Requesting ${poolKeys.length} pool storage slot(s)...`);
+      const presignRes = await fetch('/api/admin/stages/bulk-upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'presign-pool',
+          adminSecret,
+          items: poolKeys.map((poolKey) => ({ poolKey })),
+        }),
+      });
+      const presignData = await presignRes.json();
+      if (!presignRes.ok || !presignData.poolTargets) {
+        throw new Error(presignData.error || 'Failed to presign pool uploads');
+      }
+
+      const poolTargets = presignData.poolTargets as Array<{
+        poolKey: string;
+        storagePath: string;
+        token: string;
+        uploadUrl?: string;
+      }>;
+      const targetByPoolKey = new Map(poolTargets.map((t) => [t.poolKey, t]));
+
+      await mapWithConcurrency(bulkZipFiles, UPLOAD_CONCURRENCY, async (file, i) => {
+        const poolKey = poolKeys[i];
+        const target = targetByPoolKey.get(poolKey);
+        if (!target) throw new Error(`Missing pool upload target for ${file.name}`);
+        setBulkUploadProgress(`Uploading pool ZIP ${i + 1}/${bulkZipFiles.length}: ${file.name}`);
+        await uploadZipToStorageTarget(file, target);
+      });
+
+      setBulkUploadProgress(
+        `Binding ${availableTeams.length} teams to pool (batched DB upsert, ${availableTeams.reduce((n, t) => n + t.tokens.length, 0)} tokens)...`
+      );
+
+      const archives = availableTeams.map((team) => {
+        const zipIdx = teamPoolZipIndex[team.teamKey] ?? 0;
+        const poolKey = poolKeys[zipIdx];
+        const target = targetByPoolKey.get(poolKey);
+        if (!target) throw new Error(`Missing storage for pool key ${poolKey}`);
+        return {
+          teamKey: team.teamKey,
+          teamName: team.teamName,
+          tokens: team.tokens,
+          storagePath: target.storagePath,
+          stageCount: bulkStageCount,
+          poolKey,
+        };
+      });
+
+      const commitRes = await fetch('/api/admin/stages/bulk-upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'commit-pool',
+          adminSecret,
+          archives,
+        }),
+      });
+
+      const commitData = await commitRes.json();
+      if (!commitRes.ok || !commitData.success) {
+        throw new Error(commitData.error || 'Failed to commit pool distribution');
+      }
+
+      const commitErrors = (commitData.errors || []) as Array<{ target: string; error: string }>;
+      if (commitErrors.length > 0) {
+        throw new Error(commitErrors.map((e) => `${e.target}: ${e.error}`).join('; '));
+      }
+
+      setStatusMessage({
+        type: 'success',
+        text: `Pool deployed: ${bulkZipFiles.length} unique case-study ZIP(s) distributed to ${availableTeams.length} teams (~${availableTeams.reduce((n, t) => n + t.memberCount, 0)} participants).`,
+      });
+
+      setBulkZipFiles([]);
+      setTeamPoolZipIndex({});
+      await fetchCommittedArchives();
+    } catch (err: any) {
+      setStatusMessage({ type: 'error', text: err.message || 'Pool distribution failed' });
     } finally {
       setBulkUploading(false);
       setBulkUploadProgress(null);
@@ -1034,8 +1196,33 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
                   Select Challenge ZIP Archives
                 </h4>
                 <p className="text-[11px] text-slate-400 mt-0.5">
-                  Choose all X multi-stage ZIP files. Each archive will be uniquely mapped to a participant token.
+                  Upload multiple case-study ZIPs into a pool, then randomly distribute to every registered team.
                 </p>
+              </div>
+
+              <div className="flex items-center gap-2 bg-slate-900 border border-app-border px-2 py-1 rounded-xl">
+                <button
+                  type="button"
+                  onClick={() => setDistributionMode('pool')}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold cursor-pointer ${
+                    distributionMode === 'pool'
+                      ? 'bg-emerald-600 text-white'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  Pool (recommended)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDistributionMode('unique')}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold cursor-pointer ${
+                    distributionMode === 'unique'
+                      ? 'bg-app-accent text-app-bg'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  1:1 unique ZIP
+                </button>
               </div>
 
               {/* Stage Count Configuration */}
@@ -1079,7 +1266,113 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
           </div>
 
           {/* Token Assignment & Archive Preview Table */}
-          {bulkZipFiles.length > 0 && (
+          {bulkZipFiles.length > 0 && distributionMode === 'pool' && (
+            <div className="p-5 rounded-2xl bg-app-surface border border-emerald-500/30 space-y-4 animate-in fade-in duration-200">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-app-border">
+                <div>
+                  <h4 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                    <Shuffle className="w-4 h-4 text-emerald-400" />
+                    Case Study Pool ({bulkZipFiles.length} ZIPs → {availableTeams.length} teams)
+                  </h4>
+                  <p className="text-[11px] text-slate-400 mt-1 max-w-2xl leading-relaxed">
+                    Each unique ZIP uploads <strong>once</strong> to shared storage. Teams randomly draw from the pool (reuse OK when teams &gt; ZIPs). Batched DB writes and throttled uploads protect Supabase rate limits at 150–200+ participants.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={handleRandomizePoolToAllTeams}
+                    disabled={availableTeams.length === 0}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs bg-emerald-600 hover:bg-emerald-500 text-white transition-colors cursor-pointer disabled:opacity-50 font-medium"
+                  >
+                    <Shuffle className="w-3.5 h-3.5" />
+                    <span>Random assign all {availableTeams.length} teams</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBulkZipFiles([]);
+                      setTeamPoolZipIndex({});
+                    }}
+                    className="px-2.5 py-1.5 rounded-xl text-xs text-rose-400 hover:bg-rose-500/10 border border-rose-500/20 transition-colors cursor-pointer"
+                  >
+                    Clear pool
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+                <div className="p-3 rounded-xl bg-slate-900/60 border border-app-border">
+                  <div className="text-slate-400 text-[10px] uppercase font-mono">Pool size</div>
+                  <div className="text-lg font-bold text-emerald-400">{bulkZipFiles.length}</div>
+                </div>
+                <div className="p-3 rounded-xl bg-slate-900/60 border border-app-border">
+                  <div className="text-slate-400 text-[10px] uppercase font-mono">Teams assigned</div>
+                  <div className="text-lg font-bold text-white">
+                    {availableTeams.filter((t) => teamPoolZipIndex[t.teamKey] !== undefined).length} / {availableTeams.length}
+                  </div>
+                </div>
+                <div className="p-3 rounded-xl bg-slate-900/60 border border-app-border">
+                  <div className="text-slate-400 text-[10px] uppercase font-mono">Est. participants</div>
+                  <div className="text-lg font-bold text-app-text">
+                    {availableTeams.reduce((n, t) => n + t.memberCount, 0)}
+                  </div>
+                </div>
+              </div>
+
+              <ul className="text-[11px] text-slate-300 space-y-1 font-mono max-h-40 overflow-y-auto border border-app-border rounded-xl p-3 bg-slate-900/40">
+                {bulkZipFiles.map((f, i) => {
+                  const teamCount = availableTeams.filter((t) => teamPoolZipIndex[t.teamKey] === i).length;
+                  return (
+                    <li key={f.name + i} className="flex justify-between gap-2">
+                      <span className="truncate">{f.name}</span>
+                      <span className="text-emerald-400 shrink-0">{teamCount} team(s)</span>
+                    </li>
+                  );
+                })}
+              </ul>
+
+              <div className="pt-3 border-t border-app-border flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="text-[11px] text-slate-400">
+                  {bulkUploadProgress ? (
+                    <div className="flex items-center gap-2 text-app-text font-mono">
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>{bulkUploadProgress}</span>
+                    </div>
+                  ) : (
+                    <span>Uploads run {UPLOAD_CONCURRENCY} at a time; token rows commit in batches of 200.</span>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={handleExecutePoolDistribution}
+                  disabled={
+                    bulkUploading ||
+                    bulkZipFiles.length === 0 ||
+                    availableTeams.length === 0 ||
+                    availableTeams.some((t) => teamPoolZipIndex[t.teamKey] === undefined)
+                  }
+                  className="flex items-center justify-center gap-2 px-6 py-2.5 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-500 rounded-xl transition-colors disabled:opacity-50 cursor-pointer min-h-[40px]"
+                >
+                  {bulkUploading ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>Deploying pool…</span>
+                    </>
+                  ) : (
+                    <>
+                      <Upload className="w-4 h-4" />
+                      <span>
+                        Upload pool & distribute to {availableTeams.length} teams
+                      </span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {bulkZipFiles.length > 0 && distributionMode === 'unique' && (
             <div className="p-5 rounded-2xl bg-app-surface border border-app-border space-y-4 animate-in fade-in duration-200">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-app-border">
                 <div>

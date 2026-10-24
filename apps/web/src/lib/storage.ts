@@ -133,6 +133,34 @@ export async function createTokenArchiveUploadUrl(
  * Ensures each team receives a dedicated storage location, and all members of that team
  * will download the exact same ZIP archive.
  */
+/** Shared case-study pool object (upload once, many teams reference the same path). */
+export async function createCaseStudyPoolUploadUrl(
+  poolKey: string
+): Promise<{ uploadUrl: string; token: string; storagePath: string; expiresIn: number; poolKey: string }> {
+  await ensureStagesBucketExists();
+  const supabaseAdmin = getSupabaseAdmin();
+
+  const cleanKey = poolKey.replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase().slice(0, 80);
+  const storagePath = `case-study-pool/${cleanKey}/archive.zip`;
+  const expiresIn = 600;
+
+  const { data, error } = await supabaseAdmin.storage
+    .from(STAGES_BUCKET)
+    .createSignedUploadUrl(storagePath);
+
+  if (error || !data) {
+    throw new Error(error?.message || 'Failed to create pool archive signed upload URL');
+  }
+
+  return {
+    uploadUrl: data.signedUrl,
+    token: data.token,
+    storagePath: data.path || storagePath,
+    expiresIn,
+    poolKey: cleanKey,
+  };
+}
+
 export async function createTeamArchiveUploadUrl(
   teamIdentifier: string
 ): Promise<{ uploadUrl: string; token: string; storagePath: string; expiresIn: number }> {
@@ -163,7 +191,7 @@ export async function createTokenArchiveDownloadUrl(
   storagePath: string
 ): Promise<{ downloadUrl: string; expiresIn: number }> {
   const supabaseAdmin = getSupabaseAdmin();
-  const expiresIn = 120;
+  const expiresIn = 180;
 
   const cleanPath = storagePath.replace(/^stages\//, '').replace(/^\/+/, '');
 

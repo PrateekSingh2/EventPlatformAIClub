@@ -55,6 +55,7 @@ export function UnlockNextStageModal({
 
   const stageOpenTimeRef = useRef<number>(Date.now());
   const localFailedAttemptsRef = useRef<number>(0);
+  const lastStatusFetchRef = useRef<{ stage: number; at: number; cooldown: number } | null>(null);
 
   // Clear password, errors, and check active cooldown whenever modal opens or stage transitions
   useEffect(() => {
@@ -66,24 +67,30 @@ export function UnlockNextStageModal({
       stageOpenTimeRef.current = Date.now();
       setIsOfflineMode(typeof navigator !== 'undefined' && !navigator.onLine);
 
-      // Check current cooldown state from server for nextStageNumber
       if (accessToken && nextStageNumber) {
-        fetch('/api/stage/password-attempt', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            accessToken,
-            stageNumber: nextStageNumber,
-            action: 'status',
-          }),
-        })
-          .then((res) => res.json())
-          .then((data) => {
-            if (data?.cooldownSeconds && data.cooldownSeconds > 0) {
-              setCooldownSeconds(data.cooldownSeconds);
-            }
+        const cached = lastStatusFetchRef.current;
+        const cacheFresh =
+          cached && cached.stage === nextStageNumber && Date.now() - cached.at < 5000;
+        if (cacheFresh) {
+          if (cached.cooldown > 0) setCooldownSeconds(cached.cooldown);
+        } else {
+          fetch('/api/stage/password-attempt', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              accessToken,
+              stageNumber: nextStageNumber,
+              action: 'status',
+            }),
           })
-          .catch(() => {});
+            .then((res) => res.json())
+            .then((data) => {
+              const cd = data?.cooldownSeconds || 0;
+              lastStatusFetchRef.current = { stage: nextStageNumber, at: Date.now(), cooldown: cd };
+              if (cd > 0) setCooldownSeconds(cd);
+            })
+            .catch(() => {});
+        }
       }
     } else {
       setPassword('');
