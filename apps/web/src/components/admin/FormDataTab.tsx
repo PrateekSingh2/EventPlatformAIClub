@@ -65,7 +65,6 @@ export function FormDataTab({ adminSecret }: FormDataTabProps) {
         ...((s.members || []) as TeamMemberPayload[]).flatMap((m) => [
           m.name,
           m.email,
-          m.mobile,
           m.enrollment_number,
           m.branch,
           m.year,
@@ -185,7 +184,6 @@ export function FormDataTab({ adminSecret }: FormDataTabProps) {
                     <tr className="text-left text-app-subtext border-b border-app-border/80">
                       <th className="px-4 py-2 font-semibold">#</th>
                       <th className="px-4 py-2 font-semibold">Name</th>
-                      <th className="px-4 py-2 font-semibold">Mobile</th>
                       <th className="px-4 py-2 font-semibold">Enrollment</th>
                       <th className="px-4 py-2 font-semibold">Email</th>
                       <th className="px-4 py-2 font-semibold">Branch</th>
@@ -197,7 +195,6 @@ export function FormDataTab({ adminSecret }: FormDataTabProps) {
                       <tr key={`${row.id}-${m.slot}`} className="border-b border-app-border/50 last:border-0">
                         <td className="px-4 py-2.5 font-mono">{m.slot}</td>
                         <td className="px-4 py-2.5">{m.name}</td>
-                        <td className="px-4 py-2.5 font-mono">{m.mobile}</td>
                         <td className="px-4 py-2.5 font-mono">{m.enrollment_number}</td>
                         <td className="px-4 py-2.5">{m.email}</td>
                         <td className="px-4 py-2.5">{m.branch}</td>
@@ -220,7 +217,6 @@ const EXPORT_HEADERS = [
   'submitted_at',
   'member_slot',
   'name',
-  'mobile',
   'enrollment_number',
   'email',
   'branch',
@@ -239,7 +235,6 @@ function buildExportRows(submissions: SubmissionRow[]): ExportRow[] {
         submitted_at: row.created_at,
         member_slot: '',
         name: '',
-        mobile: '',
         enrollment_number: '',
         email: '',
         branch: '',
@@ -253,7 +248,6 @@ function buildExportRows(submissions: SubmissionRow[]): ExportRow[] {
         submitted_at: row.created_at,
         member_slot: String(m.slot ?? ''),
         name: m.name ?? '',
-        mobile: m.mobile ?? '',
         enrollment_number: m.enrollment_number ?? '',
         email: m.email ?? '',
         branch: m.branch ?? '',

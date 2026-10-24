@@ -9,7 +9,6 @@ import {
 
 const EMPTY_MEMBER: TeamMemberFormFields = {
   name: '',
-  mobile: '',
   enrollment_number: '',
   email: '',
   branch: '',
@@ -130,32 +129,21 @@ export default function TeamRegistrationFormPage() {
               <div className="grid gap-4 sm:grid-cols-2">
                 <Field
                   label="Name"
-                  required={index < 3}
+                  required={index === 0}
                   value={member.name}
                   onChange={(v) => updateMember(index, 'name', v)}
                   id={`m${index}_name`}
                 />
                 <Field
-                  label="Mobile number"
-                  required={index === 0}
-                  type="tel"
-                  inputMode="numeric"
-                  maxLength={10}
-                  value={member.mobile}
-                  onChange={(v) => updateMember(index, 'mobile', v.replace(/\D/g, '').slice(0, 10))}
-                  id={`m${index}_mobile`}
-                  placeholder="10-digit mobile"
-                />
-                <Field
                   label="Enrollment number"
-                  required={index < 3}
+                  required={index === 0}
                   value={member.enrollment_number}
                   onChange={(v) => updateMember(index, 'enrollment_number', v)}
                   id={`m${index}_enrollment`}
                 />
                 <Field
                   label="Email"
-                  required={index < 3}
+                  required={index === 0}
                   type="email"
                   value={member.email}
                   onChange={(v) => updateMember(index, 'email', v)}
@@ -163,14 +151,14 @@ export default function TeamRegistrationFormPage() {
                 />
                 <Field
                   label="Branch"
-                  required={index < 3}
+                  required={index === 0}
                   value={member.branch}
                   onChange={(v) => updateMember(index, 'branch', v)}
                   id={`m${index}_branch`}
                 />
                 <YearSelect
                   label="Year"
-                  required={index < 3}
+                  required={index === 0}
                   value={member.year}
                   onChange={(v) => updateMember(index, 'year', v)}
                   id={`m${index}_year`}
