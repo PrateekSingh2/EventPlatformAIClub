@@ -20,14 +20,84 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
 const OUT_DIR = path.join(ROOT, 'examples', 'case-studies', 'packs');
 
+const PASSWORD_FORMAT_GLOBAL = `# Unlock password format (read first)
+
+Every locked \`STAGE_XX.zip\` needs a **derived key**. Type it exactly in the contest arena (or your unzip tool).
+
+| Rule | Requirement |
+|------|-------------|
+| Case | **UPPERCASE** \`A-Z\` (convert before submit unless a stage says otherwise) |
+| Characters | Letters, digits \`0-9\`, hyphen \`-\` only |
+| Forbidden | Spaces, underscores, smart quotes, trailing punctuation |
+| Shape | Each stage README gives a **format template** — replace placeholders with evidence values |
+| Example lines | Show **shape only** (e.g. \`SPIKE-3-1015\`) — not the answer for your team |
+
+## Where to look
+
+1. Open the current stage folder (e.g. \`STAGE_03/\`).
+2. Read \`README.md\` → section **Unlock \`STAGE_XX.zip\`\`**.
+3. Use the \`\`\` template \`\`\` block — not the prose label "PASSWORD:" alone.
+
+Stage-by-stage templates for this pack are also listed in \`PASSWORD_FORMAT.md\` at the archive root.
+`;
+
 const RULES = `# Rules & scoring
 
 - Work only inside the contest arena; do not share derived keys between teams.
 - Each stage unlock password is **derived** from evidence in the **previous** stage folder.
-- Passwords are uppercase letters, digits, and hyphens unless a stage README states otherwise.
+- Keys use **UPPERCASE** letters, digits, and hyphens unless a stage README states otherwise (see \`PASSWORD_FORMAT.md\`).
 - Partial credit may be awarded for documented reasoning even if the key is wrong (organizer discretion).
 - AI tutors may explain methods; they must not paste the full unlock token for you.
 `;
+
+function unlockBlock(nextStageNum, template, hints = []) {
+  const label = String(nextStageNum).padStart(2, '0');
+  const hintLines = hints.map((h) => `- ${h}`).join('\n');
+  return `
+
+## Unlock \`STAGE_${label}.zip\`
+
+**Password format (enter exactly in the arena):**
+
+\`\`\`
+${template}
+\`\`\`
+
+${hintLines}
+
+*Example shapes in this pack are not your answer — compute from your evidence.*
+`;
+}
+
+function enrichStageReadme(readme, stageNum, caseStudy) {
+  const tpl = caseStudy.unlockTemplates?.[stageNum];
+  if (!tpl?.template) return readme;
+  if (/## Unlock [`']?STAGE_/i.test(readme)) return readme;
+  if (/Derive STAGE_\d+/i.test(readme)) return readme;
+  return `${readme.trim()}${unlockBlock(stageNum + 1, tpl.template, tpl.hints || [])}`;
+}
+
+function buildPasswordFormatMd(caseStudy) {
+  const rows = [];
+  for (let s = 1; s <= 11; s++) {
+    const tpl = caseStudy.unlockTemplates?.[s];
+    if (!tpl?.template) continue;
+    const next = String(s + 1).padStart(2, '0');
+    rows.push(`| After STAGE_${String(s).padStart(2, '0')} | STAGE_${next}.zip | \`${tpl.template}\` |`);
+  }
+  return `# Password format index — ${caseStudy.title}
+
+${PASSWORD_FORMAT_GLOBAL}
+
+## Templates for this pack
+
+| Completed stage | Unlocks | Format template |
+|-----------------|---------|-----------------|
+${rows.join('\n')}
+
+Derive values from evidence in the completed stage folder. Never copy example tokens from walkthroughs.
+`;
+}
 
 function aiPrompt(stageTitle, focus) {
   return `You are a contest AI tutor for "${stageTitle}".
@@ -47,6 +117,12 @@ ${meta.tagline}
 2. \`STAGE_01/README.md\` tells you how to **derive** the password for \`STAGE_02.zip\` (nothing is labeled "the password is …").
 3. Each decrypted stage folder contains evidence plus the next locked \`STAGE_XX.zip\`.
 4. Continue through **Stage 12** — the finale is inside \`STAGE_12/\`.
+5. Read \`PASSWORD_FORMAT.md\` for a quick table of all unlock **format templates**.
+
+## Password format (global)
+
+- **UPPERCASE** letters, digits, hyphens only — no spaces.
+- Each stage README includes an **Unlock \`STAGE_XX.zip\`\`** section with a \`\`\` template \`\`\` block.
 
 ## Story hook
 
@@ -471,6 +547,25 @@ Flag: \`HELIX-CLEAR\`
     aiPrompt: aiPrompt(c.title, 'summarizing findings for final submission'),
     files: [{ name: 'priya_note.txt', content: 'Thanks. — P.\n' }],
   };
+  c.unlockTemplates = {
+    1: {
+      template: 'SPIKE-<COUNT>-<HHMM>',
+      hints: ['COUNT = rows with anomaly_score >= 0.040', 'HHMM = UTC hour+minute of first spike (24h, no colon)'],
+    },
+    2: { template: 'RMS-<INTEGER>-19', hints: ['INTEGER = population RMS of delta_mv, rounded'] },
+    3: { template: 'PHASE-<JUMP>', hints: ['JUMP = largest absolute degree jump between consecutive phasor entries'] },
+    4: {
+      template: 'HARM-<ODD_COUNT>-<ORDER4>',
+      hints: ['ODD_COUNT = odd harmonic orders with magnitude_pct >= 1.0', 'ORDER4 = first qualifying order, 4 digits zero-padded'],
+    },
+    5: { template: 'DELTA-<SUM>', hints: ['SUM = integer sum of kwh for feeders A and C'] },
+    6: { template: 'FREQ-50-<COUNT>', hints: ['COUNT = Hz readings more than 0.05 away from 50.00'] },
+    7: { template: 'BUS-A-<MINUTES>', hints: ['MINUTES = maximum outage minutes in CSV'] },
+    8: { template: 'LOSS-<AVG>PCT', hints: ['AVG = integer-rounded average of three phase loss percentages'] },
+    9: { template: 'SYNC-<YYYY>', hints: ['YYYY = four-digit year from incident header'] },
+    10: { template: 'TRIP-<CODE>', hints: ['CODE = 4-digit zero-padded code for breaker TRIP-04'] },
+    11: { template: 'HELIX-CLEAR', hints: ['Copy verified token from clearance.json after SHA-256 check'] },
+  };
 }
 
 /** Generic stage builder for cases 4–10: numeric puzzles tied to precomputed passwords */
@@ -578,6 +673,23 @@ Example shape only — compute from CSV.`,
   ],
 });
 
+CASES[1].unlockTemplates = {
+  1: {
+    template: 'MINT-<COUNT>-<B>',
+    hints: ['COUNT = defect rows (|error_mg| >= 12)', 'B = numeric part of earliest defect batch id'],
+  },
+  2: { template: 'Z-2-<PRODUCT>', hints: ['PRODUCT = (count of z-scores > 2) × 92'] },
+  3: { template: 'MEAN-<VALUE>', hints: ['VALUE = mean grams × 1000, rounded integer'] },
+  4: { template: 'BATCH-<HEX2>', hints: ['HEX2 = two hex digits from batch_id (no 0x prefix)'] },
+  5: { template: 'DRIFT-<NNN>', hints: ['NNN = max drift_pct × 1000, zero-padded to 3 digits'] },
+  6: { template: 'COIN-50P', hints: ['Literal denomination code for 50 from denoms.json'] },
+  7: { template: 'REJECT-<SUM>', hints: ['SUM = total reject column'] },
+  8: { template: 'TARE-<NNN>G', hints: ['NNN = tare grams × 1000 as 3-digit integer'] },
+  9: { template: 'AUDIT-OK', hints: ['Use when audit_pass is true'] },
+  10: { template: 'VAULT-<NNN>', hints: ['NNN = vault id from ledger (3 digits)'] },
+  11: { template: 'MINT-CLEAR', hints: ['Token from clearance.txt after phrase check'] },
+};
+
 function fillPacketForge(c) {
   c.stages[1] = {
     readme: `# Stage 1 — Frame hunt
@@ -683,6 +795,22 @@ Verify \`sha256\` of string in \`clear.txt\` matches \`expect\`; use that string
     aiPrompt: aiPrompt(c.title, 'finale'),
     files: [{ name: 'capture.done', content: '1\n' }],
   };
+  c.unlockTemplates = {
+    1: {
+      template: 'FRAME-<N>-<CRC8>',
+      hints: ['N = count of valid=1 frames', 'CRC8 = crc8 field of last valid frame (bottom-up)'],
+    },
+    2: { template: 'XOR-<HEX4>', hints: ['HEX4 = uppercase hex of (a XOR b), 16-bit, 4 chars'] },
+    3: { template: 'LEN-<HEX4>', hints: ['HEX4 = uppercase hex of payload byte length, 4 digits'] },
+    4: { template: 'SEQ-<HEX4>', hints: ['HEX4 = big-endian uint16 at header bytes 4-5'] },
+    5: { template: 'MAC-DEAD', hints: ['Literal sentinel when mac_valid is false'] },
+    6: { template: 'CRC-55AA', hints: ['Drop 0x prefix from crc16 constant in footer'] },
+    7: { template: 'PORT-<HEX4>', hints: ['HEX4 = uppercase hex of port decimal, width 4'] },
+    8: { template: 'ACK-<SUM4>', hints: ['SUM4 = sum of ack column, zero-padded decimal 4 digits'] },
+    9: { template: 'RST-<HEX2>', hints: ['HEX2 = uppercase hex of rst decimal, 2 chars'] },
+    10: { template: 'PAY-<BYTES>', hints: ['BYTES = size_bytes decimal from JSON, no padding'] },
+    11: { template: 'FORGE-CLEAR', hints: ['Verified string from clear.txt after SHA-256 check'] },
+  };
 }
 
 fillPacketForge(CASES[2]);
@@ -704,22 +832,39 @@ function fillSatellite(c) {
       },
     ],
   };
+  const satTpl = {
+    2: { template: 'INC-<DEG>-<TENTH>', file: 'inclination.txt', content: 'inc_deg=98.4\n', hints: ['DEG = integer degrees', 'TENTH = single digit after decimal'] },
+    3: { template: 'RAAN-<DEG>', file: 'raan.txt', content: 'raan_deg=112\n', hints: ['DEG = integer right ascension'] },
+    4: { template: 'MEAN-<MOTION>', file: 'mean_motion.txt', content: 'mean_motion=90.12\n', hints: ['MOTION = mean motion × 100, no decimal (9012)'] },
+    5: { template: 'REV-<N>', file: 'revs.txt', content: 'revolutions=14\n', hints: ['N = integer revolution count'] },
+    6: { template: 'ECCENT-<NNN>', file: 'eccentricity.txt', content: 'eccentricity=0.001\n', hints: ['NNN = eccentricity × 1000, zero-padded 3 digits'] },
+    7: { template: 'PER-<HHMM>', file: 'perigee.txt', content: 'perigee_utc=05:10\n', hints: ['HHMM = perigee pass time UTC, 24h'] },
+    8: { template: 'APO-<HHMM>', file: 'apogee.txt', content: 'apogee_utc=18:20\n', hints: ['HHMM = apogee pass time UTC, 24h'] },
+    9: { template: 'NORAD-<NNN>', file: 'norad.txt', content: 'catalog=999\n', hints: ['NNN = NORAD catalog id, 3 digits'] },
+    10: { template: 'LOS-<HHMM>', file: 'los.txt', content: 'loss_of_signal_utc=00:44\n', hints: ['HHMM = loss-of-signal UTC, 24h'] },
+    11: { template: 'KITE-CLEAR', file: 'clearance.txt', content: 'token=KITE-CLEAR\n', hints: ['Finale token after verifying pass list'] },
+  };
   for (let s = 2; s <= 11; s++) {
+    const spec = satTpl[s];
     c.stages[s] = {
-      readme: `# Stage ${s}\n\nOpen \`evidence/stage${s}.txt\`. Apply formula:\n\`${c.passwords[s + 1]}\` **shape** is shown — compute using numbers in file (sum/product/count as described in file header).`,
+      readme: `# Stage ${s} — Orbital parameter\n\nRead \`evidence/${spec.file}\` and apply the format template for the next stage.`,
       aiPrompt: aiPrompt(c.title, `stage ${s} orbital math`),
-      files: [
-        {
-          name: `stage${s}.txt`,
-          content: `# Formula stage ${s}\n# Example format target: ${c.passwords[s + 1]}\nA=${s * 11}\nB=${s * 7}\n# Combine per README in parent pack START_HERE pattern.\n`,
-        },
-      ],
+      files: [{ name: spec.file, content: spec.content }],
     };
   }
   c.stages[12] = {
-    readme: `# Stage 12\n\nFinale token: \`${c.passwords[12]}\` after verifying your pass list matches NORAD log.`,
+    readme: `# Stage 12\n\nFinale token: \`KITE-CLEAR\` after verifying your pass list matches NORAD log.`,
     aiPrompt: aiPrompt(c.title, 'finale'),
     files: [{ name: 'norad.log', content: 'track complete\n' }],
+  };
+  c.unlockTemplates = {
+    1: {
+      template: 'TLE-<N>-<HHMM>',
+      hints: ['N = passes with elev_deg >= 15', 'HHMM = UTC time of first qualifying pass (24h, no colon)'],
+    },
+    ...Object.fromEntries(
+      Object.entries(satTpl).map(([stage, spec]) => [Number(stage), { template: spec.template, hints: spec.hints }])
+    ),
   };
 }
 
@@ -739,22 +884,37 @@ C3,90
       },
     ],
   };
+  const bioTpl = {
+    2: { template: 'CFU-<K>', file: 'cfu.txt', content: 'cfu_k=4\n', hints: ['K = thousands of CFU as integer (4K → 4)'] },
+    3: { template: 'OD-<NNN>', file: 'od.txt', content: 'od=0.62\n', hints: ['NNN = OD × 100, zero-padded 3 digits (062)'] },
+    4: { template: 'TEMP-<NNN>', file: 'temp.txt', content: 'temp_c=37.2\n', hints: ['NNN = Celsius × 10, integer (372)'] },
+    5: { template: 'PLATE-<NN>', file: 'plate.txt', content: 'wells=96\n', hints: ['NN = well count, 2 digits'] },
+    6: { template: 'CTRL-<WELL>', file: 'ctrl.txt', content: 'control=A1\n', hints: ['WELL = control well id uppercase'] },
+    7: { template: 'STRAIN-<WELL>', file: 'strain.txt', content: 'strain=B2\n', hints: ['WELL = strain well id uppercase'] },
+    8: { template: 'DIL-1E5', file: 'dilution.txt', content: 'dilution=1E5\n', hints: ['Literal token when dilution matches 1E5 in file'] },
+    9: { template: 'GROW-24H', file: 'grow.txt', content: 'hours=24\n', hints: ['Format GROW-<hours>H with integer hours from file'] },
+    10: { template: 'STAIN-<CODE>', file: 'stain.txt', content: 'stain=GR\n', hints: ['CODE = stain abbreviation uppercase'] },
+    11: { template: 'DELTA-CLEAR', file: 'clearance.txt', content: 'token=DELTA-CLEAR\n', hints: ['Finale clearance token'] },
+  };
   for (let s = 2; s <= 11; s++) {
+    const spec = bioTpl[s];
     c.stages[s] = {
-      readme: `# Stage ${s}\n\nEvidence \`calc${s}.csv\` — follow header comment for token format matching organizer schema (length 6-12, uppercase).`,
+      readme: `# Stage ${s}\n\nUse \`evidence/${spec.file}\` with the unlock format template.`,
       aiPrompt: aiPrompt(c.title, `bio calc ${s}`),
-      files: [
-        {
-          name: `calc${s}.csv`,
-          content: `# target_prefix=${c.passwords[s + 1].split('-')[0]}\nvalue,${s * 31}\n`,
-        },
-      ],
+      files: [{ name: spec.file, content: spec.content }],
     };
   }
   c.stages[12] = {
-    readme: `# Stage 12 — ${c.passwords[12]}`,
+    readme: `# Stage 12 — Finale\n\nSubmit summary. Flag format: \`DELTA-CLEAR\`.`,
     aiPrompt: aiPrompt(c.title, 'finale'),
     files: [{ name: 'done.txt', content: 'ok\n' }],
+  };
+  c.unlockTemplates = {
+    1: {
+      template: 'WELL-<WELL>-<CFU>',
+      hints: ['WELL = well id of max CFU row (e.g. D7)', 'CFU = integer CFU count from that row'],
+    },
+    ...Object.fromEntries(Object.entries(bioTpl).map(([st, spec]) => [Number(st), { template: spec.template, hints: spec.hints }])),
   };
 }
 
@@ -773,22 +933,42 @@ function fillTrade(c) {
       },
     ],
   };
+  const tradeTpl = {
+    2: { template: 'PIP-<NNN>', hints: ['NNN = pip delta integer from rates JSON'] },
+    3: { template: 'USD-<NNNN>', hints: ['NNNN = USD leg notional rounded integer'] },
+    4: { template: 'EUR-<NNNN>', hints: ['NNNN = EUR leg notional rounded integer'] },
+    5: { template: 'SPOT-<NNNNN>', hints: ['NNNNN = spot × 10000 integer'] },
+    6: { template: 'SWAP-<NNN>', hints: ['NNN = swap points, 3 digits zero-padded'] },
+    7: { template: 'LEG-B-<NN>', hints: ['NN = leg B id integer'] },
+    8: { template: 'FEE-<NNN>', hints: ['NNN = fee basis points, 3 digits'] },
+    9: { template: 'NET-ZERO', hints: ['Literal when net sum rounds to zero'] },
+    10: { template: 'BOOK-<NNN>', hints: ['NNN = book id from ledger'] },
+    11: { template: 'TRADE-CLEAR', hints: ['Finale clearance token'] },
+  };
   for (let s = 2; s <= 11; s++) {
+    const tpl = tradeTpl[s];
     c.stages[s] = {
-      readme: `# Stage ${s}\n\n\`rates${s}.json\` contains legs; compute pip delta per \`method\` field. Format token like \`${c.passwords[s + 1]}\` (see json \`hint_format\`).`,
+      readme: `# Stage ${s}\n\nOpen \`evidence/rates${s}.json\`. Field \`hint_format\` shows the token shape; compute from numeric fields.`,
       aiPrompt: aiPrompt(c.title, 'pip math'),
       files: [
         {
           name: `rates${s}.json`,
-          content: JSON.stringify({ hint_format: c.passwords[s + 1], pip: s * 17, spot: 1.1025 }),
+          content: JSON.stringify({ hint_format: tpl.template, pip: s * 17, spot: 1.1025, book: 777 }),
         },
       ],
     };
   }
   c.stages[12] = {
-    readme: `# Stage 12 — ${c.passwords[12]}`,
+    readme: `# Stage 12 — Finale\n\nFlag format: \`TRADE-CLEAR\`.`,
     aiPrompt: aiPrompt(c.title, 'finale'),
     files: [{ name: 'book.txt', content: 'balanced\n' }],
+  };
+  c.unlockTemplates = {
+    1: {
+      template: 'PAIR-<N>-<HHMM>',
+      hints: ['N = trades with |notional_usd| >= 1_000_000', 'HHMM = UTC time of earliest qualifying trade'],
+    },
+    ...Object.fromEntries(Object.entries(tradeTpl).map(([st, spec]) => [Number(st), spec])),
   };
 }
 
@@ -807,20 +987,40 @@ function fillCloud(c) {
       },
     ],
   };
+  const cloudTpl = {
+    2: { template: 'IDX-<NNNN>', hints: ['NNNN = shard index from break event, 4 digits'] },
+    3: { template: 'SHARD-<LETTER>', hints: ['LETTER = shard label uppercase (A/B/C)'] },
+    4: { template: 'NONCE-<NN>', hints: ['NN = nonce integer from log'] },
+    5: { template: 'TS-<NNNNNN>', hints: ['TS = unix timestamp suffix from broken entry'] },
+    6: { template: 'ACT-<WORD>', hints: ['WORD = action verb uppercase (DENY)'] },
+    7: { template: 'USER-<NNN>', hints: ['NNN = user id from audit row'] },
+    8: { template: 'IP-<A>-<B>-<C>', hints: ['Dotted IPv4 without dots → hyphens (10-0-0-1)'] },
+    9: { template: 'SIG-OK', hints: ['Literal when signature chain validates'] },
+    10: { template: 'ROOT-<HEX4>', hints: ['HEX4 = first four hex chars of root hash'] },
+    11: { template: 'CASTLE-CLEAR', hints: ['Finale clearance token'] },
+  };
   for (let s = 2; s <= 11; s++) {
+    const tpl = cloudTpl[s];
     c.stages[s] = {
-      readme: `# Stage ${s}\n\nShard \`s${s}.log\`: extract index from first \`break\` event. Token pattern in \`pattern.txt\`.`,
+      readme: `# Stage ${s}\n\nParse \`evidence/s${s}.log\` and \`pattern.txt\` (shows format template).`,
       aiPrompt: aiPrompt(c.title, 'log parsing'),
       files: [
-        { name: `s${s}.log`, content: `break idx=${s}\n` },
-        { name: 'pattern.txt', content: `format like ${c.passwords[s + 1]}\n` },
+        { name: `s${s}.log`, content: `break idx=${String(s).padStart(4, '0')}\n` },
+        { name: 'pattern.txt', content: `format template: ${tpl.template}\n` },
       ],
     };
   }
   c.stages[12] = {
-    readme: `# Stage 12 — ${c.passwords[12]}`,
+    readme: `# Stage 12 — Finale\n\nFlag format: \`CASTLE-CLEAR\`.`,
     aiPrompt: aiPrompt(c.title, 'finale'),
     files: [{ name: 'root.txt', content: 'verified\n' }],
+  };
+  c.unlockTemplates = {
+    1: {
+      template: 'HASH-<N>-<HHMM>',
+      hints: ['N = hash-chain break count', 'HHMM = minute of first broken entry UTC'],
+    },
+    ...Object.fromEntries(Object.entries(cloudTpl).map(([st, spec]) => [Number(st), spec])),
   };
 }
 
@@ -846,17 +1046,37 @@ SEND,TIMEOUT
       },
     ],
   };
+  const ridgeTpl = {
+    2: { template: 'STATE-<N>', hints: ['N = illegal state count from trace'] },
+    3: { template: 'MSG-<ID>', hints: ['ID = message id integer from transition file'] },
+    4: { template: 'RETRY-<N>', hints: ['N = retry count from transition file'] },
+    5: { template: 'TIME-<NNN>MS', hints: ['NNN = timeout milliseconds, 3 digits'] },
+    6: { template: 'ROLE-<WORD>', hints: ['WORD = CLIENT or SERVER uppercase'] },
+    7: { template: 'CODE-<NNN>', hints: ['NNN = HTTP-style code, 3 digits'] },
+    8: { template: 'SEQ-<NNNN>', hints: ['NNNN = sequence number, 4 digits zero-padded'] },
+    9: { template: 'HMAC-<HEX2>', hints: ['HEX2 = first two hex chars of HMAC digest'] },
+    10: { template: 'FIN-<NNNN>', hints: ['NNNN = final message id, 4 digits'] },
+    11: { template: 'RIDGE-CLEAR', hints: ['Finale clearance token'] },
+  };
   for (let s = 2; s <= 11; s++) {
+    const tpl = ridgeTpl[s];
     c.stages[s] = {
-      readme: `# Stage ${s}\n\n\`transition${s}.md\` describes illegal edge #${s}; derive token \`${c.passwords[s + 1]}\` using state count and message id in file.`,
+      readme: `# Stage ${s}\n\nRead \`transition${s}.md\`. Format template: \`${tpl.template}\`.`,
       aiPrompt: aiPrompt(c.title, 'protocol trace'),
-      files: [{ name: `transition${s}.md`, content: `# Edge ${s}\nmsg_id=${s + 1}\nstates=${s + 8}\n` }],
+      files: [{ name: `transition${s}.md`, content: `# Edge ${s}\nformat=${tpl.template}\nmsg_id=${s + 1}\n` }],
     };
   }
   c.stages[12] = {
-    readme: `# Stage 12 — ${c.passwords[12]}`,
+    readme: `# Stage 12 — Finale\n\nFlag format: \`RIDGE-CLEAR\`.`,
     aiPrompt: aiPrompt(c.title, 'finale'),
     files: [{ name: 'handshake.ok', content: '1\n' }],
+  };
+  c.unlockTemplates = {
+    1: {
+      template: 'EDGE-<N>-<FROM>',
+      hints: ['N = count of illegal FSM transitions', 'FROM = from-state of first illegal row, uppercase'],
+    },
+    ...Object.fromEntries(Object.entries(ridgeTpl).map(([st, spec]) => [Number(st), spec])),
   };
 }
 
@@ -871,7 +1091,7 @@ async function buildInnerFrom(caseStudy, stageNum) {
   const p = String(stageNum).padStart(2, '0');
   const puzzle = caseStudy.stages[stageNum];
 
-  await zw.add(`STAGE_${p}/README.md`, new TextReader(puzzle.readme));
+  await zw.add(`STAGE_${p}/README.md`, new TextReader(enrichStageReadme(puzzle.readme, stageNum, caseStudy)));
   await zw.add(`STAGE_${p}/AI_TUTOR_PROMPT.txt`, new TextReader(puzzle.aiPrompt));
   for (const f of puzzle.files || []) {
     const sub = f.name.includes('/') ? f.name : `evidence/${f.name}`;
@@ -896,9 +1116,10 @@ async function buildCaseStudy(caseStudy) {
   const zw = new ZipWriter(new BlobWriter('application/zip'));
   await zw.add(`${root}START_HERE.md`, new TextReader(startHere(caseStudy)));
   await zw.add(`${root}RULES_AND_SCORING.md`, new TextReader(RULES));
+  await zw.add(`${root}PASSWORD_FORMAT.md`, new TextReader(buildPasswordFormatMd(caseStudy)));
 
   const s1 = caseStudy.stages[1];
-  await zw.add(`${root}STAGE_01/README.md`, new TextReader(s1.readme));
+  await zw.add(`${root}STAGE_01/README.md`, new TextReader(enrichStageReadme(s1.readme, 1, caseStudy)));
   await zw.add(`${root}STAGE_01/AI_TUTOR_PROMPT.txt`, new TextReader(s1.aiPrompt));
   for (const f of s1.files || []) {
     const sub = f.name.includes('/') ? f.name : `evidence/${f.name}`;
