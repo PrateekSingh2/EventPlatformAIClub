@@ -14,6 +14,23 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
+    if (req.nextUrl.searchParams.get('egressIp') === '1') {
+      try {
+        const ipRes = await fetch('https://api.ipify.org?format=json', { cache: 'no-store' });
+        const ipData = (await ipRes.json()) as { ip?: string };
+        const ip = ipData.ip?.trim();
+        if (!ip) {
+          return NextResponse.json({ error: 'Could not resolve egress IP' }, { status: 502 });
+        }
+        return NextResponse.json({
+          ip,
+          hint: 'Add in Brevo → Settings → Security → Authorized IPs (or disable blocking for Vercel).',
+        });
+      } catch {
+        return NextResponse.json({ error: 'Failed to detect egress IP' }, { status: 502 });
+      }
+    }
+
     const supabase = getSupabaseAdmin();
     let { data, error } = await supabase
       .from('team_registration_submissions')
