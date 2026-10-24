@@ -43,3 +43,5 @@ apps/web/.next-stale-recovery/
 
 apps/web/.contest-cache/
 .contest-cache/
+.vercel
+.env*

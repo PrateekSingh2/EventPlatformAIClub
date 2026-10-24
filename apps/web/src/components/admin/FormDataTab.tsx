@@ -8,7 +8,9 @@ import {
   Search,
   Download,
   AlertCircle,
+  FileSpreadsheet,
 } from 'lucide-react';
+import * as XLSX from 'xlsx';
 import type { TeamMemberPayload } from '@/lib/team-registration-form';
 
 type SubmissionRow = {
@@ -75,52 +77,27 @@ export function FormDataTab({ adminSecret }: FormDataTabProps) {
     });
   }, [submissions, search]);
 
+  const exportFileDate = new Date().toISOString().slice(0, 10);
+
   const exportCsv = () => {
-    const headers = [
-      'team_name',
-      'submitted_at',
-      'member_slot',
-      'name',
-      'mobile',
-      'enrollment_number',
-      'email',
-      'branch',
-      'year',
-    ];
+    const rows = buildExportRows(filtered);
+    const headers = EXPORT_HEADERS;
     const lines = [headers.join(',')];
-
-    for (const row of filtered) {
-      const members = (row.members || []) as TeamMemberPayload[];
-      if (members.length === 0) {
-        lines.push(
-          [csvEscape(row.team_name), csvEscape(row.created_at), '', '', '', '', '', '', ''].join(',')
-        );
-        continue;
-      }
-      for (const m of members) {
-        lines.push(
-          [
-            csvEscape(row.team_name),
-            csvEscape(row.created_at),
-            String(m.slot ?? ''),
-            csvEscape(m.name),
-            csvEscape(m.mobile),
-            csvEscape(m.enrollment_number),
-            csvEscape(m.email),
-            csvEscape(m.branch),
-            csvEscape(m.year),
-          ].join(',')
-        );
-      }
+    for (const row of rows) {
+      lines.push(headers.map((h) => csvEscape(String(row[h] ?? ''))).join(','));
     }
+    downloadBlob(
+      new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' }),
+      `team-merge-${exportFileDate}.csv`
+    );
+  };
 
-    const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `team-registrations-${new Date().toISOString().slice(0, 10)}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+  const exportExcel = () => {
+    const rows = buildExportRows(filtered);
+    const sheet = XLSX.utils.json_to_sheet(rows, { header: [...EXPORT_HEADERS] });
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, sheet, 'Team Merge');
+    XLSX.writeFile(workbook, `team-merge-${exportFileDate}.xlsx`);
   };
 
   return (
@@ -132,7 +109,7 @@ export function FormDataTab({ adminSecret }: FormDataTabProps) {
             Form Data
           </h2>
           <p className="text-sm text-app-subtext mt-1">
-            Public team registration submissions ({filtered.length} shown)
+            Team merge form submissions ({filtered.length} shown)
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -149,10 +126,19 @@ export function FormDataTab({ adminSecret }: FormDataTabProps) {
             type="button"
             onClick={exportCsv}
             disabled={filtered.length === 0}
-            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-xl bg-app-accent text-app-bg disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-xl border border-app-border hover:bg-app-hover disabled:opacity-50"
           >
             <Download className="w-3.5 h-3.5" />
             Export CSV
+          </button>
+          <button
+            type="button"
+            onClick={exportExcel}
+            disabled={filtered.length === 0}
+            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-xl bg-app-accent text-app-bg disabled:opacity-50"
+          >
+            <FileSpreadsheet className="w-3.5 h-3.5" />
+            Export Excel
           </button>
         </div>
       </div>
@@ -227,6 +213,64 @@ export function FormDataTab({ adminSecret }: FormDataTabProps) {
       )}
     </div>
   );
+}
+
+const EXPORT_HEADERS = [
+  'team_name',
+  'submitted_at',
+  'member_slot',
+  'name',
+  'mobile',
+  'enrollment_number',
+  'email',
+  'branch',
+  'year',
+] as const;
+
+type ExportRow = Record<(typeof EXPORT_HEADERS)[number], string>;
+
+function buildExportRows(submissions: SubmissionRow[]): ExportRow[] {
+  const rows: ExportRow[] = [];
+  for (const row of submissions) {
+    const members = (row.members || []) as TeamMemberPayload[];
+    if (members.length === 0) {
+      rows.push({
+        team_name: row.team_name,
+        submitted_at: row.created_at,
+        member_slot: '',
+        name: '',
+        mobile: '',
+        enrollment_number: '',
+        email: '',
+        branch: '',
+        year: '',
+      });
+      continue;
+    }
+    for (const m of members) {
+      rows.push({
+        team_name: row.team_name,
+        submitted_at: row.created_at,
+        member_slot: String(m.slot ?? ''),
+        name: m.name ?? '',
+        mobile: m.mobile ?? '',
+        enrollment_number: m.enrollment_number ?? '',
+        email: m.email ?? '',
+        branch: m.branch ?? '',
+        year: m.year ?? '',
+      });
+    }
+  }
+  return rows;
+}
+
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 function csvEscape(value: string | undefined): string {

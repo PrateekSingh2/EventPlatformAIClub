@@ -86,7 +86,7 @@ const ADMIN_NAV_ITEMS: NavItem[] = [
   {
     id: 'formdata',
     title: 'Form Data',
-    subtitle: 'Team registration submissions',
+    subtitle: 'Team merge submissions',
     shortLabel: 'Form',
     icon: ClipboardList,
   },

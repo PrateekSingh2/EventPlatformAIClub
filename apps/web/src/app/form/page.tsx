@@ -2,7 +2,10 @@
 
 import React, { useState } from 'react';
 import { Loader2, CheckCircle2, AlertCircle, Users } from 'lucide-react';
-import type { TeamMemberFormFields } from '@/lib/team-registration-form';
+import {
+  TEAM_MEMBER_YEAR_OPTIONS,
+  type TeamMemberFormFields,
+} from '@/lib/team-registration-form';
 
 const EMPTY_MEMBER: TeamMemberFormFields = {
   name: '',
@@ -54,7 +57,7 @@ export default function TeamRegistrationFormPage() {
         return;
       }
 
-      setSuccess(data.message || 'Registration submitted successfully.');
+      setSuccess(data.message || 'Team merge submitted successfully.');
       setTeamName('');
       setMembers([
         { ...EMPTY_MEMBER },
@@ -76,9 +79,9 @@ export default function TeamRegistrationFormPage() {
           <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-app-accent/15 border border-app-accent/30 mb-4">
             <Users className="w-7 h-7 text-app-accent" />
           </div>
-          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Team Registration</h1>
+          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Team Merge</h1>
           <p className="text-sm text-app-subtext mt-2 max-w-md mx-auto">
-            Submit your team details below. You will stay on this page after submitting.
+            Submit your merged team details below. You will stay on this page after submitting.
           </p>
         </header>
 
@@ -123,14 +126,11 @@ export default function TeamRegistrationFormPage() {
               className="space-y-4 rounded-xl border border-app-border/80 bg-app-bg/40 p-4 sm:p-5"
             >
               <legend className="px-2 text-sm font-bold text-app-text">{MEMBER_LABELS[index]}</legend>
-              {index === 0 && (
-                <p className="text-xs text-app-subtext -mt-1 mb-2">All fields required for team lead.</p>
-              )}
 
               <div className="grid gap-4 sm:grid-cols-2">
                 <Field
                   label="Name"
-                  required={index === 0}
+                  required={index < 3}
                   value={member.name}
                   onChange={(v) => updateMember(index, 'name', v)}
                   id={`m${index}_name`}
@@ -148,14 +148,14 @@ export default function TeamRegistrationFormPage() {
                 />
                 <Field
                   label="Enrollment number"
-                  required={index === 0}
+                  required={index < 3}
                   value={member.enrollment_number}
                   onChange={(v) => updateMember(index, 'enrollment_number', v)}
                   id={`m${index}_enrollment`}
                 />
                 <Field
                   label="Email"
-                  required={index === 0}
+                  required={index < 3}
                   type="email"
                   value={member.email}
                   onChange={(v) => updateMember(index, 'email', v)}
@@ -163,18 +163,17 @@ export default function TeamRegistrationFormPage() {
                 />
                 <Field
                   label="Branch"
-                  required={index === 0}
+                  required={index < 3}
                   value={member.branch}
                   onChange={(v) => updateMember(index, 'branch', v)}
                   id={`m${index}_branch`}
                 />
-                <Field
+                <YearSelect
                   label="Year"
-                  required={index === 0}
+                  required={index < 3}
                   value={member.year}
                   onChange={(v) => updateMember(index, 'year', v)}
                   id={`m${index}_year`}
-                  placeholder="e.g. 2 or 3rd year"
                 />
               </div>
             </fieldset>
@@ -191,11 +190,51 @@ export default function TeamRegistrationFormPage() {
                 Submitting…
               </>
             ) : (
-              'Submit registration'
+              'Submit team merge'
             )}
           </button>
         </form>
       </div>
+    </div>
+  );
+}
+
+function YearSelect({
+  label,
+  id,
+  value,
+  onChange,
+  required,
+}: {
+  label: string;
+  id: string;
+  value: string;
+  onChange: (v: string) => void;
+  required?: boolean;
+}) {
+  return (
+    <div className="sm:col-span-1">
+      <label htmlFor={id} className="block text-[11px] font-semibold text-app-subtext mb-1.5">
+        {label}
+        {required ? ' *' : ''}
+      </label>
+      <select
+        id={id}
+        name={id}
+        required={required}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full rounded-lg border border-app-border bg-app-bg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-app-accent/40"
+      >
+        <option value="" disabled={required}>
+          Select year
+        </option>
+        {TEAM_MEMBER_YEAR_OPTIONS.map((year) => (
+          <option key={year} value={year}>
+            {year}
+          </option>
+        ))}
+      </select>
     </div>
   );
 }

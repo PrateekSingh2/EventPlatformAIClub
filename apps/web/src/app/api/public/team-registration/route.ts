@@ -31,23 +31,23 @@ export async function POST(req: NextRequest) {
     if (error) {
       if (error.code === '23505') {
         return NextResponse.json(
-          { error: 'This team name is already registered. Choose another name.' },
+          { error: 'This team name is already merged. Choose another name.' },
           { status: 409 }
         );
       }
       if (error.code === 'PGRST205' || error.message?.includes('team_registration_submissions')) {
         return NextResponse.json(
-          { error: 'Registration is not ready yet. Please try again shortly.' },
+          { error: 'Team merge is not ready yet. Please try again shortly.' },
           { status: 503 }
         );
       }
       console.error('[POST /api/public/team-registration]', error.message);
-      return NextResponse.json({ error: 'Could not save registration' }, { status: 500 });
+      return NextResponse.json({ error: 'Could not save team merge' }, { status: 500 });
     }
 
     return NextResponse.json({
       success: true,
-      message: 'Registration submitted successfully.',
+      message: 'Team merge submitted successfully.',
       id: data.id,
       team_name: data.team_name,
       created_at: data.created_at,
