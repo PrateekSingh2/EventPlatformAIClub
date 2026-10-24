@@ -235,21 +235,18 @@ function HomePageContent() {
     }
 
     const cleanApiKey = geminiApiKey.trim();
-    if (!cleanApiKey) {
-      setError('Please enter your Google Gemini API Key. You can get one for free at aistudio.google.com.');
-      return;
-    }
+    if (cleanApiKey) {
+      if (cleanApiKey.length < 15) {
+        setError('Invalid Gemini API Key format. Google AI Studio keys typically start with "AQ." or "AIzaSy...".');
+        return;
+      }
 
-    if (cleanApiKey.length < 15) {
-      setError('Invalid Gemini API Key format. Google AI Studio keys typically start with "AIzaSy..."');
-      return;
+      // Persist Gemini API Key in browser storage for in-arena AI tutor
+      try {
+        localStorage.setItem('contest_gemini_api_key', cleanApiKey);
+        sessionStorage.setItem('contest_gemini_api_key', cleanApiKey);
+      } catch {}
     }
-
-    // Persist Gemini API Key in browser storage for in-arena AI tutor
-    try {
-      localStorage.setItem('contest_gemini_api_key', cleanApiKey);
-      sessionStorage.setItem('contest_gemini_api_key', cleanApiKey);
-    } catch {}
 
     setTokenLoading(true);
     setError(null);
@@ -602,7 +599,7 @@ function HomePageContent() {
                   <div className="flex items-center justify-between">
                     <label htmlFor="gemini-api-key-input" className="text-[11px] font-mono font-semibold text-app-subtext uppercase tracking-wider flex items-center gap-1.5">
                       <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
-                      <span>Google Gemini API Key</span>
+                      <span>Google Gemini API Key (Optional)</span>
                     </label>
                     <a
                       href="https://aistudio.google.com/app/apikey"
@@ -626,7 +623,7 @@ function HomePageContent() {
                         setGeminiApiKey(e.target.value);
                         setError(null);
                       }}
-                      placeholder="AIzaSy..."
+                      placeholder="AQ... or AIzaSy... (Optional)"
                       disabled={tokenLoading}
                       className="w-full pl-3 pr-10 py-2.5 text-xs sm:text-sm text-app-text bg-app-bg border border-app-border rounded-xl focus:outline-none focus:border-indigo-400 font-mono transition-colors placeholder:text-app-subtext/40 min-h-[44px]"
                     />
@@ -641,13 +638,13 @@ function HomePageContent() {
                     </button>
                   </div>
                   <p className="text-[10px] text-app-subtext leading-relaxed">
-                    Obtain a free key from Google AI Studio. Required for the in-arena AI Tutor to assist your team.
+                    Optional. Enter your Google AI Studio key for the in-arena AI Tutor, or leave blank to continue.
                   </p>
                 </div>
 
                 <button
                   type="submit"
-                  disabled={tokenLoading || !tokenInput.trim() || !geminiApiKey.trim()}
+                  disabled={tokenLoading || !tokenInput.trim()}
                   className="w-full py-2.5 px-4 rounded-xl bg-app-text text-app-bg hover:opacity-90 font-semibold text-xs sm:text-sm transition-opacity cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center space-x-2 min-h-[44px] mt-2"
                 >
                   {tokenLoading ? (

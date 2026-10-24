@@ -81,10 +81,10 @@ export function GeminiTutorDrawer({
   const lastCallRef = useRef<{ userPrompt: string; systemInstruction?: string } | null>(null);
 
   const CANDIDATE_MODELS = [
-    { model: 'gemini-2.0-flash', apiVersion: 'v1beta' },
-    { model: 'gemini-1.5-flash', apiVersion: 'v1beta' },
-    { model: 'gemini-1.5-flash-8b', apiVersion: 'v1beta' },
-    { model: 'gemini-1.5-pro', apiVersion: 'v1beta' },
+    { model: 'gemini-flash-latest', apiVersion: 'v1beta' },
+    { model: 'gemini-3.8-flash', apiVersion: 'v1beta' },
+    { model: 'gemini-2.5-flash-lite', apiVersion: 'v1beta' },
+    { model: 'gemini-flash-lite-latest', apiVersion: 'v1beta' },
   ];
 
   // Helper sleep function for backoff
@@ -276,7 +276,14 @@ Your role is to guide contestants through the challenge directives in their AI_T
             break;
           }
 
-          const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+          const parts = data?.candidates?.[0]?.content?.parts || [];
+          const answerParts = parts.filter((p: any) => !p.thought);
+          const rawText = (answerParts.length > 0 ? answerParts : parts)
+            .map((p: any) => p.text)
+            .filter(Boolean)
+            .join('\n')
+            .trim();
+
           if (rawText) {
             responseText = rawText;
             activeModelRef.current = { model, apiVersion };

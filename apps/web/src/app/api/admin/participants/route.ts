@@ -182,12 +182,30 @@ export async function DELETE(req: NextRequest) {
     }
 
     const body = await req.json().catch(() => ({}));
-    const { id, email, all } = body;
+    const { id, userId, email, all } = body;
+    const targetId = id || userId;
 
     const supabaseAdmin = getSupabaseAdmin();
 
     if (all === true) {
-      // Clear all participants
+      // Clear all participants and dependent telemetry records
+      try {
+        const { data: participantUsers } = await supabaseAdmin
+          .from('users')
+          .select('id')
+          .eq('role', 'participant');
+
+        if (participantUsers && participantUsers.length > 0) {
+          const userIds = participantUsers.map((u: any) => u.id);
+          await supabaseAdmin
+            .from('stage_telemetry')
+            .delete()
+            .in('user_id', userIds);
+        }
+      } catch (telemetryErr) {
+        console.warn('[DELETE participants all telemetry cleanup warning]:', telemetryErr);
+      }
+
       const { error } = await supabaseAdmin
         .from('users')
         .delete()
@@ -197,24 +215,52 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ success: true, message: 'All participants deleted' });
     }
 
-    if (id) {
+    if (targetId) {
+      // Delete any dependent stage_telemetry records first to avoid foreign key violations
+      try {
+        await supabaseAdmin
+          .from('stage_telemetry')
+          .delete()
+          .eq('user_id', targetId);
+      } catch (telemetryErr) {
+        console.warn(`[DELETE participant ${targetId} telemetry cleanup warning]:`, telemetryErr);
+      }
+
       const { error } = await supabaseAdmin
         .from('users')
         .delete()
-        .eq('id', id);
+        .eq('id', targetId);
 
       if (error) throw error;
-      return NextResponse.json({ success: true, message: `Participant ${id} deleted` });
+      return NextResponse.json({ success: true, message: `Participant ${targetId} deleted` });
     }
 
     if (email) {
+      const cleanEmail = email.trim().toLowerCase();
+      try {
+        const { data: existingUser } = await supabaseAdmin
+          .from('users')
+          .select('id')
+          .eq('email', cleanEmail)
+          .maybeSingle();
+
+        if (existingUser?.id) {
+          await supabaseAdmin
+            .from('stage_telemetry')
+            .delete()
+            .eq('user_id', existingUser.id);
+        }
+      } catch (telemetryErr) {
+        console.warn(`[DELETE participant ${cleanEmail} telemetry cleanup warning]:`, telemetryErr);
+      }
+
       const { error } = await supabaseAdmin
         .from('users')
         .delete()
-        .eq('email', email.trim().toLowerCase());
+        .eq('email', cleanEmail);
 
       if (error) throw error;
-      return NextResponse.json({ success: true, message: `Participant ${email} deleted` });
+      return NextResponse.json({ success: true, message: `Participant ${cleanEmail} deleted` });
     }
 
     return NextResponse.json(
