@@ -89,7 +89,7 @@ High-stakes coding and AI puzzle hackathons with 150–200 concurrent participan
 | **Serverless Execution** | $\le 10$ seconds per API invocation | Mandatory Netlify serverless execution limit. File processing is offloaded to client; SMTP connections are pooled. |
 | **Database Concurrency** | Up to 200 concurrent real-time sockets | Supabase Realtime handles websocket broadcasting efficiently without connection exhaustion. |
 | **Security & Privacy** | Private Supabase Storage + Signed URLs (60s) | No public bucket permissions; links expire quickly after client fetch. |
-| **Infrastructure Simplicity** | Unified Supabase stack (DB + Storage) | Zero AWS IAM setup; eliminates Netlify `AWS_*` variable-collisions. |
+| **Infrastructure Simplicity** | Unified Supabase stack (DB + Storage) | Zero AWS IAM setup; eliminates Netlify `AWS_*` variable collisions. |
 
 ---
 
