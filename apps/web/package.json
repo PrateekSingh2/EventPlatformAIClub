@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "postbuild": "node -e \"const fs=require('fs'); if(!fs.existsSync('.next/cache')) fs.mkdirSync('.next/cache', {recursive:true}); if(!fs.existsSync('.next/cache/.previewinfo')) fs.writeFileSync('.next/cache/.previewinfo', '{}');\"",
     "start": "next start",
     "lint": "next lint"
   },
