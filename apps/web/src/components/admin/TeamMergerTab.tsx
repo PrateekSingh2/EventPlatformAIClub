@@ -29,6 +29,24 @@ interface TeamMergerTabProps {
   adminSecret: string;
 }
 
+const AUTO_MERGE_STORAGE_KEY = 'eventPlatform.teamMerger.autoMerge';
+
+function readStoredAutoMerge(): boolean {
+  try {
+    return localStorage.getItem(AUTO_MERGE_STORAGE_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function writeStoredAutoMerge(on: boolean) {
+  try {
+    localStorage.setItem(AUTO_MERGE_STORAGE_KEY, on ? '1' : '0');
+  } catch {
+    /* private mode / quota */
+  }
+}
+
 export function TeamMergerTab({ adminSecret }: TeamMergerTabProps) {
   const [submissions, setSubmissions] = useState<TeamSubmission[]>([]);
   const [loading, setLoading] = useState(true);
@@ -64,8 +82,20 @@ export function TeamMergerTab({ adminSecret }: TeamMergerTabProps) {
   }, [adminSecret]);
 
   useEffect(() => {
+    setAutoMerge(readStoredAutoMerge());
+  }, []);
+
+  useEffect(() => {
     if (adminSecret) fetchSubmissions();
   }, [adminSecret, fetchSubmissions]);
+
+  const toggleAutoMerge = () => {
+    setAutoMerge((prev) => {
+      const next = !prev;
+      writeStoredAutoMerge(next);
+      return next;
+    });
+  };
 
   const groups = useMemo(() => {
     if (autoMerge) {
@@ -135,7 +165,7 @@ export function TeamMergerTab({ adminSecret }: TeamMergerTabProps) {
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
-            onClick={() => setAutoMerge((v) => !v)}
+            onClick={toggleAutoMerge}
             className={`inline-flex items-center gap-2 px-3 py-2 text-xs font-semibold rounded-xl border ${
               autoMerge
                 ? 'border-emerald-500/40 bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
