@@ -19,6 +19,7 @@ import {
   buildManualMergeGroups,
   buildMergerExportRows,
   computeAutoMergeGroups,
+  filterMergerEligibleSubmissions,
   MERGER_EXPORT_HEADERS,
   type MergeGroup,
   type TeamSubmission,
@@ -50,7 +51,8 @@ export function TeamMergerTab({ adminSecret }: TeamMergerTabProps) {
         setSubmissions([]);
         return;
       }
-      setSubmissions(data.submissions || []);
+      const all: TeamSubmission[] = data.submissions || [];
+      setSubmissions(filterMergerEligibleSubmissions(all));
     } catch {
       setError('Network error while loading submissions');
       setSubmissions([]);
@@ -124,8 +126,8 @@ export function TeamMergerTab({ adminSecret }: TeamMergerTabProps) {
             Team Merger
           </h2>
           <p className="text-sm text-app-subtext mt-1 max-w-xl">
-            Teams with 2 or more matching members in slots 1–3 auto-group when automatic merge is on.
-            Turn it off to merge manually. Preview before exporting.
+            Only teams that answered Yes to a 4th assigned member appear here. Teams with 2+
+            matching members in slots 1–3 auto-group when automatic merge is on.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">

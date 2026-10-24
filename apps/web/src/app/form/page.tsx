@@ -4,6 +4,7 @@ import React, { useState } from 'react';
 import { Loader2, CheckCircle2, AlertCircle, Users } from 'lucide-react';
 import {
   TEAM_MEMBER_YEAR_OPTIONS,
+  isThreeMemberSquadPrompt,
   type TeamMemberFormFields,
 } from '@/lib/team-registration-form';
 
@@ -28,6 +29,7 @@ export default function TeamRegistrationFormPage() {
   const [submitting, setSubmitting] = useState(false);
   const [success, setSuccess] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [squadPromptOpen, setSquadPromptOpen] = useState(false);
 
   const updateMember = (index: number, field: keyof TeamMemberFormFields, value: string) => {
     setMembers((prev) => {
@@ -37,17 +39,21 @@ export default function TeamRegistrationFormPage() {
     });
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const submitRegistration = async (squadMergeOptIn?: boolean) => {
     setError(null);
     setSuccess(null);
     setSubmitting(true);
 
     try {
+      const payload: Record<string, unknown> = { team_name: teamName, members };
+      if (squadMergeOptIn !== undefined) {
+        payload.squad_merge_opt_in = squadMergeOptIn;
+      }
+
       const res = await fetch('/api/public/team-registration', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ team_name: teamName, members }),
+        body: JSON.stringify(payload),
       });
       const data = await res.json();
 
@@ -68,7 +74,21 @@ export default function TeamRegistrationFormPage() {
       setError('Network error. Please try again.');
     } finally {
       setSubmitting(false);
+      setSquadPromptOpen(false);
     }
+  };
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (isThreeMemberSquadPrompt(members)) {
+      setSquadPromptOpen(true);
+      return;
+    }
+    void submitRegistration();
+  };
+
+  const handleSquadChoice = (wantsFourthMember: boolean) => {
+    void submitRegistration(wantsFourthMember);
   };
 
   return (
@@ -183,6 +203,46 @@ export default function TeamRegistrationFormPage() {
           </button>
         </form>
       </div>
+
+      {squadPromptOpen && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="squad-prompt-title"
+        >
+          <div className="max-w-md w-full rounded-2xl border border-app-border bg-app-surface shadow-2xl p-6">
+            <h2 id="squad-prompt-title" className="text-lg font-bold text-app-text mb-2">
+              Do you want 1 more teammate to become a squad?
+            </h2>
+            <p className="text-sm text-amber-600 dark:text-amber-400 font-medium mb-2">
+              Note: we will assign your team 1 member!
+            </p>
+            <p className="text-xs text-app-subtext mb-6">
+              If you choose No, your team will not be included in automatic or manual squad merging.
+              If you choose Yes, your team can be merged and receive an assigned 4th member.
+            </p>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <button
+                type="button"
+                disabled={submitting}
+                onClick={() => handleSquadChoice(false)}
+                className="flex-1 py-3 rounded-xl border border-app-border font-semibold text-sm hover:bg-app-hover disabled:opacity-50"
+              >
+                No
+              </button>
+              <button
+                type="button"
+                disabled={submitting}
+                onClick={() => handleSquadChoice(true)}
+                className="flex-1 py-3 rounded-xl bg-app-accent text-app-bg font-bold text-sm disabled:opacity-50"
+              >
+                Yes, make us a squad
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

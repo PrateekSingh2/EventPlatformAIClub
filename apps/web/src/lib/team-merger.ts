@@ -4,8 +4,14 @@ export type TeamSubmission = {
   id: string;
   team_name: string;
   members: TeamMemberPayload[];
+  squad_merge_opt_in?: boolean | null;
   created_at: string;
 };
+
+/** Only teams that opted in to assigned 4th member / merger. */
+export function filterMergerEligibleSubmissions(submissions: TeamSubmission[]): TeamSubmission[] {
+  return submissions.filter((s) => s.squad_merge_opt_in === true);
+}
 
 export type MergeGroup = {
   id: string;

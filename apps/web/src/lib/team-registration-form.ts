@@ -11,6 +11,7 @@ export type TeamMemberPayload = TeamMemberFormFields & { slot: number };
 export type TeamRegistrationPayload = {
   team_name: string;
   members: TeamMemberPayload[];
+  squad_merge_opt_in: boolean | null;
 };
 
 const MAX_TEAM_NAME = 120;
@@ -51,8 +52,23 @@ function cleanYear(value: unknown): string {
   return YEAR_ALLOWED.has(titled) ? titled : '';
 }
 
-function isMemberEmpty(m: TeamMemberFormFields): boolean {
+export function isMemberEmpty(m: TeamMemberFormFields): boolean {
   return !m.name && !m.enrollment_number && !m.email && !m.branch && !m.year;
+}
+
+export function isMemberComplete(m: TeamMemberFormFields): boolean {
+  return validateMember(m, 1, true) === null;
+}
+
+/** Members 1–3 fully filled and member 4 blank — squad assignment prompt applies. */
+export function isThreeMemberSquadPrompt(members: TeamMemberFormFields[]): boolean {
+  if (members.length < 4) return false;
+  return (
+    isMemberComplete(members[0]) &&
+    isMemberComplete(members[1]) &&
+    isMemberComplete(members[2]) &&
+    isMemberEmpty(members[3])
+  );
 }
 
 function validateMember(m: TeamMemberFormFields, slot: number, required: boolean): string | null {
@@ -114,5 +130,18 @@ export function parseTeamRegistrationBody(body: unknown):
     .map((m, i) => ({ slot: i + 1, ...m }))
     .filter((m) => m.slot === 1 || !isMemberEmpty(m));
 
-  return { ok: true, data: { team_name, members } };
+  const threeMemberSquad = isThreeMemberSquadPrompt(slots);
+  let squad_merge_opt_in: boolean | null = null;
+
+  if (threeMemberSquad) {
+    if (record.squad_merge_opt_in !== true && record.squad_merge_opt_in !== false) {
+      return {
+        ok: false,
+        error: 'Please confirm whether you want a 4th teammate assigned to your squad.',
+      };
+    }
+    squad_merge_opt_in = record.squad_merge_opt_in === true;
+  }
+
+  return { ok: true, data: { team_name, members, squad_merge_opt_in } };
 }

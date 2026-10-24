@@ -17,8 +17,15 @@ type SubmissionRow = {
   id: string;
   team_name: string;
   members: TeamMemberPayload[];
+  squad_merge_opt_in?: boolean | null;
   created_at: string;
 };
+
+function squadOptInLabel(value: boolean | null | undefined): string {
+  if (value === true) return 'Yes (eligible for merge)';
+  if (value === false) return 'No (not in merger)';
+  return '—';
+}
 
 interface FormDataTabProps {
   adminSecret: string;
@@ -173,7 +180,12 @@ export function FormDataTab({ adminSecret }: FormDataTabProps) {
               className="rounded-2xl border border-app-border bg-app-surface/60 overflow-hidden"
             >
               <div className="px-4 py-3 border-b border-app-border flex flex-wrap items-center justify-between gap-2 bg-app-bg/30">
-                <h3 className="font-bold text-app-text">{row.team_name}</h3>
+                <div className="flex flex-wrap items-center gap-2">
+                  <h3 className="font-bold text-app-text">{row.team_name}</h3>
+                  <span className="text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded-md border border-app-border text-app-subtext">
+                    Squad opt-in: {squadOptInLabel(row.squad_merge_opt_in)}
+                  </span>
+                </div>
                 <time className="text-xs font-mono text-app-subtext">
                   {new Date(row.created_at).toLocaleString()}
                 </time>
@@ -214,6 +226,7 @@ export function FormDataTab({ adminSecret }: FormDataTabProps) {
 
 const EXPORT_HEADERS = [
   'team_name',
+  'squad_merge_opt_in',
   'submitted_at',
   'member_slot',
   'name',
@@ -232,6 +245,7 @@ function buildExportRows(submissions: SubmissionRow[]): ExportRow[] {
     if (members.length === 0) {
       rows.push({
         team_name: row.team_name,
+        squad_merge_opt_in: squadOptInLabel(row.squad_merge_opt_in),
         submitted_at: row.created_at,
         member_slot: '',
         name: '',
@@ -245,6 +259,7 @@ function buildExportRows(submissions: SubmissionRow[]): ExportRow[] {
     for (const m of members) {
       rows.push({
         team_name: row.team_name,
+        squad_merge_opt_in: squadOptInLabel(row.squad_merge_opt_in),
         submitted_at: row.created_at,
         member_slot: String(m.slot ?? ''),
         name: m.name ?? '',

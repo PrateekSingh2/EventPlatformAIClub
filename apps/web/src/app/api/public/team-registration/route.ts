@@ -24,6 +24,7 @@ export async function POST(req: NextRequest) {
       .insert({
         team_name: parsed.data.team_name,
         members: parsed.data.members,
+        squad_merge_opt_in: parsed.data.squad_merge_opt_in,
       })
       .select('id, team_name, created_at')
       .single();
@@ -33,6 +34,18 @@ export async function POST(req: NextRequest) {
         return NextResponse.json(
           { error: 'This team name is already merged. Choose another name.' },
           { status: 409 }
+        );
+      }
+      const missingSquadColumn =
+        error.message?.includes('squad_merge_opt_in') ||
+        error.details?.includes('squad_merge_opt_in');
+      if (missingSquadColumn) {
+        return NextResponse.json(
+          {
+            error:
+              'Squad opt-in is not enabled on the database yet. Run migration 007_squad_merge_opt_in.sql in Supabase, then try again.',
+          },
+          { status: 503 }
         );
       }
       if (error.code === 'PGRST205' || error.message?.includes('team_registration_submissions')) {

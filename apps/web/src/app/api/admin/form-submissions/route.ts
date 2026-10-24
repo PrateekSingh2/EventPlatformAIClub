@@ -15,10 +15,23 @@ export async function GET(req: NextRequest) {
     }
 
     const supabase = getSupabaseAdmin();
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from('team_registration_submissions')
-      .select('id, team_name, members, created_at')
+      .select('id, team_name, members, squad_merge_opt_in, created_at')
       .order('created_at', { ascending: false });
+
+    if (error?.message?.includes('squad_merge_opt_in')) {
+      const fallback = await supabase
+        .from('team_registration_submissions')
+        .select('id, team_name, members, created_at')
+        .order('created_at', { ascending: false });
+      data =
+        fallback.data?.map((row: { id: string; team_name: string; members: unknown; created_at: string }) => ({
+          ...row,
+          squad_merge_opt_in: null,
+        })) ?? null;
+      error = fallback.error;
+    }
 
     if (error) {
       console.error('[GET /api/admin/form-submissions]', error.message);
