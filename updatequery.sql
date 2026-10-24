@@ -12,6 +12,12 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS disqualify_reason TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS total_score INT NOT NULL DEFAULT 0;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS current_stage INT NOT NULL DEFAULT 1;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE users ADD COLUMN IF NOT EXISTS team_name TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS team_size TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS is_completed BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ;
+ALTER TABLE users DROP CONSTRAINT IF EXISTS users_access_token_key;
+CREATE INDEX IF NOT EXISTS idx_users_team_name ON users (team_name);
 
 -- Stages table updates
 ALTER TABLE stages ADD COLUMN IF NOT EXISTS min_expected_seconds INT NOT NULL DEFAULT 60;
@@ -37,11 +43,14 @@ ALTER TABLE stage_telemetry ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT 
 
 -- 2. UPDATE VIEW: leaderboard
 -- Dynamic rank computation with tie-breaker by updated_at ASC
+DROP VIEW IF EXISTS leaderboard CASCADE;
 CREATE OR REPLACE VIEW leaderboard AS
 SELECT 
     id AS user_id,
     name,
     email,
+    team_name,
+    team_size,
     total_score,
     current_stage,
     is_flagged,
@@ -207,3 +216,28 @@ DO $$
 BEGIN
     RAISE NOTICE 'Update script executed successfully. Database schema and functions are up to date!';
 END $$;
+
+
+-- 9. PER-TOKEN ARCHIVE STORAGE & STAGE PASSWORDS (Challenge Stages Multi-ZIP System)
+CREATE TABLE IF NOT EXISTS token_archives (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    access_token TEXT NOT NULL UNIQUE,
+    storage_path TEXT NOT NULL,
+    stage_count INT NOT NULL DEFAULT 1,
+    uploaded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_token_archives_token ON token_archives (access_token);
+
+CREATE TABLE IF NOT EXISTS stage_passwords (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    token_archive_id UUID NOT NULL REFERENCES token_archives(id) ON DELETE CASCADE,
+    stage_number INT NOT NULL,
+    password TEXT NOT NULL,
+    UNIQUE (token_archive_id, stage_number)
+);
+CREATE INDEX IF NOT EXISTS idx_stage_passwords_archive ON stage_passwords (token_archive_id, stage_number);
+
+GRANT ALL ON token_archives TO service_role;
+GRANT ALL ON stage_passwords TO service_role;
+GRANT SELECT ON token_archives TO anon, authenticated;
+GRANT SELECT ON stage_passwords TO anon, authenticated;

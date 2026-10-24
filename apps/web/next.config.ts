@@ -8,14 +8,16 @@ const nextConfig: NextConfig = {
       bodySizeLimit: '10mb',
     },
   },
-  webpack: (config) => {
-    // Enable WebAssembly or buffer support if needed
-    config.resolve.fallback = {
-      ...config.resolve.fallback,
-      fs: false,
-      net: false,
-      tls: false,
-    };
+  webpack: (config, { isServer }) => {
+    // Enable browser fallback shims only on the client side
+    if (!isServer) {
+      config.resolve.fallback = {
+        ...config.resolve.fallback,
+        fs: false,
+        net: false,
+        tls: false,
+      };
+    }
     return config;
   },
 };

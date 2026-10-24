@@ -3,6 +3,7 @@
 import React, { useEffect, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { Loader2 } from 'lucide-react';
+import { getContestantSession } from '@/lib/session';
 
 function TokenRedirectHandler() {
   const searchParams = useSearchParams();
@@ -18,20 +19,22 @@ function TokenRedirectHandler() {
       '';
 
     const cleanToken = tokenId.trim().toUpperCase();
+    const session = getContestantSession();
 
-    // Check if user is already authenticated in this session
-    const isSessionActive = sessionStorage.getItem('contestant_session_active') === 'true';
-    const activeStoredToken = localStorage.getItem('participant_token');
-
-    if (isSessionActive && activeStoredToken && (!cleanToken || cleanToken === activeStoredToken)) {
-      // User is already logged in, redirect straight to the Arena dashboard
-      router.replace(`/arena?token=${encodeURIComponent(activeStoredToken)}`);
-    } else {
-      // User must log in first. Redirect to login landing page, preserving the token and intent
+    // If user is not logged in, direct to login page first, preserving the token
+    if (!session || !session.email) {
       const redirectUrl = cleanToken
         ? `/?token=${encodeURIComponent(cleanToken)}&loginRequired=true&redirect=/arena`
         : '/?loginRequired=true&redirect=/arena';
       router.replace(redirectUrl);
+    } else {
+      // User is logged in, redirect straight to arena with token (arena will cross-check account ownership)
+      const targetToken = cleanToken || session.assignedToken || '';
+      if (targetToken) {
+        router.replace(`/arena?token=${encodeURIComponent(targetToken)}`);
+      } else {
+        router.replace('/?redirect=/arena');
+      }
     }
   }, [searchParams, router]);
 

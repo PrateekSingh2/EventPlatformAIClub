@@ -129,6 +129,8 @@ CREATE TABLE IF NOT EXISTS users (
     is_disqualified BOOLEAN NOT NULL DEFAULT false,
     disqualified_at TIMESTAMPTZ,
     disqualification_reason TEXT,
+    is_completed BOOLEAN NOT NULL DEFAULT false,
+    completed_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

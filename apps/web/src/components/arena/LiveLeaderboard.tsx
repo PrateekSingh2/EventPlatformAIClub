@@ -45,7 +45,7 @@ export function LiveLeaderboard({
       if (isSupabaseConfigured) {
         const { data, error } = await supabase
           .from('users')
-          .select('id, name, email, role, access_token, total_score, current_stage, is_flagged, created_at, updated_at')
+          .select('id, name, email, role, access_token, team_name, team_size, total_score, current_stage, is_flagged, created_at, updated_at')
           .eq('role', 'participant')
           .order('total_score', { ascending: false })
           .order('updated_at', { ascending: true })
@@ -339,7 +339,7 @@ export function LiveLeaderboard({
                             )}
                           </div>
                           <div className="text-[10px] text-app-subtext truncate font-mono">
-                            Stage {user.current_stage || 1} &bull; {user.access_token || user.email?.split('@')[0] || 'active'}
+                            Stage {user.current_stage || 1} &bull; {user.team_name ? `Team: ${user.team_name}` : (user.access_token || user.email?.split('@')[0] || 'active')}
                           </div>
                         </div>
                       </div>

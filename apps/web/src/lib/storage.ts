@@ -90,3 +90,61 @@ export async function createParticipantDownloadUrl(
     expiresIn,
   };
 }
+
+/**
+ * Generates a Supabase Storage Signed Upload URL for a per-token archive upload.
+ * Used in the bulk stage archive upload flow.
+ * Valid for 600 seconds (10 minutes) to accommodate large multi-ZIP uploads.
+ */
+export async function createTokenArchiveUploadUrl(
+  accessToken: string
+): Promise<{ uploadUrl: string; token: string; storagePath: string; expiresIn: number }> {
+  await ensureStagesBucketExists();
+  const supabaseAdmin = getSupabaseAdmin();
+
+  const cleanToken = accessToken.replace(/[^a-zA-Z0-9_-]/g, '').toUpperCase();
+  const storagePath = `token-archives/${cleanToken}/archive.zip`;
+  const expiresIn = 600;
+
+  const { data, error } = await supabaseAdmin.storage
+    .from(STAGES_BUCKET)
+    .createSignedUploadUrl(storagePath);
+
+  if (error || !data) {
+    throw new Error(error?.message || 'Failed to create token archive signed upload URL');
+  }
+
+  return {
+    uploadUrl: data.signedUrl,
+    token: data.token,
+    storagePath: data.path || storagePath,
+    expiresIn,
+  };
+}
+
+/**
+ * Generates a short-lived (120s) Supabase Storage Signed Download URL
+ * for a participant's unique token archive bundle (outer ZIP containing all stages).
+ * URL is intentionally short-lived since the browser caches the blob in IndexedDB after first fetch.
+ */
+export async function createTokenArchiveDownloadUrl(
+  storagePath: string
+): Promise<{ downloadUrl: string; expiresIn: number }> {
+  const supabaseAdmin = getSupabaseAdmin();
+  const expiresIn = 120;
+
+  const cleanPath = storagePath.replace(/^stages\//, '').replace(/^\/+/, '');
+
+  const { data, error } = await supabaseAdmin.storage
+    .from(STAGES_BUCKET)
+    .createSignedUrl(cleanPath, expiresIn);
+
+  if (error || !data?.signedUrl) {
+    throw new Error(error?.message || `Failed to generate signed download URL for token archive at ${cleanPath}`);
+  }
+
+  return {
+    downloadUrl: data.signedUrl,
+    expiresIn,
+  };
+}

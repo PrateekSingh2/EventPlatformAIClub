@@ -38,3 +38,6 @@ Thumbs.db
 PROMPT.md
 prompt.md
 apps/web/.next-stale-recovery/
+
+apps/web/.contest-cache/
+.contest-cache/

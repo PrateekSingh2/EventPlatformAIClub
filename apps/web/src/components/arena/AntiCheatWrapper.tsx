@@ -59,17 +59,24 @@ export function AntiCheatWrapper({
         type,
         ...(latencyMs === undefined ? {} : { latencyMs }),
       };
-      void enqueueTelemetryPing(payload)
-        .then(flushOfflineTelemetryQueue)
-        .catch(() => {
-          // If browser storage is unavailable, try a direct delivery while online.
-          fetch('/api/stage/telemetry-ping', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-            keepalive: true,
-          }).catch(() => {});
+
+      // Deliver directly immediately if online for real-time live admin radar updates
+      if (typeof navigator !== 'undefined' && navigator.onLine) {
+        fetch('/api/stage/telemetry-ping', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+          keepalive: true,
+        }).then((res) => {
+          if (!res.ok) {
+            void enqueueTelemetryPing(payload).then(flushOfflineTelemetryQueue);
+          }
+        }).catch(() => {
+          void enqueueTelemetryPing(payload).then(flushOfflineTelemetryQueue);
         });
+      } else {
+        void enqueueTelemetryPing(payload).then(flushOfflineTelemetryQueue);
+      }
     },
     [accessToken, stageNumber]
   );

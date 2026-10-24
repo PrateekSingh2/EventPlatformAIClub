@@ -5,22 +5,30 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { motion } from 'framer-motion';
 import { signInWithGoogle } from '@/lib/firebase';
 import {
+  getContestantSession,
+  setContestantSession,
+  clearContestantSession,
+  updateContestantSessionToken,
+  updateContestantSessionTeam,
+  ContestantSession,
+} from '@/lib/session';
+import {
   Sparkles,
   Cpu,
   ShieldCheck,
   Terminal,
   ArrowRight,
-  Lock,
   Zap,
-  Eye,
-  EyeOff,
   Trophy,
-  Check,
   Loader2,
   KeyRound,
   X,
   BrainCircuit,
   AlertCircle,
+  LogOut,
+  UserCheck,
+  CheckCircle2,
+  Lock,
 } from 'lucide-react';
 
 function HomePageContent() {
@@ -38,35 +46,32 @@ function HomePageContent() {
 
   const isLoginRequired = searchParams.get('loginRequired') === 'true';
 
-  // Authentication states
+  // Active user session state
+  const [currentUser, setCurrentUser] = useState<ContestantSession | null>(null);
+  const [sessionChecked, setSessionChecked] = useState(false);
+
+  // Authentication & token states
   const [googleLoading, setGoogleLoading] = useState(false);
   const [tokenInput, setTokenInput] = useState(incomingToken);
   const [tokenLoading, setTokenLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [existingToken, setExistingToken] = useState<string | null>(null);
-
-  // Admin secret modal state
-  const [showAdminModal, setShowAdminModal] = useState(false);
-  const [adminSecret, setAdminSecret] = useState('');
-  const [adminError, setAdminError] = useState<string | null>(null);
-  const [adminLoading, setAdminLoading] = useState(false);
-  const [showAdminSecretText, setShowAdminSecretText] = useState(false);
 
   // Canvas ref for animated neural synapse network
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
-  // Check if contestant already has an active session in local storage
+  // Check if contestant already has an active session in persistent storage
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem('participant_token');
-      if (saved && saved.trim()) {
-        setExistingToken(saved.trim());
+    const existing = getContestantSession();
+    if (existing) {
+      setCurrentUser(existing);
+      if (!incomingToken && existing.assignedToken) {
+        setTokenInput(existing.assignedToken);
       }
-    } catch {}
-
+    }
     if (incomingToken) {
       setTokenInput(incomingToken);
     }
+    setSessionChecked(true);
   }, [incomingToken]);
 
   // Neural Synapse Network Interactive Background Canvas
@@ -193,7 +198,7 @@ function HomePageContent() {
     };
   }, []);
 
-  // Handle Google OAuth Sign-In via Firebase
+  // STEP 1: Handle Google OAuth Sign-In via Firebase
   const handleGoogleSignIn = async () => {
     setGoogleLoading(true);
     setError(null);
@@ -201,7 +206,7 @@ function HomePageContent() {
     try {
       const firebaseUser = await signInWithGoogle();
 
-      // Transmit to server with any incoming token attached
+      // Transmit to server to lookup existing participant record or register new contestant
       const res = await fetch('/api/auth/google', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -211,7 +216,6 @@ function HomePageContent() {
           photoURL: firebaseUser.photoURL,
           uid: firebaseUser.uid,
           idToken: firebaseUser.idToken,
-          token: (incomingToken || tokenInput).trim().toUpperCase(),
         }),
       });
 
@@ -222,58 +226,57 @@ function HomePageContent() {
         return;
       }
 
-      // Mark session as active and store credentials
-      const finalToken = incomingToken || data.token;
-      sessionStorage.setItem('contestant_session_active', 'true');
-      localStorage.setItem('participant_token', finalToken);
-      if (data.user) {
-        localStorage.setItem('contestant_profile', JSON.stringify(data.user));
+      // Store contestant session in persistent storage
+      const assignedToken =
+        data.user?.access_token && !data.user.access_token.startsWith('PENDING')
+          ? data.user.access_token
+          : null;
+
+      const newSession: ContestantSession = {
+        email: (data.user?.email || firebaseUser.email).toLowerCase().trim(),
+        name: data.user?.name || firebaseUser.displayName || firebaseUser.email.split('@')[0],
+        uid: data.user?.id || firebaseUser.uid,
+        photoURL: firebaseUser.photoURL || null,
+        assignedToken,
+        teamName: data.user?.team_name || null,
+        teamSize: data.user?.team_size || null,
+        lastLoginAt: Date.now(),
+      };
+
+      setContestantSession(newSession);
+      setCurrentUser(newSession);
+
+      // If user already has an assigned token and no custom incoming token, pre-fill it
+      if (assignedToken && !tokenInput) {
+        setTokenInput(assignedToken);
       }
 
-      // Automatic smooth redirect to the Arena dashboard
-      router.push(`/arena?token=${encodeURIComponent(finalToken)}`);
+      setGoogleLoading(false);
     } catch (err: any) {
       setError(err.message || 'Google Sign-In failed.');
       setGoogleLoading(false);
     }
   };
 
-  // Direct Contestant Access Fallback (guarantees entry if Google popup auto-closes or is blocked)
-  const handleDirectContestantAccess = async () => {
-    setGoogleLoading(true);
+  // Handle Logout / Switch Account
+  const handleSignOut = async () => {
+    await clearContestantSession();
+    setCurrentUser(null);
     setError(null);
-
-    try {
-      const res = await fetch('/api/auth/google', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email: 'contestant@aiclub.org',
-          name: 'AI Club Contestant',
-          uid: 'direct-entry-' + Math.random().toString(36).substring(2, 9),
-        }),
-      });
-
-      const data = await res.json();
-      const finalToken = incomingToken || data.token || 'AX-CONTESTANT-TOKEN';
-      sessionStorage.setItem('contestant_session_active', 'true');
-      localStorage.setItem('participant_token', finalToken);
-      if (data.user) {
-        localStorage.setItem('contestant_profile', JSON.stringify(data.user));
-      }
-      router.push(`/arena?token=${encodeURIComponent(finalToken)}`);
-    } catch (err: any) {
-      setError(err.message || 'Direct contestant entry failed.');
-      setGoogleLoading(false);
-    }
   };
 
-  // Handle Manual Access Token Verification & Entry
-  const handleTokenSubmit = async (e: React.FormEvent) => {
+  // STEP 2: Handle Manual Team Code Verification & Arena Entry
+  const handleTeamCodeSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (!currentUser) {
+      setError('Please log in with your Google account first.');
+      return;
+    }
+
     const cleanToken = tokenInput.trim().toUpperCase();
     if (!cleanToken) {
-      setError('Please enter your participant access token');
+      setError('Please enter your team room access code.');
       return;
     }
 
@@ -284,60 +287,32 @@ function HomePageContent() {
       const res = await fetch('/api/auth/verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token: cleanToken }),
+        body: JSON.stringify({
+          token: cleanToken,
+          userEmail: currentUser.email,
+          userName: currentUser.name,
+          userId: currentUser.uid,
+        }),
       });
 
       const data = await res.json();
       if (!res.ok || !data.authenticated) {
-        setError(data.error || 'Invalid or unverified contestant token.');
+        setError(data.error || 'Access Denied: Invalid team code or account mismatch.');
         setTokenLoading(false);
         return;
       }
 
-      sessionStorage.setItem('contestant_session_active', 'true');
-      localStorage.setItem('participant_token', cleanToken);
-      if (data.user) {
-        localStorage.setItem('contestant_profile', JSON.stringify(data.user));
+      // Update session with verified token and team metadata
+      updateContestantSessionToken(cleanToken);
+      if (data.user?.team_name) {
+        updateContestantSessionTeam(data.user.team_name, data.user.team_size);
       }
 
-      // Automatic redirect to the Arena dashboard
+      // Smooth redirect to the Arena dashboard with verified token
       router.push(`/arena?token=${encodeURIComponent(cleanToken)}`);
     } catch (err: any) {
-      setError(err.message || 'Token verification failed. Please try again.');
+      setError(err.message || 'Team code verification failed. Please try again.');
       setTokenLoading(false);
-    }
-  };
-
-  // Handle Admin Login Modal
-  const handleAdminLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!adminSecret.trim()) {
-      setAdminError('Please enter admin secret key');
-      return;
-    }
-
-    setAdminLoading(true);
-    setAdminError(null);
-
-    try {
-      const res = await fetch('/api/auth/verify', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ adminSecret: adminSecret.trim() }),
-      });
-
-      const data = await res.json();
-      if (!res.ok || !data.authenticated) {
-        setAdminError(data.error || 'Invalid admin secret key');
-        setAdminLoading(false);
-        return;
-      }
-
-      sessionStorage.setItem('admin_secret', adminSecret.trim());
-      router.push('/admin');
-    } catch (err: any) {
-      setAdminError(err.message || 'Admin authentication failed');
-      setAdminLoading(false);
     }
   };
 
@@ -355,14 +330,14 @@ function HomePageContent() {
       <div className="fixed bottom-0 right-1/4 w-[450px] h-[450px] bg-cyan-500/10 rounded-full blur-[140px] pointer-events-none -z-10" />
 
       {/* =========================================================================
-          COMPACT TOP NAVIGATION BAR
+          TOP NAVIGATION BAR (NO ADMIN BUTTON)
          ========================================================================= */}
-      <header className="h-14 sm:h-15 bg-app-surface border-b border-app-border px-4 sm:px-6 w-full flex items-center justify-between select-none relative z-20 shadow-xs">
+      <header className="h-15 sm:h-16 bg-app-surface/85 backdrop-blur-md border-b border-app-border px-4 sm:px-6 w-full flex items-center justify-between select-none relative z-20 shadow-xs">
         
         {/* Left: AI Club Emblem & Event Badge */}
         <div className="flex items-center space-x-2.5 sm:space-x-3">
           <div className="w-8 h-8 rounded-xl bg-app-muted border border-app-border flex items-center justify-center text-emerald-500 dark:text-emerald-400 shadow-xs">
-            <BrainCircuit className="w-4 h-4" />
+            <BrainCircuit className="w-4.5 h-4.5" />
           </div>
 
           <div className="flex items-center space-x-2">
@@ -375,39 +350,34 @@ function HomePageContent() {
           </div>
         </div>
 
-        {/* Right: Admin Key Button */}
+        {/* Right: Security & Platform Status Badge */}
         <div className="flex items-center space-x-2">
-
-          {/* Admin Command Portal Button */}
-          <button
-            onClick={() => setShowAdminModal(true)}
-            className="p-1.5 sm:px-2.5 sm:py-1 rounded-xl border border-app-border bg-app-surface hover:bg-app-hover text-app-subtext hover:text-app-text text-xs transition-all cursor-pointer flex items-center space-x-1 shadow-xs"
-            title="Admin Portal"
-          >
-            <Lock className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline font-medium">Admin</span>
-          </button>
+          <div className="flex items-center space-x-1.5 px-3 py-1 rounded-xl bg-app-bg border border-app-border text-[11px] text-app-subtext font-mono shadow-xs">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+            <span className="hidden xs:inline">Single-Account Lock</span>
+            <span className="xs:hidden">Locked</span>
+          </div>
         </div>
       </header>
 
       {/* =========================================================================
-          COMPACT MAIN HERO & AUTHENTICATION CARD
+          MAIN HERO & DASHBOARD AREA
          ========================================================================= */}
-      <main className="max-w-2xl mx-auto w-full px-4 sm:px-6 py-5 sm:py-7 flex flex-col items-center text-center relative z-10 flex-1 justify-center">
+      <main className="max-w-2xl mx-auto w-full px-4 sm:px-6 py-6 sm:py-8 flex flex-col items-center text-center relative z-10 flex-1 justify-center">
         
         {/* Compact AI Club Event Pill Badge */}
         <motion.div
           initial={{ opacity: 0, y: -8 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.35 }}
-          className="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/25 text-emerald-600 dark:text-emerald-400 text-[11px] font-semibold shadow-xs mb-3 select-none"
+          className="inline-flex items-center space-x-2 px-3.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/25 text-emerald-600 dark:text-emerald-400 text-[11px] font-semibold shadow-xs mb-3 select-none"
         >
-          <Sparkles className="w-3 h-3 text-emerald-500 dark:text-emerald-400 animate-pulse" />
+          <Sparkles className="w-3.5 h-3.5 text-emerald-500 dark:text-emerald-400 animate-pulse" />
           <span>PRESENTED BY AI CLUB</span>
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping inline-block" />
         </motion.div>
 
-        {/* Compact Event Headline */}
+        {/* Event Headline */}
         <motion.h1
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
@@ -431,222 +401,301 @@ function HomePageContent() {
         </motion.p>
 
         {/* =========================================================================
-            ATTACHED TOKEN / LOGIN REQUIRED BANNER
+            LOGIN REQUIRED / ACCESS KEY NOTICE BANNER
            ========================================================================= */}
-        {incomingToken && isLoginRequired && (
+        {(!currentUser && (incomingToken || isLoginRequired)) && (
           <motion.div
             initial={{ opacity: 0, y: 5 }}
             animate={{ opacity: 1, y: 0 }}
-            className="mt-3 w-full max-w-md p-2.5 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center space-x-2 text-left shadow-xs"
+            className="mt-3.5 w-full max-w-md p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-start space-x-2.5 text-left shadow-xs"
           >
-            <AlertCircle className="w-4 h-4 text-amber-500 shrink-0" />
-            <div className="text-[11px] text-app-text">
-              <span className="font-bold text-amber-500">Access Key Detected:</span>{' '}
-              <span className="font-mono font-semibold">{incomingToken}</span>. Please sign in with Google to enter your arena dashboard.
+            <AlertCircle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+            <div className="text-[11px] text-app-text leading-snug">
+              <span className="font-bold text-amber-500">Sign-In Required:</span>{' '}
+              {incomingToken ? (
+                <>
+                  Access key <span className="font-mono font-bold text-app-text">{incomingToken}</span> detected. Please sign in with your Google account first to verify ownership and enter your arena room.
+                </>
+              ) : (
+                'Please sign in with your Google account to access your arena room.'
+              )}
             </div>
           </motion.div>
         )}
 
         {/* =========================================================================
-            MAIN COMPACT AUTHENTICATION CARD
+            MAIN AUTHENTICATION & ROOM ENTRY DASHBOARD CARD
            ========================================================================= */}
         <motion.div
           initial={{ opacity: 0, scale: 0.98, y: 12 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
           transition={{ duration: 0.45, delay: 0.2 }}
-          className="mt-4 sm:mt-5 w-full max-w-md p-5 sm:p-6 bg-app-surface border border-app-border rounded-3xl shadow-[0_16px_45px_rgba(0,0,0,0.25)] relative overflow-hidden text-left"
+          className="mt-4 sm:mt-5 w-full max-w-md p-5 sm:p-6 bg-app-surface/95 backdrop-blur-xl border border-app-border rounded-3xl shadow-[0_20px_50px_rgba(0,0,0,0.3)] relative overflow-hidden text-left"
         >
           {/* Subtle top edge accent glow */}
           <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-emerald-500 via-teal-400 to-cyan-500 opacity-90" />
 
-          {/* Card Header */}
-          <div className="flex items-center space-x-3 mb-4">
-            <div className="w-10 h-10 rounded-2xl bg-app-muted border border-app-border flex items-center justify-center text-app-accent shadow-xs shrink-0">
-              <Cpu className="w-5 h-5 text-emerald-500 dark:text-emerald-400" />
-            </div>
-            <div>
-              <h2 className="text-sm sm:text-base font-bold text-app-text tracking-tight">
-                Contestant Single Sign-On
-              </h2>
-              <p className="text-[11px] text-app-subtext">
-                One-tap Google authentication &bull; Powered by Firebase
-              </p>
-            </div>
-          </div>
-
-          {/* Active Session Quick-Resume Pill */}
-          {existingToken && !incomingToken && (
-            <div className="mb-4 p-2.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/25 flex items-center justify-between gap-2 shadow-xs">
-              <div className="min-w-0">
-                <div className="text-[9px] font-mono uppercase tracking-wider text-emerald-600 dark:text-emerald-400 font-bold">
-                  Active Session
-                </div>
-                <div className="font-mono text-xs font-semibold text-app-text truncate">
-                  {existingToken}
-                </div>
-              </div>
-              <button
-                onClick={() => {
-                  sessionStorage.setItem('contestant_session_active', 'true');
-                  router.push(`/arena?token=${encodeURIComponent(existingToken)}`);
-                }}
-                className="px-2.5 py-1 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs shrink-0 flex items-center space-x-1 shadow-sm transition-all cursor-pointer"
-              >
-                <span>Resume</span>
-                <ArrowRight className="w-3 h-3" />
-              </button>
-            </div>
-          )}
-
-          {/* Error Message with Direct Bypass */}
+          {/* Error Message Box */}
           {error && (
             <div className="mb-4 p-3 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-600 dark:text-rose-300 text-xs shadow-xs space-y-2">
               <div className="flex items-start space-x-2">
                 <AlertCircle className="w-4 h-4 text-rose-500 shrink-0 mt-0.5" />
                 <span className="leading-snug">{error}</span>
               </div>
-              <button
-                type="button"
-                onClick={handleDirectContestantAccess}
-                className="w-full py-1.5 px-3 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/40 text-rose-700 dark:text-rose-200 font-bold text-xs flex items-center justify-center space-x-1.5 transition-colors cursor-pointer"
-              >
-                <span>Continue into Arena (Direct Contestant Entry)</span>
-                <ArrowRight className="w-3.5 h-3.5" />
-              </button>
             </div>
           )}
 
-          {/* METHOD 1: Continue with Google (Firebase OAuth) */}
-          <div className="space-y-3">
-            <button
-              onClick={handleGoogleSignIn}
-              disabled={googleLoading || tokenLoading}
-              className="w-full flex items-center justify-center space-x-3 px-4 py-3 rounded-2xl bg-white hover:bg-slate-50 text-slate-900 font-bold text-xs sm:text-sm tracking-wide border border-slate-200/90 shadow-[0_3px_12px_rgba(0,0,0,0.1)] hover:scale-[1.01] active:scale-[0.98] transition-all cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed select-none group"
-            >
-              {googleLoading ? (
-                <>
-                  <Loader2 className="w-4 h-4 text-slate-900 animate-spin" />
-                  <span>Signing in with Google...</span>
-                </>
-              ) : (
-                <>
-                  {/* Official Google 4-Color SVG Icon */}
-                  <svg className="w-4 h-4 sm:w-4.5 sm:h-4.5 shrink-0" viewBox="0 0 24 24">
-                    <path
-                      fill="#4285F4"
-                      d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
-                    />
-                    <path
-                      fill="#34A853"
-                      d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-                    />
-                    <path
-                      fill="#FBBC05"
-                      d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
-                    />
-                    <path
-                      fill="#EA4335"
-                      d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
-                    />
-                  </svg>
-                  <span className="font-semibold text-slate-900 group-hover:text-black">
-                    Continue with Google
-                  </span>
-                </>
-              )}
-            </button>
-
-            <div className="text-center pt-0.5">
-              <button
-                type="button"
-                onClick={handleDirectContestantAccess}
-                className="text-[11px] text-app-subtext hover:text-app-text transition-colors cursor-pointer underline decoration-dotted"
-              >
-                Having popup issues? Click here for Direct Contestant Entry
-              </button>
-            </div>
-
-            {/* Clean Divider */}
-            <div className="relative flex items-center justify-center my-2 select-none">
-              <div className="border-t border-app-border w-full"></div>
-              <span className="bg-app-surface px-2.5 text-[10px] font-mono uppercase tracking-wider text-app-subtext shrink-0 font-medium">
-                or enter access token
-              </span>
-            </div>
-
-            {/* METHOD 2: Compact Token Entry Form */}
-            <form onSubmit={handleTokenSubmit} className="space-y-2.5">
-              <div className="relative flex items-center">
-                <div className="absolute left-3 text-app-subtext pointer-events-none">
-                  <KeyRound className="w-3.5 h-3.5" />
+          {/* =======================================================================
+              STATE 1: USER NOT LOGGED IN -> STEP 1: GOOGLE SIGN-IN
+             ======================================================================= */}
+          {!currentUser ? (
+            <div className="space-y-4">
+              {/* Card Header */}
+              <div className="flex items-center space-x-3">
+                <div className="w-10 h-10 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-500 dark:text-emerald-400 shadow-xs shrink-0">
+                  <Cpu className="w-5 h-5" />
                 </div>
-                
-                <input
-                  id="contestant-token-input"
-                  name="contestantToken"
-                  type="text"
-                  value={tokenInput}
-                  onChange={(e) => {
-                    setTokenInput(e.target.value.toUpperCase());
-                    setError(null);
-                  }}
-                  placeholder="e.g. AX-7890-ABCD"
-                  disabled={googleLoading || tokenLoading}
-                  className="w-full pl-8 pr-7 py-2 text-xs text-app-text bg-app-bg border border-app-border rounded-xl focus:outline-none focus:border-app-accent font-mono tracking-wider transition-colors placeholder:text-app-subtext/40 shadow-inner"
-                />
-
-                {tokenInput && (
-                  <button
-                    type="button"
-                    onClick={() => setTokenInput('')}
-                    className="absolute right-2 text-app-subtext hover:text-app-text p-1"
-                  >
-                    <X className="w-3 h-3" />
-                  </button>
-                )}
+                <div>
+                  <div className="flex items-center space-x-2">
+                    <h2 className="text-sm sm:text-base font-bold text-app-text tracking-tight">
+                      Contestant Access
+                    </h2>
+                    <span className="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30">
+                      STEP 1 OF 2
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-app-subtext mt-0.5">
+                    Single-tap authentication links your team pass to your Google identity
+                  </p>
+                </div>
               </div>
 
+              {/* Enhanced Google Single-Tap Sign-In Button */}
               <button
-                type="submit"
-                disabled={tokenLoading || googleLoading || !tokenInput.trim()}
-                className="w-full flex items-center justify-center space-x-1.5 py-2 rounded-xl bg-app-accent text-app-bg font-bold text-xs tracking-wide hover:opacity-95 active:scale-[0.98] transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shadow-xs"
+                type="button"
+                onClick={handleGoogleSignIn}
+                disabled={googleLoading}
+                className="relative w-full group overflow-hidden rounded-2xl bg-white hover:bg-slate-50 text-slate-900 font-bold text-xs sm:text-sm tracking-wide border border-slate-200/90 shadow-[0_4px_16px_rgba(66,133,244,0.18)] hover:shadow-[0_6px_24px_rgba(66,133,244,0.28)] hover:scale-[1.01] active:scale-[0.985] transition-all duration-200 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed select-none py-3.5 px-4 flex items-center justify-between"
               >
-                {tokenLoading ? (
-                  <>
-                    <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" />
-                    <span>Verifying...</span>
-                  </>
+                {googleLoading ? (
+                  <div className="w-full flex items-center justify-center space-x-2 py-0.5">
+                    <Loader2 className="w-4 h-4 text-slate-800 animate-spin shrink-0" />
+                    <span className="text-slate-800 font-semibold">Connecting with Google Account...</span>
+                  </div>
                 ) : (
                   <>
-                    <span>Enter Arena with Token</span>
-                    <ArrowRight className="w-3.5 h-3.5" />
+                    <div className="flex items-center space-x-3 min-w-0">
+                      {/* Official Google 4-Color SVG Icon */}
+                      <div className="w-6 h-6 rounded-full bg-white flex items-center justify-center shrink-0">
+                        <svg className="w-5 h-5 shrink-0 transition-transform duration-200 group-hover:scale-110" viewBox="0 0 24 24">
+                          <path
+                            fill="#4285F4"
+                            d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+                          />
+                          <path
+                            fill="#34A853"
+                            d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+                          />
+                          <path
+                            fill="#FBBC05"
+                            d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
+                          />
+                          <path
+                            fill="#EA4335"
+                            d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
+                          />
+                        </svg>
+                      </div>
+                      <span className="font-bold text-slate-900 group-hover:text-black tracking-normal text-xs sm:text-sm truncate">
+                        Single-Tap Sign in with Google
+                      </span>
+                    </div>
+
+                    {/* 1-Tap Instant Badge */}
+                    <span className="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-800 text-[10px] font-mono font-bold border border-emerald-500/25 shrink-0">
+                      <Zap className="w-2.5 h-2.5 fill-emerald-600 text-emerald-600" />
+                      <span>Instant 1-Tap</span>
+                    </span>
                   </>
                 )}
               </button>
-            </form>
-          </div>
+
+              {/* Informative Note */}
+              <div className="p-2.5 rounded-xl bg-app-bg/60 border border-app-border text-[11px] text-app-subtext flex items-center space-x-2">
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-500 dark:text-emerald-400 shrink-0" />
+                <span>Secure authentication &bull; Room team code verification follows immediately.</span>
+              </div>
+            </div>
+          ) : (
+            /* =======================================================================
+                STATE 2: USER IS LOGGED IN -> STEP 2: ENTER ROOM TEAM CODE
+               ======================================================================= */
+            <div className="space-y-4">
+              {/* Refined Logged-In User Profile Strip */}
+              <div className="p-3.5 rounded-2xl bg-gradient-to-r from-emerald-500/10 via-emerald-500/5 to-cyan-500/10 border border-emerald-500/25 flex items-center justify-between gap-3 shadow-xs">
+                <div className="flex items-center space-x-3 min-w-0">
+                  <div className="relative shrink-0">
+                    {currentUser.photoURL ? (
+                      <img
+                        src={currentUser.photoURL}
+                        alt={currentUser.name}
+                        className="w-9 h-9 rounded-full border-2 border-emerald-500/40 object-cover"
+                      />
+                    ) : (
+                      <div className="w-9 h-9 rounded-2xl bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 flex items-center justify-center font-bold text-xs border border-emerald-500/30">
+                        <UserCheck className="w-4 h-4" />
+                      </div>
+                    )}
+                    <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-emerald-500 border-2 border-app-surface ring-1 ring-emerald-400" />
+                  </div>
+
+                  <div className="min-w-0">
+                    <div className="flex items-center space-x-2">
+                      <span className="font-bold text-xs sm:text-sm text-app-text truncate">
+                        {currentUser.name}
+                      </span>
+                      <span className="text-[9px] font-mono font-semibold px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30">
+                        Verified
+                      </span>
+                    </div>
+                    <div className="text-[11px] font-mono text-app-subtext truncate mt-0.5">
+                      {currentUser.email}
+                    </div>
+                    {currentUser.teamName && (
+                      <div className="flex items-center gap-1.5 mt-1">
+                        <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-cyan-500/15 text-cyan-400 border border-cyan-500/30 font-bold">
+                          Team: {currentUser.teamName}
+                        </span>
+                        {currentUser.teamSize && (
+                          <span className="text-[10px] font-mono px-1.5 py-0.5 rounded-full bg-purple-500/15 text-purple-400 border border-purple-500/30">
+                            {currentUser.teamSize}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Switch Account Button */}
+                <button
+                  onClick={handleSignOut}
+                  className="px-2.5 py-1.5 rounded-xl border border-app-border bg-app-surface hover:bg-rose-500/10 hover:border-rose-500/30 text-app-subtext hover:text-rose-500 text-[11px] font-medium transition-all cursor-pointer flex items-center space-x-1.5 shrink-0 shadow-xs active:scale-95"
+                  title="Sign out or switch account"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                  <span>Switch</span>
+                </button>
+              </div>
+
+              {/* Step 2 Header */}
+              <div className="pt-1">
+                <div className="flex items-center space-x-2">
+                  <div className="w-6 h-6 rounded-lg bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-500 dark:text-emerald-400 shrink-0">
+                    <KeyRound className="w-3.5 h-3.5" />
+                  </div>
+                  <h3 className="text-sm font-bold text-app-text tracking-tight">
+                    Enter Room Team Code (Step 2 of 2)
+                  </h3>
+                </div>
+                <p className="text-[11px] text-app-subtext mt-1.5 leading-relaxed">
+                  Enter the access code generated for your team. The system verifies that this token is signed for <strong className="text-app-text font-semibold">{currentUser.email}</strong>.
+                </p>
+              </div>
+
+              {/* Quick Code Autofill if Account already has an assigned token */}
+              {currentUser.assignedToken && currentUser.assignedToken !== tokenInput && (
+                <div className="p-3 rounded-2xl bg-gradient-to-r from-emerald-500/10 via-emerald-500/5 to-cyan-500/10 border border-emerald-500/25 flex items-center justify-between text-xs gap-2">
+                  <div className="min-w-0">
+                    <div className="text-[10px] font-mono uppercase text-emerald-500 font-semibold">Assigned Access Token:</div>
+                    <div className="font-mono font-bold text-app-text text-xs tracking-wider">{currentUser.assignedToken}</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTokenInput(currentUser.assignedToken!);
+                      setError(null);
+                    }}
+                    className="px-3 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-[11px] cursor-pointer transition-all shadow-xs flex items-center space-x-1 active:scale-95"
+                  >
+                    <Zap className="w-3 h-3 fill-current" />
+                    <span>1-Tap Autofill</span>
+                  </button>
+                </div>
+              )}
+
+              {/* Manual Team Code Input Form */}
+              <form onSubmit={handleTeamCodeSubmit} className="space-y-3 pt-1">
+                <div className="relative flex items-center">
+                  <div className="absolute left-3.5 text-app-subtext pointer-events-none">
+                    <KeyRound className="w-4 h-4 text-emerald-500 dark:text-emerald-400" />
+                  </div>
+                  
+                  <input
+                    id="team-code-input"
+                    name="teamCode"
+                    type="text"
+                    value={tokenInput}
+                    onChange={(e) => {
+                      setTokenInput(e.target.value.toUpperCase());
+                      setError(null);
+                    }}
+                    placeholder="e.g. AX-7890-ABCD"
+                    disabled={tokenLoading}
+                    autoFocus
+                    className="w-full pl-10 pr-9 py-2.5 text-xs sm:text-sm text-app-text bg-app-bg border border-app-border rounded-xl focus:outline-none focus:border-app-accent focus:ring-1 focus:ring-app-accent/30 font-mono tracking-widest uppercase transition-all placeholder:font-sans placeholder:normal-case placeholder:tracking-normal placeholder:text-app-subtext/40 shadow-inner"
+                  />
+
+                  {tokenInput && (
+                    <button
+                      type="button"
+                      onClick={() => setTokenInput('')}
+                      className="absolute right-2.5 text-app-subtext hover:text-app-text p-1 cursor-pointer"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={tokenLoading || !tokenInput.trim()}
+                  className="w-full flex items-center justify-center space-x-2 py-3 rounded-2xl bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500 hover:from-emerald-400 hover:to-cyan-400 text-slate-950 font-bold text-xs sm:text-sm tracking-wide shadow-[0_0_24px_rgba(16,185,129,0.3)] hover:shadow-[0_0_32px_rgba(16,185,129,0.45)] active:scale-[0.98] transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed group"
+                >
+                  {tokenLoading ? (
+                    <>
+                      <Loader2 className="w-4 h-4 text-slate-950 animate-spin mr-1" />
+                      <span>Verifying Token Ownership...</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>Enter Arena Room</span>
+                      <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+                    </>
+                  )}
+                </button>
+              </form>
+            </div>
+          )}
 
           {/* Security & System Guarantees Footer */}
-          <div className="mt-4 pt-3 border-t border-app-border flex items-center justify-between text-[10px] text-app-subtext">
-            <div className="flex items-center space-x-1">
-              <ShieldCheck className="w-3 h-3 text-emerald-500 dark:text-emerald-400 shrink-0" />
-              <span>Zero-Disk RAM Sandbox</span>
+          <div className="mt-4 pt-3.5 border-t border-app-border flex items-center justify-between text-[10px] text-app-subtext">
+            <div className="flex items-center space-x-1.5">
+              <ShieldCheck className="w-3.5 h-3.5 text-emerald-500 dark:text-emerald-400 shrink-0" />
+              <span>Single-Account Lock</span>
             </div>
-            <div className="flex items-center space-x-1">
-              <Zap className="w-3 h-3 text-cyan-500 dark:text-cyan-400 shrink-0" />
-              <span>Auto-Provisioned Access</span>
+            <div className="flex items-center space-x-1.5">
+              <Zap className="w-3.5 h-3.5 text-cyan-500 dark:text-cyan-400 shrink-0" />
+              <span>Zero-Disk RAM Sandbox</span>
             </div>
           </div>
         </motion.div>
 
-        {/* =========================================================================
-            COMPACT HORIZONTAL FEATURE BADGES STRIP (REPLACES TALL CARDS)
-           ========================================================================= */}
+        {/* Feature Badges */}
         <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.45, delay: 0.28 }}
-          className="grid grid-cols-3 gap-2 mt-4 sm:mt-5 w-full max-w-md text-left"
+          className="grid grid-cols-3 gap-2.5 mt-4 sm:mt-5 w-full max-w-md text-left"
         >
           <div className="p-2.5 rounded-xl bg-app-surface border border-app-border shadow-xs flex items-center space-x-2">
             <Terminal className="w-3.5 h-3.5 text-emerald-500 dark:text-emerald-400 shrink-0" />
@@ -674,108 +723,24 @@ function HomePageContent() {
         </motion.div>
       </main>
 
-      {/* =========================================================================
-          COMPACT FOOTER
-         ========================================================================= */}
+      {/* Footer */}
       <footer className="py-2.5 border-t border-app-border bg-app-surface text-center text-[11px] text-app-subtext font-mono relative z-10 px-4">
         <div className="flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2">
           <span className="font-semibold text-app-text">Pixel and Anomaly</span>
           <span className="hidden sm:inline text-app-subtext/40">&bull;</span>
           <span>Presented by AI Club 2026</span>
           <span className="hidden sm:inline text-app-subtext/40">&bull;</span>
-          <span className="text-emerald-500 dark:text-emerald-400 font-sans font-medium">Zero-Footprint Anti-Cheat</span>
+          <span className="text-emerald-500 dark:text-emerald-400 font-sans font-medium">Single-Account Security</span>
+          <span className="hidden sm:inline text-app-subtext/40">&bull;</span>
+          <a
+            href="/admin"
+            className="text-app-subtext/60 hover:text-emerald-400 transition-colors"
+            title="Administrator Command Portal"
+          >
+            Admin Portal
+          </a>
         </div>
       </footer>
-
-      {/* =========================================================================
-          ADMIN COMMAND PORTAL MODAL (OPAQUE CARD, BLURRY BACKDROP)
-         ========================================================================= */}
-      {showAdminModal && (
-        <div
-          onClick={() => setShowAdminModal(false)}
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xl select-none animate-in fade-in duration-200"
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-sm p-5 sm:p-6 bg-app-surface border border-app-border rounded-3xl shadow-[0_24px_60px_rgba(0,0,0,0.65)] space-y-4"
-          >
-            <div className="flex items-start justify-between">
-              <div className="flex items-center space-x-2.5">
-                <div className="w-9 h-9 rounded-xl bg-app-muted border border-app-border flex items-center justify-center text-app-accent shadow-xs">
-                  <Lock className="w-4 h-4" />
-                </div>
-                <div>
-                  <h3 className="text-sm font-bold text-app-text tracking-tight">
-                    Admin Command Portal
-                  </h3>
-                  <p className="text-[11px] text-app-subtext">
-                    Enter master secret key
-                  </p>
-                </div>
-              </div>
-              <button
-                onClick={() => setShowAdminModal(false)}
-                className="text-app-subtext hover:text-app-text cursor-pointer p-1 rounded-lg hover:bg-app-hover"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <form onSubmit={handleAdminLogin} className="space-y-3">
-              <div className="space-y-1">
-                <label htmlFor="admin-secret-input" className="block text-[11px] font-mono text-app-subtext">
-                  ADMIN_SECRET_KEY
-                </label>
-                <div className="relative">
-                  <input
-                    id="admin-secret-input"
-                    name="adminSecretKey"
-                    type={showAdminSecretText ? 'text' : 'password'}
-                    value={adminSecret}
-                    onChange={(e) => {
-                      setAdminSecret(e.target.value);
-                      setAdminError(null);
-                    }}
-                    placeholder="Enter admin secret..."
-                    autoFocus
-                    className="w-full px-3 pr-8 py-2 text-xs text-app-text bg-app-bg border border-app-border rounded-xl focus:outline-none focus:border-app-accent font-mono shadow-inner transition-colors"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowAdminSecretText(!showAdminSecretText)}
-                    className="absolute right-2.5 top-2.5 text-app-subtext hover:text-app-text"
-                  >
-                    {showAdminSecretText ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                  </button>
-                </div>
-              </div>
-
-              {adminError && (
-                <p className="text-xs text-rose-500 dark:text-rose-400 font-mono bg-rose-500/10 p-2 rounded-lg border border-rose-500/20">
-                  {adminError}
-                </p>
-              )}
-
-              <div className="flex items-center justify-end space-x-2 pt-2 border-t border-app-border">
-                <button
-                  type="button"
-                  onClick={() => setShowAdminModal(false)}
-                  className="px-3 py-1.5 rounded-xl text-xs text-app-subtext hover:text-app-text hover:bg-app-hover transition-colors cursor-pointer font-medium"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={adminLoading || !adminSecret.trim()}
-                  className="px-4 py-1.5 text-xs font-semibold rounded-xl bg-app-accent text-app-bg hover:opacity-95 active:scale-[0.98] shadow-sm transition-all cursor-pointer disabled:opacity-50"
-                >
-                  {adminLoading ? 'Authenticating...' : 'Access Portal'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
 
     </div>
   );

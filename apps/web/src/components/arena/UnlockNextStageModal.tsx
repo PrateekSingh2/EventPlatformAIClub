@@ -1,19 +1,22 @@
 'use client';
 
 import React, { useEffect, useState, useRef } from 'react';
-import { extractZipInBrowser } from '@/lib/zip-engine';
+import { extractZipInBrowser, extractInnerZipBlob, extractStageArchiveInBrowser } from '@/lib/zip-engine';
 import { enqueueStageProgress } from '@/lib/offline-progress-queue';
 import { getCachedStageArchive, saveStageArchive } from '@/lib/stage-cache';
 import confetti from 'canvas-confetti';
-import { KeyRound, Eye, EyeOff, X, WifiOff, CloudLightning } from 'lucide-react';
+import { KeyRound, Eye, EyeOff, X, WifiOff, CloudLightning, Clock, ShieldAlert } from 'lucide-react';
 
 interface UnlockNextStageModalProps {
+  nextStageZipBlob?: Blob | null;
   isOpen: boolean;
   currentStageNumber: number;
   nextStageNumber: number;
   nextStageTitle?: string;
   points?: number;
   accessToken: string;
+  /** If provided, uses nested-ZIP in-browser decryption (new token archive system). */
+  tokenArchiveBlob?: Blob | null;
   onClose: () => void;
   onUnlockSuccess: (
     nextStageNumber: number,
@@ -30,6 +33,8 @@ export function UnlockNextStageModal({
   nextStageTitle,
   points = 100,
   accessToken,
+  nextStageZipBlob,
+  tokenArchiveBlob,
   onClose,
   onUnlockSuccess,
 }: UnlockNextStageModalProps) {
@@ -42,26 +47,68 @@ export function UnlockNextStageModal({
   const [isOfflineMode, setIsOfflineMode] = useState(false);
 
   const stageOpenTimeRef = useRef<number>(Date.now());
+  const localFailedAttemptsRef = useRef<number>(0);
 
+  // Clear password, errors, and check active cooldown whenever modal opens or stage transitions
   useEffect(() => {
     if (isOpen) {
+      setPassword('');
+      setErrorMessage(null);
+      setSuccessMessage(null);
+      setShowPassword(false);
       stageOpenTimeRef.current = Date.now();
       setIsOfflineMode(typeof navigator !== 'undefined' && !navigator.onLine);
-    }
-  }, [isOpen]);
 
+      // Check current cooldown state from server for nextStageNumber
+      if (accessToken && nextStageNumber) {
+        fetch('/api/stage/password-attempt', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            accessToken,
+            stageNumber: nextStageNumber,
+            action: 'status',
+          }),
+        })
+          .then((res) => res.json())
+          .then((data) => {
+            if (data?.cooldownSeconds && data.cooldownSeconds > 0) {
+              setCooldownSeconds(data.cooldownSeconds);
+            }
+          })
+          .catch(() => {});
+      }
+    } else {
+      setPassword('');
+      setErrorMessage(null);
+      setSuccessMessage(null);
+    }
+  }, [isOpen, nextStageNumber, accessToken]);
+
+  // Smooth 1-second countdown timer when cooldown is active
   useEffect(() => {
     if (cooldownSeconds <= 0) return;
-    const timer = window.setInterval(() => {
-      setCooldownSeconds((seconds) => Math.max(0, seconds - 1));
+    const timer = setInterval(() => {
+      setCooldownSeconds((prev) => {
+        if (prev <= 1) return 0;
+        return prev - 1;
+      });
     }, 1000);
-    return () => window.clearInterval(timer);
-  }, [cooldownSeconds]);
+    return () => clearInterval(timer);
+  }, [cooldownSeconds > 0]);
 
   if (!isOpen) return null;
 
+  const handleClose = () => {
+    setPassword('');
+    setErrorMessage(null);
+    onClose();
+  };
+
   const handleUnlockSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (cooldownSeconds > 0) return;
+
     const cleanPassword = password.trim();
     if (!cleanPassword) {
       setErrorMessage('Please enter the stage decryption key.');
@@ -77,8 +124,31 @@ export function UnlockNextStageModal({
     const durationSeconds = Math.max(1, Math.round((completedTimestamp - stageOpenTimeRef.current) / 1000));
     const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
 
+    // Helper to apply local fallback cooldown on wrong attempt
+    const applyFailureCooldown = (serverCooldown?: number, errorMsg?: string) => {
+      localFailedAttemptsRef.current += 1;
+      const count = localFailedAttemptsRef.current;
+      const fallbackCooldown = count >= 5 ? 60 : count >= 3 ? 15 : 0;
+      const effectiveCooldown = serverCooldown && serverCooldown > 0 ? serverCooldown : fallbackCooldown;
+
+      if (effectiveCooldown > 0) {
+        setCooldownSeconds(effectiveCooldown);
+      }
+
+      setErrorMessage(
+        errorMsg ||
+          (effectiveCooldown > 0
+            ? `Too many incorrect passwords. Try again in ${effectiveCooldown} seconds.`
+            : `Invalid stage key. ${Math.max(0, 3 - count)} attempt(s) remaining before a 15-second cooldown.`)
+      );
+    };
+
     // Helper to queue progress locally and advance optimistic UI
     const queueAndProceed = async (downloadUrl: string = '', pointsWon: number = points) => {
+      localFailedAttemptsRef.current = 0;
+      setCooldownSeconds(0);
+      setPassword('');
+
       await enqueueStageProgress({
         accessToken,
         stageNumber: currentStageNumber,
@@ -102,38 +172,50 @@ export function UnlockNextStageModal({
       setSuccessMessage(`Stage ${nextStageNumber} Key Verified! Offline beacon queued at ${timeFormatted} for leaderboard sync.`);
 
       setTimeout(() => {
+        setPassword('');
         onUnlockSuccess(
           nextStageNumber,
           cleanPassword,
           pointsWon,
           downloadUrl
         );
-        onClose();
-      }, 1400);
+        handleClose();
+      }, 1200);
     };
 
     // --- Branch A: Client is Offline ---
     if (isOffline) {
       try {
-        const cached = await getCachedStageArchive(nextStageNumber);
         let offlineValid = false;
-
-        if (cached?.blob) {
+        const targetZip = nextStageZipBlob || (tokenArchiveBlob ? await extractInnerZipBlob(tokenArchiveBlob, `stage${nextStageNumber}.zip`).catch(() => null) : null);
+        if (targetZip) {
           try {
-            await extractZipInBrowser(cached.blob, cleanPassword, cached.allowedCopyFilename);
+            await extractStageArchiveInBrowser(targetZip, cleanPassword);
             offlineValid = true;
           } catch {
-            setErrorMessage('Invalid stage key. Verification failed.');
+            applyFailureCooldown(undefined, 'Invalid stage key. Decryption failed.');
             setValidating(false);
             return;
           }
         } else {
-          // Fallback verification for demo passwords
-          if (
-            (nextStageNumber === 2 && cleanPassword === 'cyber2026') ||
-            (nextStageNumber === 3 && cleanPassword === 'quantum4096')
-          ) {
-            offlineValid = true;
+          const cached = await getCachedStageArchive(nextStageNumber);
+          if (cached?.blob) {
+            try {
+              await extractZipInBrowser(cached.blob, cleanPassword, cached.allowedCopyFilename);
+              offlineValid = true;
+            } catch {
+              applyFailureCooldown(undefined, 'Invalid stage key. Decryption failed.');
+              setValidating(false);
+              return;
+            }
+          } else {
+            // Fallback verification for demo passwords
+            if (
+              (nextStageNumber === 2 && cleanPassword === 'cyber2026') ||
+              (nextStageNumber === 3 && cleanPassword === 'quantum4096')
+            ) {
+              offlineValid = true;
+            }
           }
         }
 
@@ -141,12 +223,12 @@ export function UnlockNextStageModal({
           await queueAndProceed();
           return;
         } else {
-          setErrorMessage('Invalid stage key. Try again or reconnect.');
+          applyFailureCooldown(undefined, 'Invalid stage key. Try again.');
           setValidating(false);
           return;
         }
       } catch (err: any) {
-        setErrorMessage(err.message || 'Offline verification failed.');
+        applyFailureCooldown(undefined, err.message || 'Offline verification failed.');
         setValidating(false);
         return;
       }
@@ -154,19 +236,21 @@ export function UnlockNextStageModal({
 
     // --- Branch B: Client is Online ---
     try {
+      // 1. Status Check for nextStageNumber rate-limit
       try {
         const statusRes = await fetch('/api/stage/password-attempt', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ accessToken, stageNumber: currentStageNumber, action: 'status' }),
+          body: JSON.stringify({ accessToken, stageNumber: nextStageNumber, action: 'status' }),
         });
         const statusData = await statusRes.json();
         if (!statusRes.ok) {
-          setCooldownSeconds(statusData.cooldownSeconds || 0);
-          throw new Error(statusData.error || 'Unable to verify password attempt limit.');
+          if (statusData.cooldownSeconds > 0) {
+            setCooldownSeconds(statusData.cooldownSeconds);
+          }
+          throw new Error(statusData.error || 'Password cooldown is currently active.');
         }
       } catch (statusErr: any) {
-        // If network dropped right here, treat as offline
         if (!navigator.onLine || statusErr.name === 'TypeError') {
           console.warn('[UnlockNextStageModal] Network unavailable checking status, checking offline cache');
         } else {
@@ -174,7 +258,85 @@ export function UnlockNextStageModal({
         }
       }
 
-      // 1. Fetch access credentials and presigned download URL for next stage
+      // ── Token Archive Path (nested archive system) ────────────────────────
+      const targetZip = nextStageZipBlob || (tokenArchiveBlob ? await extractInnerZipBlob(tokenArchiveBlob, `stage${nextStageNumber}.zip`).catch(() => null) : null);
+      if (targetZip) {
+        try {
+          await extractStageArchiveInBrowser(targetZip, cleanPassword);
+        } catch {
+          // Password wrong — register failure with server
+          let serverCooldown = 0;
+          let serverError = 'Invalid stage key. Verification failed.';
+          try {
+            const attemptRes = await fetch('/api/stage/password-attempt', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ accessToken, stageNumber: nextStageNumber, action: 'failed' }),
+            });
+            const attemptData = await attemptRes.json();
+            serverCooldown = attemptData.cooldownSeconds || 0;
+            if (attemptData.error) serverError = attemptData.error;
+          } catch {}
+
+          applyFailureCooldown(serverCooldown, serverError);
+          setValidating(false);
+          return;
+        }
+
+        // Password is correct — confirm with server and award points
+        try {
+          const verifyRes = await fetch('/api/stage/verify-stage-password', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              accessToken,
+              stageNumber: nextStageNumber,
+              password: cleanPassword,
+              completedAt: completionIso,
+              completedTimestamp,
+              durationSeconds,
+            }),
+          });
+
+          const verifyData = await verifyRes.json();
+          if (!verifyRes.ok || !verifyData.success) {
+            if (verifyData.cooldownSeconds > 0) {
+              setCooldownSeconds(verifyData.cooldownSeconds);
+            }
+            throw new Error(verifyData.error || 'Stage key verification failed.');
+          }
+
+          const pointsAwarded = verifyData.scoreAwarded || points;
+          localFailedAttemptsRef.current = 0;
+          setCooldownSeconds(0);
+          setPassword('');
+
+          try {
+            confetti({
+              particleCount: 100,
+              spread: 70,
+              origin: { y: 0.6 },
+              colors: ['#e2e8f0', '#34d399', '#f59e0b'],
+            });
+          } catch {}
+
+          setSuccessMessage(`Stage ${nextStageNumber} Key Verified! +${pointsAwarded} PTS awarded.`);
+          setTimeout(() => {
+            setPassword('');
+            onUnlockSuccess(nextStageNumber, cleanPassword, pointsAwarded, '');
+            handleClose();
+          }, 1100);
+        } catch (verifyErr: any) {
+          if (!navigator.onLine || verifyErr.name === 'TypeError' || verifyErr.message?.includes('fetch')) {
+            await queueAndProceed('', points);
+            return;
+          }
+          throw verifyErr;
+        }
+        return;
+      }
+
+      // ── Legacy Per-Stage ZIP Path ──────────────────────────────────────────
       let accessData: any = null;
       try {
         const accessRes = await fetch('/api/stage/access-zip', {
@@ -191,7 +353,6 @@ export function UnlockNextStageModal({
           throw new Error(accessData.error || `Unable to access Stage ${nextStageNumber}`);
         }
       } catch (accessErr: any) {
-        // If server access failed due to network, check cached archive
         const cached = await getCachedStageArchive(nextStageNumber);
         if (cached?.blob) {
           await extractZipInBrowser(cached.blob, cleanPassword, cached.allowedCopyFilename);
@@ -201,7 +362,6 @@ export function UnlockNextStageModal({
         throw accessErr;
       }
 
-      // 2. Fetch the next stage ZIP binary directly into RAM & cache locally
       let zipBlob: Blob;
       try {
         const storageRes = await fetch(accessData.downloadUrl);
@@ -209,13 +369,11 @@ export function UnlockNextStageModal({
           throw new Error('Failed to retrieve next stage archive from storage.');
         }
         zipBlob = await storageRes.blob();
-        // Persist to IndexedDB stage cache in background for offline durability
         void saveStageArchive(nextStageNumber, zipBlob, {
           title: nextStageTitle,
           allowedCopyFilename: accessData.allowedCopyFilename,
         });
       } catch (storageErr) {
-        // Try fallback to local cached stage
         const cached = await getCachedStageArchive(nextStageNumber);
         if (cached?.blob) {
           zipBlob = cached.blob;
@@ -224,26 +382,27 @@ export function UnlockNextStageModal({
         }
       }
 
-      // 3. Validate password by attempting in-memory extraction of the next stage ZIP
       try {
         await extractZipInBrowser(zipBlob, cleanPassword, accessData.allowedCopyFilename);
-      } catch (zipErr: any) {
+      } catch {
+        let serverCooldown = 0;
+        let serverError = 'Invalid stage key. Verification failed.';
         try {
           const attemptRes = await fetch('/api/stage/password-attempt', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ accessToken, stageNumber: currentStageNumber, action: 'failed' }),
+            body: JSON.stringify({ accessToken, stageNumber: nextStageNumber, action: 'failed' }),
           });
           const attemptData = await attemptRes.json();
-          setCooldownSeconds(attemptData.cooldownSeconds || 0);
-          setErrorMessage(attemptData.error || 'Invalid stage key. Verification failed.');
-        } catch {
-          setErrorMessage('Invalid stage key. Verification failed.');
-        }
+          serverCooldown = attemptData.cooldownSeconds || 0;
+          if (attemptData.error) serverError = attemptData.error;
+        } catch {}
+
+        applyFailureCooldown(serverCooldown, serverError);
+        setValidating(false);
         return;
       }
 
-      // 4. Submit to server with exact completion timestamps for leaderboard
       try {
         const submitRes = await fetch('/api/stage/submit', {
           method: 'POST',
@@ -261,13 +420,17 @@ export function UnlockNextStageModal({
 
         const submitData = await submitRes.json();
         if (!submitRes.ok || !submitData.success) {
-          setCooldownSeconds(submitData.cooldownSeconds || 0);
+          if (submitData.cooldownSeconds > 0) {
+            setCooldownSeconds(submitData.cooldownSeconds);
+          }
           throw new Error(submitData.error || submitData.message || 'Stage key verification failed.');
         }
 
         const pointsAwarded = submitData.scoreAwarded || points;
+        localFailedAttemptsRef.current = 0;
+        setCooldownSeconds(0);
+        setPassword('');
 
-        // 5. Fire celebratory confetti
         try {
           confetti({
             particleCount: 100,
@@ -280,18 +443,17 @@ export function UnlockNextStageModal({
         setSuccessMessage(`Stage ${nextStageNumber} Key Verified! +${pointsAwarded} PTS awarded.`);
 
         setTimeout(() => {
+          setPassword('');
           onUnlockSuccess(
             nextStageNumber,
             cleanPassword,
             pointsAwarded,
             accessData.downloadUrl
           );
-          onClose();
-        }, 1200);
+          handleClose();
+        }, 1100);
       } catch (submitErr: any) {
-        // If network failure occurred during submit, queue in beacon queue!
         if (!navigator.onLine || submitErr.name === 'TypeError' || submitErr.message?.includes('fetch')) {
-          console.warn('[UnlockNextStageModal] Network drop during submit, queueing in IndexedDB');
           await queueAndProceed(accessData?.downloadUrl || '', points);
           return;
         }
@@ -310,7 +472,7 @@ export function UnlockNextStageModal({
 
   return (
     <div
-      onClick={onClose}
+      onClick={handleClose}
       className="fixed inset-0 bg-black/60 backdrop-blur-xl z-50 flex items-center justify-center p-4 select-none animate-in fade-in duration-200"
     >
       <div
@@ -337,7 +499,7 @@ export function UnlockNextStageModal({
             </div>
           </div>
           <button
-            onClick={onClose}
+            onClick={handleClose}
             className="text-app-subtext hover:text-app-text cursor-pointer p-1.5 rounded-xl hover:bg-app-hover transition-colors"
           >
             <X className="w-4 h-4" />
@@ -353,9 +515,23 @@ export function UnlockNextStageModal({
           </div>
         )}
 
+        {/* Live Cooldown Active Banner */}
+        {cooldownSeconds > 0 && (
+          <div className="p-3 text-xs text-amber-500 bg-amber-500/10 border border-amber-500/30 rounded-xl font-mono flex items-center justify-between shadow-xs animate-in fade-in duration-200">
+            <div className="flex items-center gap-2">
+              <Clock className="w-4 h-4 text-amber-500 animate-spin" />
+              <span className="font-semibold">Rate Limit: Wait before retry</span>
+            </div>
+            <span className="font-extrabold text-amber-400 bg-amber-500/20 px-2 py-0.5 rounded-lg border border-amber-500/40 text-xs">
+              {cooldownSeconds}s
+            </span>
+          </div>
+        )}
+
         {errorMessage && (
-          <div className="p-3 text-xs text-rose-500 dark:text-rose-400 bg-rose-500/10 border border-rose-500/25 rounded-xl font-medium shadow-xs">
-            {errorMessage}
+          <div className="p-3 text-xs text-rose-500 dark:text-rose-400 bg-rose-500/10 border border-rose-500/25 rounded-xl font-medium shadow-xs flex items-start gap-2">
+            <ShieldAlert className="w-4 h-4 shrink-0 mt-0.5" />
+            <span>{errorMessage}</span>
           </div>
         )}
 
@@ -381,10 +557,10 @@ export function UnlockNextStageModal({
                   setPassword(e.target.value);
                   setErrorMessage(null);
                 }}
-                placeholder="e.g. cyber2026"
+                placeholder="e.g. SEV2-PAYMENT-1431"
                 autoFocus
                 disabled={validating || cooldownSeconds > 0}
-                className="w-full bg-app-bg border border-app-border rounded-xl px-3 pr-9 py-2.5 text-xs text-app-text shadow-inner focus:border-app-accent focus:outline-none transition-colors placeholder:text-app-subtext/40 font-mono"
+                className="w-full bg-app-bg border border-app-border rounded-xl px-3 pr-9 py-2.5 text-xs text-app-text shadow-inner focus:border-app-accent focus:outline-none transition-colors placeholder:text-app-subtext/40 font-mono disabled:opacity-50 disabled:cursor-not-allowed"
               />
               <button
                 type="button"
@@ -395,15 +571,14 @@ export function UnlockNextStageModal({
               </button>
             </div>
             <p className="text-[10px] text-app-subtext">
-              Hint: Inspect directive parameters inside{' '}
-              <span className="font-mono text-app-text font-semibold underline decoration-app-subtext/40">ai_prompt.txt</span>
+              Enter the passcode found from previous stage investigation files.
             </p>
           </div>
 
           <div className="flex items-center justify-end space-x-2 pt-3 border-t border-app-border">
             <button
               type="button"
-              onClick={onClose}
+              onClick={handleClose}
               disabled={validating}
               className="px-3.5 py-1.5 rounded-xl text-xs text-app-subtext hover:text-app-text hover:bg-app-hover transition-colors cursor-pointer font-medium"
             >
@@ -412,9 +587,13 @@ export function UnlockNextStageModal({
             <button
               type="submit"
               disabled={validating || cooldownSeconds > 0 || !password.trim()}
-              className="px-4 py-1.5 rounded-xl bg-app-accent text-app-bg text-xs font-semibold hover:opacity-95 active:scale-[0.98] shadow-sm transition-all cursor-pointer disabled:opacity-50"
+              className="px-4 py-1.5 rounded-xl bg-app-accent text-app-bg text-xs font-semibold hover:opacity-95 active:scale-[0.98] shadow-sm transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {validating ? 'Verifying...' : cooldownSeconds > 0 ? `Retry in ${cooldownSeconds}s` : 'Verify & Progress'}
+              {validating
+                ? 'Verifying...'
+                : cooldownSeconds > 0
+                ? `Retry in ${cooldownSeconds}s`
+                : 'Verify & Progress'}
             </button>
           </div>
         </form>

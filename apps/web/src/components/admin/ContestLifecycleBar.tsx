@@ -86,7 +86,7 @@ export function ContestLifecycleBar({ adminSecret }: ContestLifecycleBarProps) {
 
   return (
     <>
-      <div className="w-full bg-slate-900 border-b border-slate-800 px-6 py-2.5 flex flex-wrap items-center justify-between gap-4">
+      <div className="w-full bg-app-surface/80 backdrop-blur-sm border-b border-app-border px-4 sm:px-6 py-2.5 flex flex-wrap items-center justify-between gap-3">
         {/* Current State Info */}
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-1.5 text-xs font-bold text-slate-400 uppercase tracking-wider">

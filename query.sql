@@ -122,7 +122,9 @@ CREATE TABLE IF NOT EXISTS users (
     email TEXT UNIQUE NOT NULL,
     name TEXT NOT NULL,
     role TEXT NOT NULL CHECK (role IN ('admin', 'participant', 'disqualified')) DEFAULT 'participant',
-    access_token TEXT UNIQUE NOT NULL,
+    access_token TEXT NOT NULL,
+    team_name TEXT,
+    team_size TEXT,
     total_score INT NOT NULL DEFAULT 0,
     current_stage INT NOT NULL DEFAULT 1,
     is_flagged BOOLEAN NOT NULL DEFAULT false,
@@ -142,11 +144,14 @@ COMMENT ON COLUMN users.is_flagged IS 'Flagged if participant exhibits suspiciou
 -- 6.5 VIEW: leaderboard
 -- Real-time participant standings with dynamically computed rank
 -- ------------------------------------------------------------------------------
+DROP VIEW IF EXISTS leaderboard CASCADE;
 CREATE OR REPLACE VIEW leaderboard AS
 SELECT 
     id AS user_id,
     name,
     email,
+    team_name,
+    team_size,
     total_score,
     current_stage,
     is_flagged,
@@ -210,6 +215,7 @@ COMMENT ON TABLE announcements IS 'Real-time administrator broadcasts pushed to 
 -- Optimized for 150-200 concurrent read/write queries
 -- ------------------------------------------------------------------------------
 CREATE INDEX IF NOT EXISTS idx_users_access_token ON users (access_token);
+CREATE INDEX IF NOT EXISTS idx_users_team_name ON users (team_name);
 CREATE INDEX IF NOT EXISTS idx_users_email ON users (email);
 CREATE INDEX IF NOT EXISTS idx_users_total_score ON users (total_score DESC);
 CREATE INDEX IF NOT EXISTS idx_stages_stage_number ON stages (stage_number);
@@ -443,3 +449,28 @@ END $$;
 -- Instructs PostgREST to immediately refresh its schema cache for all endpoints
 -- ------------------------------------------------------------------------------
 NOTIFY pgrst, 'reload schema';
+
+
+-- 9. PER-TOKEN ARCHIVE STORAGE & STAGE PASSWORDS (Challenge Stages Multi-ZIP System)
+CREATE TABLE IF NOT EXISTS token_archives (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    access_token TEXT NOT NULL UNIQUE,
+    storage_path TEXT NOT NULL,
+    stage_count INT NOT NULL DEFAULT 1,
+    uploaded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_token_archives_token ON token_archives (access_token);
+
+CREATE TABLE IF NOT EXISTS stage_passwords (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    token_archive_id UUID NOT NULL REFERENCES token_archives(id) ON DELETE CASCADE,
+    stage_number INT NOT NULL,
+    password TEXT NOT NULL,
+    UNIQUE (token_archive_id, stage_number)
+);
+CREATE INDEX IF NOT EXISTS idx_stage_passwords_archive ON stage_passwords (token_archive_id, stage_number);
+
+GRANT ALL ON token_archives TO service_role;
+GRANT ALL ON stage_passwords TO service_role;
+GRANT SELECT ON token_archives TO anon, authenticated;
+GRANT SELECT ON stage_passwords TO anon, authenticated;

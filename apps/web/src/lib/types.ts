@@ -8,6 +8,8 @@ export interface User {
   id: string;
   email: string;
   name: string;
+  team_name?: string | null;
+  team_size?: string | null;
   role: UserRole;
   access_token: string;
   total_score: number;
@@ -16,6 +18,8 @@ export interface User {
   is_disqualified?: boolean;
   disqualified_at?: string | null;
   disqualification_reason?: string | null;
+  is_completed?: boolean;
+  completed_at?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -105,6 +109,8 @@ export interface StageManifest {
   points: number;
   downloadUrl?: string;
   quizQuestions?: SanitizedQuizQuestion[];
+  hasNextStage?: boolean;
+  isLastStage?: boolean;
 }
 
 export interface StageTelemetry {
@@ -144,11 +150,42 @@ export interface StageTelemetry {
 // ------------------------------------------------------------------------------
 export type FileType = 'text' | 'markdown' | 'spreadsheet' | 'binary';
 
+export interface UserTelemetrySummary {
+  user_id: string;
+  name: string;
+  email: string;
+  role?: UserRole;
+  total_score: number;
+  current_stage: number;
+  is_completed?: boolean;
+  is_flagged: boolean;
+  is_disqualified: boolean;
+  total_tab_switches: number;
+  total_fullscreen_exits: number;
+  total_multi_monitor: number;
+  total_devtools_timing: number;
+  total_window_discrepancies: number;
+  total_password_failed_attempts: number;
+  total_excessive_guesses: number;
+  flagged_speedruns: number;
+  flag_reasons: string[];
+  last_active: string;
+  stages: StageTelemetry[];
+}
+
 export interface SheetData {
   sheetName: string;
   data: (string | number | boolean | null)[][];
   rowCount: number;
   columnCount: number;
+}
+
+export interface ExtractedStageResult {
+  files: ParsedFile[];
+  hasNextZip: boolean;
+  nextZipBlob?: Blob;
+  nextZipFilename?: string;
+  stageTitle?: string;
 }
 
 export interface ParsedFile {
@@ -160,6 +197,8 @@ export interface ParsedFile {
   sheets?: SheetData[]; // For spreadsheets
   isCopyAllowed: boolean;
   stageNumber?: number;
+  relativePath?: string;
+  folder?: string;
 }
 
 // ------------------------------------------------------------------------------
@@ -239,14 +278,21 @@ export interface BrevoSendRequest {
   adminSecret: string;
   subject: string;
   htmlTemplate: string;
+  apiKey?: string;
+  senderEmail?: string;
+  senderName?: string;
+  deliveryEngine?: 'api' | 'smtp' | 'auto';
   participants: Array<{
     name: string;
     email: string;
     token: string;
+    team_name?: string;
+    team_size?: string;
   }>;
 }
 
 export interface BrevoSendResponse {
+  engine?: string;
   total: number;
   sent: number;
   failed: number;

@@ -35,16 +35,31 @@ declare global {
   var __contestSettings: ContestSettings | undefined;
 }
 
-function getCacheFilePath(): string {
-  const tmpDir = path.join(process.cwd(), '.next');
-  if (!fs.existsSync(tmpDir)) {
+function getContestStorageDir(): string {
+  const dir = path.join(process.cwd(), '.contest-cache');
+  if (!fs.existsSync(dir)) {
     try {
-      fs.mkdirSync(tmpDir, { recursive: true });
+      fs.mkdirSync(dir, { recursive: true });
     } catch {
       // Ignore
     }
   }
-  return path.join(tmpDir, 'contest-settings.json');
+  return dir;
+}
+
+function getCacheFilePath(): string {
+  const storageDir = getContestStorageDir();
+  const filePath = path.join(storageDir, 'contest-settings.json');
+  // Backwards compatibility check
+  if (!fs.existsSync(filePath)) {
+    const legacyPath = path.join(process.cwd(), '.next', 'contest-settings.json');
+    if (fs.existsSync(legacyPath)) {
+      try {
+        fs.copyFileSync(legacyPath, filePath);
+      } catch {}
+    }
+  }
+  return filePath;
 }
 
 function readLocalCache(): ContestSettings | null {
@@ -218,15 +233,18 @@ export async function updateContestSettings(
 // ==============================================================================
 
 function getContestsRegistryPath(): string {
-  const tmpDir = path.join(process.cwd(), '.next');
-  if (!fs.existsSync(tmpDir)) {
-    try {
-      fs.mkdirSync(tmpDir, { recursive: true });
-    } catch {
-      // Ignore
+  const storageDir = getContestStorageDir();
+  const filePath = path.join(storageDir, 'contests-registry.json');
+  // Backwards compatibility check
+  if (!fs.existsSync(filePath)) {
+    const legacyPath = path.join(process.cwd(), '.next', 'contests-registry.json');
+    if (fs.existsSync(legacyPath)) {
+      try {
+        fs.copyFileSync(legacyPath, filePath);
+      } catch {}
     }
   }
-  return path.join(tmpDir, 'contests-registry.json');
+  return filePath;
 }
 
 function readContestsRegistry(): Contest[] {
@@ -436,7 +454,10 @@ export async function deleteContest(contestId: string): Promise<void> {
 
   try {
     const supabaseAdmin = getSupabaseAdmin();
-    await supabaseAdmin.from('contests').delete().eq('id', contestId);
+    await supabaseAdmin
+      .from('contests')
+      .delete()
+      .eq('id', contestId);
   } catch {
     // Ignore Supabase error
   }
@@ -450,20 +471,25 @@ export interface TokenActivation {
   token: string;
   email: string;
   name: string;
+  team_name?: string;
+  allowedEmails?: string[];
   activatedAt: string;
   userId?: string;
 }
 
 function getTokenActivationsPath(): string {
-  const tmpDir = path.join(process.cwd(), '.next');
-  if (!fs.existsSync(tmpDir)) {
-    try {
-      fs.mkdirSync(tmpDir, { recursive: true });
-    } catch {
-      // Ignore
+  const storageDir = getContestStorageDir();
+  const filePath = path.join(storageDir, 'token-activations.json');
+  // Backwards compatibility check
+  if (!fs.existsSync(filePath)) {
+    const legacyPath = path.join(process.cwd(), '.next', 'token-activations.json');
+    if (fs.existsSync(legacyPath)) {
+      try {
+        fs.copyFileSync(legacyPath, filePath);
+      } catch {}
     }
   }
-  return path.join(tmpDir, 'token-activations.json');
+  return filePath;
 }
 
 export function readTokenActivations(): Record<string, TokenActivation> {
@@ -508,20 +534,88 @@ export async function validateAndActivateToken(params: {
   const cleanEmail = params.email.trim().toLowerCase();
   const cleanName = (params.name || cleanEmail.split('@')[0]).trim();
 
+  // 1. Query Supabase users table for team token and participant authorization
+  try {
+    const supabaseAdmin = getSupabaseAdmin();
+
+    // A. Check if THIS logged-in user already has a token assigned to their account
+    const { data: userByEmail } = await supabaseAdmin
+      .from('users')
+      .select('id, email, name, access_token, team_name, role, is_disqualified')
+      .eq('email', cleanEmail)
+      .maybeSingle();
+
+    if (
+      userByEmail &&
+      userByEmail.access_token &&
+      !userByEmail.access_token.startsWith('PENDING') &&
+      userByEmail.access_token !== cleanToken
+    ) {
+      return {
+        success: false,
+        isFirstActivation: false,
+        error: `Access Denied: Your account is assigned token ${userByEmail.access_token}. The entered token (${cleanToken}) does not match your assigned account token.`,
+      };
+    }
+
+    // B. Check all participants assigned to this token in the database
+    const { data: teamMembers } = await supabaseAdmin
+      .from('users')
+      .select('id, email, name, access_token, team_name, team_size, role, is_disqualified')
+      .eq('access_token', cleanToken);
+
+    if (teamMembers && teamMembers.length > 0) {
+      const isMember = teamMembers.some((m: any) => m.email?.toLowerCase().trim() === cleanEmail);
+      const teamName = teamMembers[0]?.team_name || teamMembers[0]?.name || 'Assigned Team';
+
+      if (!isMember) {
+        return {
+          success: false,
+          isFirstActivation: false,
+          error: `Access Denied: Token ${cleanToken} is assigned exclusively to team "${teamName}". Your account (${cleanEmail}) is not a registered member of this team.`,
+        };
+      }
+
+      // Fair-Play Team Lock: Check if ANY member of the team is disqualified
+      const isAnyDisqualified = teamMembers.some(
+        (m: any) => m.is_disqualified === true || m.role === 'disqualified'
+      );
+      if (isAnyDisqualified) {
+        return {
+          success: false,
+          isFirstActivation: false,
+          error: `Access Denied: Team "${teamName}" has been suspended for fair-play violations. All team members are locked out.`,
+        };
+      }
+
+      return {
+        success: true,
+        isFirstActivation: false,
+      };
+    }
+  } catch (err) {
+    console.warn('[validateAndActivateToken error]:', err);
+  }
+
+  // 2. Check local token activation registry
   const activations = readTokenActivations();
   const existingActivation = activations[cleanToken];
 
-  // 1. Check if token already bound to a different email
   if (existingActivation) {
-    if (existingActivation.email.toLowerCase() !== cleanEmail) {
+    const isAllowed =
+      existingActivation.email.toLowerCase() === cleanEmail ||
+      (existingActivation.allowedEmails &&
+        existingActivation.allowedEmails.map((e) => e.toLowerCase().trim()).includes(cleanEmail));
+
+    if (!isAllowed) {
       return {
         success: false,
         isFirstActivation: false,
         activation: existingActivation,
-        error: `This token has already been activated by another account. One token is strictly valid for ONE account only. The first account activating this token has exclusive access.`,
+        error: `Access Denied: Token ${cleanToken} is assigned to team "${existingActivation.team_name || 'Assigned Team'}". Your account (${cleanEmail}) is not a registered member.`,
       };
     }
-    // Already bound to this exact email
+
     return {
       success: true,
       isFirstActivation: false,
@@ -529,67 +623,31 @@ export async function validateAndActivateToken(params: {
     };
   }
 
-  // 2. Check Supabase users table for token-email association
-  try {
-    const supabaseAdmin = getSupabaseAdmin();
-    const { data: dbUser } = await supabaseAdmin
-      .from('users')
-      .select('id, email, name, access_token')
-      .eq('access_token', cleanToken)
-      .maybeSingle();
+  // 3. Demo token auto-provisioning
+  const isDemo = cleanToken === 'AX-DEMO-2026' || cleanToken.startsWith('AX-DEMO');
+  if (isDemo) {
+    const newActivation: TokenActivation = {
+      token: cleanToken,
+      email: cleanEmail,
+      name: cleanName,
+      activatedAt: new Date().toISOString(),
+      userId: params.userId,
+    };
 
-    if (dbUser && dbUser.email) {
-      const dbEmail = dbUser.email.trim().toLowerCase();
-      if (dbEmail !== cleanEmail) {
-        return {
-          success: false,
-          isFirstActivation: false,
-          error: `This token has already been activated by another account. One token is strictly valid for ONE account only. The first account activating this token has exclusive access.`,
-        };
-      }
-    }
-  } catch {
-    // Ignore Supabase check if offline
+    activations[cleanToken] = newActivation;
+    writeTokenActivations(activations);
+
+    return {
+      success: true,
+      isFirstActivation: true,
+      activation: newActivation,
+    };
   }
 
-  // 3. First activation: bind token permanently to this account
-  const newActivation: TokenActivation = {
-    token: cleanToken,
-    email: cleanEmail,
-    name: cleanName,
-    activatedAt: new Date().toISOString(),
-    userId: params.userId,
-  };
-
-  activations[cleanToken] = newActivation;
-  writeTokenActivations(activations);
-
-  // 4. Automatically register this account into the admin's participants list
-  try {
-    const supabaseAdmin = getSupabaseAdmin();
-    await supabaseAdmin
-      .from('users')
-      .upsert(
-        {
-          email: cleanEmail,
-          name: cleanName,
-          access_token: cleanToken,
-          role: 'participant',
-          total_score: 0,
-          current_stage: 1,
-          is_flagged: false,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: 'email' }
-      );
-  } catch {
-    // If Supabase is unconfigured, activation is already stored in local registry
-  }
-
+  // Token was not found in database or local activations registry
   return {
-    success: true,
-    isFirstActivation: true,
-    activation: newActivation,
+    success: false,
+    isFirstActivation: false,
+    error: 'Access Denied: Invalid team code. The entered code is not mapped to any registered participant in the tournament roster.',
   };
 }
-

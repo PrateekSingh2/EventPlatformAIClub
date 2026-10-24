@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { User } from '@/lib/types';
+import { parseTeamCsv } from '@/lib/team-parser';
 import {
   Users,
   Upload,
@@ -14,6 +15,8 @@ import {
   AlertCircle,
   Loader2,
   ExternalLink,
+  ShieldCheck,
+  AlertTriangle,
 } from 'lucide-react';
 
 interface ParticipantImportTabProps {
@@ -57,51 +60,19 @@ export function ParticipantImportTab({ adminSecret }: ParticipantImportTabProps)
     }
   }, [adminSecret]);
 
-  // Parse raw text or CSV
+  // Parse raw text or CSV using team-aware parser
   const handleBulkImport = async () => {
     if (!rawText.trim()) {
       setStatusMessage({ type: 'error', text: 'Please enter or paste participant data.' });
       return;
     }
 
-    const lines = rawText.split('\n');
-    const parsed: Array<{ name: string; email: string }> = [];
-
-    for (const line of lines) {
-      const cleanLine = line.trim();
-      if (!cleanLine || cleanLine.startsWith('#')) continue;
-
-      // Check if CSV with header
-      if (cleanLine.toLowerCase().includes('name,email') || cleanLine.toLowerCase().includes('email,name')) {
-        continue;
-      }
-
-      if (cleanLine.includes(',')) {
-        const parts = cleanLine.split(',');
-        const first = parts[0].trim();
-        const second = parts[1].trim();
-
-        if (first.includes('@')) {
-          parsed.push({ email: first, name: second || first.split('@')[0] });
-        } else {
-          parsed.push({ name: first, email: second });
-        }
-      } else if (cleanLine.includes('\t')) {
-        const parts = cleanLine.split('\t');
-        const first = parts[0].trim();
-        const second = parts[1].trim();
-        if (first.includes('@')) {
-          parsed.push({ email: first, name: second || first.split('@')[0] });
-        } else {
-          parsed.push({ name: first, email: second });
-        }
-      } else if (cleanLine.includes('@')) {
-        parsed.push({ email: cleanLine, name: cleanLine.split('@')[0] });
-      }
-    }
-
-    if (parsed.length === 0) {
-      setStatusMessage({ type: 'error', text: 'Could not extract valid email addresses from text.' });
+    const result = parseTeamCsv(rawText);
+    if (result.members.length === 0) {
+      setStatusMessage({
+        type: 'error',
+        text: 'Could not extract valid participant records from the input.',
+      });
       return;
     }
 
@@ -114,7 +85,13 @@ export function ParticipantImportTab({ adminSecret }: ParticipantImportTabProps)
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           adminSecret,
-          participants: parsed,
+          participants: result.members.map((m) => ({
+            name: m.name,
+            email: m.email,
+            access_token: m.token,
+            team_name: m.teamName,
+            team_size: m.teamSize,
+          })),
         }),
       });
 
@@ -123,9 +100,11 @@ export function ParticipantImportTab({ adminSecret }: ParticipantImportTabProps)
         throw new Error(data.error || 'Participant import failed');
       }
 
+      const teamCount = result.teams.length;
+      const memberCount = result.members.length;
       setStatusMessage({
         type: 'success',
-        text: `Successfully imported ${data.count} participants with generated cryptographic tokens!`,
+        text: `Successfully imported ${memberCount} participant(s) across ${teamCount} team(s) with shared tokens!`,
       });
       setRawText('');
       fetchParticipants();
@@ -169,11 +148,11 @@ export function ParticipantImportTab({ adminSecret }: ParticipantImportTabProps)
     if (participants.length === 0) return;
     const origin = typeof window !== 'undefined' ? window.location.origin : '';
 
-    const headers = 'Name,Email,Access Token,Magic Link,Current Stage,Total Score\n';
+    const headers = 'Team Name,Team Size,Name,Email,Access Token,Magic Link,Current Stage,Total Score,Status\n';
     const rows = participants
       .map(
         (p) =>
-          `"${p.name}","${p.email}","${p.access_token}","${origin}/arena?token=${p.access_token}",${p.current_stage},${p.total_score}`
+          `"${p.team_name || 'Solo'}","${p.team_size || 'Solo'}","${p.name}","${p.email}","${p.access_token}","${origin}/arena?token=${p.access_token}",${p.current_stage},${p.total_score},"${p.is_disqualified ? 'DISQUALIFIED' : 'ACTIVE'}"`
       )
       .join('\n');
 
@@ -190,7 +169,8 @@ export function ParticipantImportTab({ adminSecret }: ParticipantImportTabProps)
     (p) =>
       p.name.toLowerCase().includes(search.toLowerCase()) ||
       p.email.toLowerCase().includes(search.toLowerCase()) ||
-      p.access_token.toLowerCase().includes(search.toLowerCase())
+      p.access_token.toLowerCase().includes(search.toLowerCase()) ||
+      (p.team_name && p.team_name.toLowerCase().includes(search.toLowerCase()))
   );
 
   return (
@@ -201,18 +181,27 @@ export function ParticipantImportTab({ adminSecret }: ParticipantImportTabProps)
           <div>
             <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2">
               <UserPlus className="w-4 h-4 text-cyan-400" />
-              Bulk Participant Importer & Token Generator
+              Team Roster Importer & Shared Token Generator
             </h3>
             <p className="text-[11px] text-slate-400 mt-0.5">
-              Paste names and emails (e.g. <code>John Doe, john@example.com</code>) or upload a CSV file.
+              Paste team CSV (format: <code>teamname, team size, member1 name, member1 email, [member2 name, member2 email...]</code>).
             </p>
           </div>
 
           <label className="self-start sm:self-auto flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-200 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-xl cursor-pointer transition-colors shrink-0">
             <Upload className="w-3.5 h-3.5 text-cyan-400" />
-            Upload CSV
+            Upload CSV / TXT
             <input type="file" accept=".csv,.txt" onChange={handleFileUpload} className="hidden" />
           </label>
+        </div>
+
+        {/* Team Invariant Banner */}
+        <div className="p-3 rounded-xl bg-cyan-950/40 border border-cyan-500/30 text-cyan-300 text-[11px] flex items-start gap-2">
+          <ShieldCheck className="w-4 h-4 text-cyan-400 shrink-0 mt-0.5" />
+          <div className="leading-relaxed">
+            <span className="font-bold text-cyan-300">Team Invariants: </span>
+            All members with the same <strong>teamname</strong> share the <strong>exact same token</strong>. Tokens are strictly restricted to the registered member emails. Blocking one team account automatically suspends all teammates.
+          </div>
         </div>
 
         {statusMessage && (
@@ -233,11 +222,11 @@ export function ParticipantImportTab({ adminSecret }: ParticipantImportTabProps)
         )}
 
         <textarea
-          rows={4}
+          rows={5}
           value={rawText}
           onChange={(e) => setRawText(e.target.value)}
-          placeholder={`Alice Smith, alice@university.edu\nBob Jones, bob@hackathon.org\ncarol@dev.io`}
-          className="w-full p-3 text-xs font-mono text-slate-200 bg-slate-900 border border-slate-700/80 rounded-xl focus:outline-none focus:border-cyan-400"
+          placeholder={`Bit by bit,Duo,Vanshika panwar,26ai1va145@mitsgwl.ac.in,Indra,26IR1IN22@mitsgwl.ac.in\nrajeev sharma,Solo,rajeev sharma,25ec1ra49@mitsgwl.ac.in\nOrion,Squad,Jay Bhadoria,26ai1ja53@mitsgwl.ac.in,Kshitij Herode,26ai1ks64@mitsgwl.ac.in,HARSHVARDHAN ARYA,26ai1ha46@mitsgwl.ac.in,Mohit Rathore,26ai1mo53@mitsgwl.ac.in`}
+          className="w-full p-3 text-xs font-mono text-slate-200 bg-slate-900 border border-slate-700/80 rounded-xl focus:outline-none focus:border-cyan-400 leading-relaxed"
         />
 
         <div className="flex justify-end">
@@ -249,12 +238,12 @@ export function ParticipantImportTab({ adminSecret }: ParticipantImportTabProps)
             {importing ? (
               <>
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                Generating Tokens & Ingesting...
+                Generating Team Tokens & Ingesting...
               </>
             ) : (
               <>
                 <UserPlus className="w-3.5 h-3.5" />
-                Ingest & Generate Tokens
+                Ingest Teams & Generate Shared Tokens
               </>
             )}
           </button>
@@ -277,7 +266,7 @@ export function ParticipantImportTab({ adminSecret }: ParticipantImportTabProps)
                 type="text"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search participant, token..."
+                placeholder="Search team, name, email, token..."
                 className="w-full sm:w-64 px-3 py-1.5 pl-8 text-xs text-white bg-slate-900 border border-slate-700 rounded-lg focus:border-cyan-400 font-mono"
               />
               <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-2.5" />
@@ -299,8 +288,9 @@ export function ParticipantImportTab({ adminSecret }: ParticipantImportTabProps)
           <table className="w-full text-left text-xs font-mono">
             <thead className="bg-slate-900 text-slate-400 uppercase text-[10px] tracking-wider border-b border-slate-800">
               <tr>
+                <th className="px-4 py-3">Team</th>
                 <th className="px-4 py-3">Participant</th>
-                <th className="px-4 py-3">Access Token</th>
+                <th className="px-4 py-3">Shared Access Token</th>
                 <th className="px-4 py-3">Stage</th>
                 <th className="px-4 py-3">Score</th>
                 <th className="px-4 py-3 text-right">Actions</th>
@@ -309,22 +299,48 @@ export function ParticipantImportTab({ adminSecret }: ParticipantImportTabProps)
             <tbody className="divide-y divide-slate-800/60 bg-slate-950/60">
               {loading ? (
                 <tr>
-                  <td colSpan={5} className="py-8 text-center text-slate-500">
+                  <td colSpan={6} className="py-8 text-center text-slate-500">
                     <Loader2 className="w-5 h-5 animate-spin mx-auto mb-2 text-cyan-400" />
                     Loading participants...
                   </td>
                 </tr>
               ) : filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="py-8 text-center text-slate-500">
+                  <td colSpan={6} className="py-8 text-center text-slate-500">
                     No participants found.
                   </td>
                 </tr>
               ) : (
                 filtered.map((user) => (
-                  <tr key={user.id} className="hover:bg-slate-900/40 transition-colors">
+                  <tr
+                    key={user.id}
+                    className={`transition-colors ${
+                      user.is_disqualified || user.role === 'disqualified'
+                        ? 'bg-rose-950/30 border-l-2 border-l-rose-500'
+                        : 'hover:bg-slate-900/40'
+                    }`}
+                  >
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-1.5">
+                        <span className="px-2 py-0.5 rounded-md bg-cyan-500/10 border border-cyan-500/30 text-cyan-300 font-semibold text-[11px]">
+                          {user.team_name || 'Solo'}
+                        </span>
+                        {user.team_size && (
+                          <span className="text-[10px] text-slate-400 font-mono">
+                            ({user.team_size})
+                          </span>
+                        )}
+                      </div>
+                    </td>
                     <td className="px-4 py-3 font-sans">
-                      <div className="font-semibold text-white">{user.name}</div>
+                      <div className="font-semibold text-white flex items-center gap-1.5">
+                        {user.name}
+                        {(user.is_disqualified || user.role === 'disqualified') && (
+                          <span className="text-[9px] font-mono px-1.5 py-0.2 rounded bg-rose-950 border border-rose-600 text-rose-400 font-bold">
+                            SUSPENDED
+                          </span>
+                        )}
+                      </div>
                       <div className="text-[11px] text-slate-400 font-mono">{user.email}</div>
                     </td>
                     <td className="px-4 py-3">

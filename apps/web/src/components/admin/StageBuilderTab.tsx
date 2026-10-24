@@ -2,11 +2,12 @@
 
 import React, { useState, useEffect } from 'react';
 import { Stage, Contest, PreflightValidationResult } from '@/lib/types';
-import { validateArchiveDecryption } from '@/lib/zip-engine';
+import { validateArchiveDecryption, extractInnerZipBlob } from '@/lib/zip-engine';
 import { downloadTokensFile } from '@/lib/tokens';
 import { supabase } from '@/lib/supabase';
 import {
   Upload,
+  Shuffle,
   Plus,
   Save,
   CheckCircle2,
@@ -28,17 +29,45 @@ import {
   Radio,
   ArrowLeft,
   Sparkles,
+  RefreshCw,
+  FileSpreadsheet,
+  Eye,
+  EyeOff,
+  Database,
+  ArrowUp,
+  ArrowDown,
+  Wand2,
+  CheckCheck,
+  ShieldCheck,
 } from 'lucide-react';
 
 interface StageBuilderTabProps {
   adminSecret: string;
 }
 
-type TabMode = 'list' | 'create' | 'edit';
+type TabMode = 'bulk' | 'list' | 'create' | 'edit';
 
 export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
   // Mode State: 'list' (shows all contests), 'create' (new contest), 'edit' (edit existing)
-  const [mode, setMode] = useState<TabMode>('create');
+  const [mode, setMode] = useState<TabMode>('bulk');
+
+  // Bulk Token Archives State (Option 1: Pure Multi-Stage ZIPs, Zero CSV)
+  const [bulkZipFiles, setBulkZipFiles] = useState<File[]>([]);
+  const [bulkStageCount, setBulkStageCount] = useState<number>(12);
+  const [detectingStages, setDetectingStages] = useState(false);
+  const [bulkTokenMappings, setBulkTokenMappings] = useState<string[]>([]);
+  const [availableTokens, setAvailableTokens] = useState<Array<{ token: string; label: string }>>([]);
+  const [loadingTokens, setLoadingTokens] = useState(false);
+  const [bulkUploading, setBulkUploading] = useState(false);
+  const [bulkUploadProgress, setBulkUploadProgress] = useState<string | null>(null);
+  const [bulkCommittedArchives, setBulkCommittedArchives] = useState<Array<{
+    id: string;
+    access_token: string;
+    storage_path: string;
+    stage_count: number;
+    uploaded_at: string;
+  }>>([]);
+  const [loadingCommittedArchives, setLoadingCommittedArchives] = useState(false);
 
   // Contests Directory State
   const [contests, setContests] = useState<Contest[]>([]);
@@ -120,6 +149,301 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
       isMounted = false;
     };
   }, [uploadFile, zipPassword, isPasswordProtected]);
+
+  // Fetch available participant & team tokens for auto-mapping
+  const fetchAvailableTokens = async () => {
+    setLoadingTokens(true);
+    try {
+      const res = await fetch('/api/admin/participants', {
+        headers: { 'x-admin-secret': adminSecret },
+      });
+      const data = await res.json();
+      if (res.ok && data.participants) {
+        const tokenMap = new Map<string, string>();
+        for (const p of data.participants as any[]) {
+          const t = (p.access_token || '').trim().toUpperCase();
+          if (t && !tokenMap.has(t)) {
+            const label = p.team_name ? `Team: ${p.team_name}` : p.name ? `${p.name} (${p.email})` : t;
+            tokenMap.set(t, label);
+          }
+        }
+        const tokensArray = Array.from(tokenMap.entries()).map(([token, label]) => ({ token, label }));
+        setAvailableTokens(tokensArray);
+
+        // Auto-randomize challenge archives across participants if files already loaded
+        setBulkTokenMappings((prev) => {
+          if (bulkZipFiles.length === 0) return prev;
+          if (prev.length === bulkZipFiles.length && prev.some(Boolean)) return prev;
+          const shuffled = [...tokensArray].sort(() => Math.random() - 0.5);
+          return bulkZipFiles.map((_, i) => shuffled[i % shuffled.length]?.token || `TOKEN-${i + 1}`);
+        });
+      }
+    } catch (err) {
+      console.warn('Failed to fetch participant tokens for bulk mapping', err);
+    } finally {
+      setLoadingTokens(false);
+    }
+  };
+
+  // Fetch committed token archives from the database
+  const fetchCommittedArchives = async () => {
+    setLoadingCommittedArchives(true);
+    try {
+      const res = await fetch(`/api/admin/stages/bulk-upload?adminSecret=${encodeURIComponent(adminSecret)}`, {
+        headers: { 'x-admin-secret': adminSecret },
+      });
+      const data = await res.json();
+      if (res.ok && data.archives) {
+        setBulkCommittedArchives(data.archives);
+      }
+    } catch (err) {
+      console.warn('Failed to fetch committed archives', err);
+    } finally {
+      setLoadingCommittedArchives(false);
+    }
+  };
+
+  // Handle selection of X ZIP files + auto-detect stage count in RAM
+  const handleZipFilesChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []).filter((f) => f.name.toLowerCase().endsWith('.zip'));
+    // Sort files by natural alphanumeric order (1, 2, ... 9, 10)
+    files.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
+    setBulkZipFiles(files);
+
+    // Automatically randomize token assignments across all registered participants
+    if (availableTokens.length > 0) {
+      const shuffled = [...availableTokens].sort(() => Math.random() - 0.5);
+      const randomized = files.map((_, i) => shuffled[i % shuffled.length].token);
+      setBulkTokenMappings(randomized);
+    } else {
+      setBulkTokenMappings(files.map((_, i) => `TOKEN-${String(i + 1).padStart(3, '0')}`));
+    }
+
+    // In-browser RAM inspection: auto-detect total stage count from first archive
+    if (files.length > 0) {
+      setDetectingStages(true);
+      try {
+        const { BlobReader, ZipReader } = await import('@zip.js/zip.js');
+        const reader = new ZipReader(new BlobReader(files[0]));
+        const entries = await reader.getEntries();
+        await reader.close();
+
+        const stageNumbers = new Set<number>([1]);
+        for (const entry of entries) {
+          const zipMatch = entry.filename.match(/stage(\d+)\.zip/i);
+          if (zipMatch) stageNumbers.add(parseInt(zipMatch[1], 10));
+
+          const dirMatch = entry.filename.match(/^stage(\d+)[\/\\]/i);
+          if (dirMatch) stageNumbers.add(parseInt(dirMatch[1], 10));
+        }
+
+        const detected = Math.max(...Array.from(stageNumbers));
+        if (detected > 1) {
+          setBulkStageCount(detected);
+        }
+      } catch (err) {
+        console.warn('Could not inspect archive header in RAM', err);
+      } finally {
+        setDetectingStages(false);
+      }
+    }
+  };
+
+  // Randomly distribute challenge archives across all registered participants in database
+  const handleRandomizeAssignments = () => {
+    if (availableTokens.length === 0) {
+      setStatusMessage({ type: 'error', text: 'No registered participant tokens found in database. Ingest participants first.' });
+      return;
+    }
+    // Fisher-Yates random shuffle
+    const shuffled = [...availableTokens];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+
+    const randomized = bulkZipFiles.map((_, i) => shuffled[i % shuffled.length].token);
+    setBulkTokenMappings(randomized);
+    setStatusMessage({
+      type: 'success',
+      text: `Randomly distributed ${bulkZipFiles.length} challenge archive(s) across ${availableTokens.length} registered participant(s)!`,
+    });
+  };
+
+  // Move a ZIP file up or down in the roster
+  const handleMoveZip = (index: number, direction: 'up' | 'down') => {
+    const targetIndex = direction === 'up' ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= bulkZipFiles.length) return;
+
+    setBulkZipFiles((prev) => {
+      const updated = [...prev];
+      const temp = updated[index];
+      updated[index] = updated[targetIndex];
+      updated[targetIndex] = temp;
+      return updated;
+    });
+  };
+
+  // Sort ZIP files naturally (A-Z or Z-A)
+  const handleSortZips = (direction: 'asc' | 'desc') => {
+    setBulkZipFiles((prev) => {
+      const sorted = [...prev].sort((a, b) =>
+        direction === 'asc'
+          ? a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
+          : b.name.localeCompare(a.name, undefined, { numeric: true, sensitivity: 'base' })
+      );
+      return sorted;
+    });
+  };
+
+  // Execute bulk upload (Pure ZIP architecture: No CSV needed)
+  const handleExecuteBulkUpload = async () => {
+    if (bulkZipFiles.length === 0) {
+      setStatusMessage({ type: 'error', text: 'Please select the ZIP archives to deploy.' });
+      return;
+    }
+
+    const missingTokens = bulkTokenMappings.some((t, i) => i < bulkZipFiles.length && (!t || !t.trim()));
+    if (missingTokens) {
+      setStatusMessage({ type: 'error', text: 'All ZIP files must have an assigned access token.' });
+      return;
+    }
+
+    const activeTokens = bulkTokenMappings.slice(0, bulkZipFiles.length).map((t) => t.trim().toUpperCase());
+    const uniqueTokens = new Set(activeTokens);
+    if (uniqueTokens.size !== activeTokens.length) {
+      setStatusMessage({ type: 'error', text: 'Duplicate access tokens detected. Each ZIP file must be mapped to a unique token.' });
+      return;
+    }
+
+    setBulkUploading(true);
+    setStatusMessage(null);
+
+    try {
+      // 1. Request presigned upload targets
+      setBulkUploadProgress(`Requesting upload credentials for ${bulkZipFiles.length} archives...`);
+      const presignRes = await fetch('/api/admin/stages/bulk-upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'presign',
+          adminSecret,
+          tokens: activeTokens,
+        }),
+      });
+
+      const presignData = await presignRes.json();
+      if (!presignRes.ok || !presignData.uploadTargets) {
+        throw new Error(presignData.error || 'Failed to generate signed upload targets');
+      }
+
+      const targets: Array<{
+        accessToken: string;
+        uploadUrl: string;
+        token: string;
+        storagePath: string;
+      }> = presignData.uploadTargets;
+
+      // 2. Upload each ZIP file directly to Supabase Storage
+      const committedPayload: Array<{
+        accessToken: string;
+        storagePath: string;
+        stageCount: number;
+      }> = [];
+
+      for (let i = 0; i < bulkZipFiles.length; i++) {
+        const file = bulkZipFiles[i];
+        const target = targets[i];
+
+        setBulkUploadProgress(
+          `Uploading archive ${i + 1} of ${bulkZipFiles.length}: ${file.name} for token ${target.accessToken}...`
+        );
+
+        let uploaded = false;
+        try {
+          const { error: uploadErr } = await supabase.storage
+            .from('stages')
+            .uploadToSignedUrl(target.storagePath, target.token, file);
+          if (!uploadErr) uploaded = true;
+        } catch {}
+
+        if (!uploaded && target.uploadUrl) {
+          const formData = new FormData();
+          formData.append('file', file);
+          const res = await fetch(target.uploadUrl, {
+            method: 'POST',
+            body: formData,
+          });
+          if (!res.ok) {
+            throw new Error(`Failed to upload ${file.name} to storage: ${res.statusText}`);
+          }
+        }
+
+        committedPayload.push({
+          accessToken: target.accessToken,
+          storagePath: target.storagePath,
+          stageCount: bulkStageCount,
+        });
+      }
+
+      // 3. Commit to database
+      setBulkUploadProgress('Registering token archives in database...');
+      const commitRes = await fetch('/api/admin/stages/bulk-upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'commit',
+          adminSecret,
+          archives: committedPayload,
+        }),
+      });
+
+      const commitData = await commitRes.json();
+      if (!commitRes.ok || !commitData.success) {
+        throw new Error(commitData.error || 'Failed to commit token archives');
+      }
+
+      setStatusMessage({
+        type: 'success',
+        text: `Successfully deployed ${committedPayload.length} unique challenge archives (${bulkStageCount} stages each) directly to storage and mapped to participant tokens!`,
+      });
+
+      setBulkZipFiles([]);
+      setBulkTokenMappings([]);
+      await fetchCommittedArchives();
+    } catch (err: any) {
+      setStatusMessage({
+        type: 'error',
+        text: err.message || 'Bulk upload failed',
+      });
+    } finally {
+      setBulkUploading(false);
+      setBulkUploadProgress(null);
+    }
+  };
+
+  // Delete an existing token archive
+  const handleDeleteArchive = async (tokenToDelete: string) => {
+    if (!window.confirm(`Are you sure you want to delete the stage archive for token "${tokenToDelete}"?`)) return;
+    try {
+      const res = await fetch('/api/admin/stages/bulk-upload', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ adminSecret, accessToken: tokenToDelete }),
+      });
+      if (res.ok) {
+        await fetchCommittedArchives();
+        setStatusMessage({ type: 'success', text: `Deleted token archive for ${tokenToDelete}.` });
+      } else {
+        const d = await res.json();
+        throw new Error(d.error || 'Failed to delete archive');
+      }
+    } catch (err: any) {
+      setStatusMessage({ type: 'error', text: err.message || 'Delete archive failed' });
+    }
+  };
+
+  // Fetch all existing contests
 
   // Fetch all existing contests
   const fetchContests = async () => {
@@ -493,8 +817,26 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
           </p>
         </div>
 
-        {/* Create New vs Edit Existing Switcher Buttons */}
-        <div className="flex items-center gap-2">
+        {/* Mode Switcher Buttons */}
+        <div className="flex items-center gap-2 flex-wrap">
+          <button
+            type="button"
+            onClick={() => {
+              setMode('bulk');
+              setStatusMessage(null);
+              fetchCommittedArchives();
+              fetchAvailableTokens();
+            }}
+            className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+              mode === 'bulk'
+                ? 'bg-emerald-500 text-slate-950 shadow-neon-emerald'
+                : 'bg-slate-900 border border-slate-700 text-slate-300 hover:text-white hover:bg-slate-800'
+            }`}
+          >
+            <FileArchive className="w-3.5 h-3.5" />
+            <span>Bulk Challenge Archives (Pure ZIPs)</span>
+          </button>
+
           <button
             type="button"
             onClick={() => {
@@ -511,7 +853,7 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
             }`}
           >
             <Plus className="w-3.5 h-3.5" />
-            <span>Create New Contest</span>
+            <span>Single Stages & Contest</span>
           </button>
 
           <button
@@ -528,7 +870,7 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
             }`}
           >
             <Edit3 className="w-3.5 h-3.5" />
-            <span>Edit Existing Contest ({contests.length})</span>
+            <span>Contests ({contests.length})</span>
           </button>
         </div>
       </div>
@@ -548,6 +890,385 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
             <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
           )}
           <span>{statusMessage.text}</span>
+        </div>
+      )}
+
+      {/* =========================================================================
+          VIEW 0: BULK TOKEN ARCHIVES (Pure ZIP Architecture — Zero CSV)
+         ========================================================================= */}
+      {mode === 'bulk' && (
+        <div className="space-y-6">
+          {/* Header Description Banner */}
+          <div className="p-5 rounded-2xl bg-gradient-to-r from-emerald-950/40 via-slate-900 to-slate-900 border border-emerald-500/30">
+            <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
+              <div>
+                <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                  <FileArchive className="w-4 h-4 text-emerald-400" />
+                  Native Challenge Stage Deployment — Pure ZIPs (No CSV Required)
+                </h3>
+                <p className="text-xs text-slate-300 mt-1 leading-relaxed">
+                  Each ZIP is fully self-contained: <span className="text-emerald-400 font-bold">Stage 1 is unlocked</span> by default, and <span className="text-cyan-400 font-bold">Stages 2..Y are pre-encrypted</span> inside. Decryption is performed natively in the contestant's browser RAM upon entering the correct password (just like Windows File Explorer). <span className="text-slate-400 italic">No passwords or CSV comparison files are ever needed.</span>
+                </p>
+              </div>
+              <div className="shrink-0 flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    fetchCommittedArchives();
+                    fetchAvailableTokens();
+                  }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 hover:text-white transition-colors cursor-pointer"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span>Refresh Roster</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Architecture Highlights */}
+            <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+              <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800 space-y-1">
+                <div className="font-bold text-slate-200 flex items-center gap-1.5">
+                  <span className="w-5 h-5 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-[11px] font-mono">1</span>
+                  Drag & Drop X Archives
+                </div>
+                <p className="text-[11px] text-slate-400 leading-normal">
+                  Upload all X multi-stage challenge ZIPs at once. Each ZIP is delivered uniquely to one contestant/team token.
+                </p>
+              </div>
+              <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800 space-y-1">
+                <div className="font-bold text-slate-200 flex items-center gap-1.5">
+                  <span className="w-5 h-5 rounded-lg bg-cyan-500/20 text-cyan-400 flex items-center justify-center text-[11px] font-mono">2</span>
+                  Native RAM Decryption
+                </div>
+                <p className="text-[11px] text-slate-400 leading-normal">
+                  Like Windows or WinRAR, the browser decrypts the nested ZIP using the ZIP's internal CRC/HMAC headers directly in client RAM.
+                </p>
+              </div>
+              <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800 space-y-1">
+                <div className="font-bold text-slate-200 flex items-center gap-1.5">
+                  <span className="w-5 h-5 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center text-[11px] font-mono">3</span>
+                  Zero Password Clashing
+                </div>
+                <p className="text-[11px] text-slate-400 leading-normal">
+                  No CSV means zero ordering mismatch risk. Whatever password was used to encrypt the ZIP unlocks it instantly.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Upload & Stage Configuration Card */}
+          <div className="p-5 rounded-2xl bg-app-surface border border-app-border space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-3 border-b border-slate-800">
+              <div>
+                <h4 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                  <Upload className="w-4 h-4 text-emerald-400" />
+                  Select Challenge ZIP Archives
+                </h4>
+                <p className="text-[11px] text-slate-400 mt-0.5">
+                  Choose all X multi-stage ZIP files. Each archive will be uniquely mapped to a participant token.
+                </p>
+              </div>
+
+              {/* Stage Count Configuration */}
+              <div className="flex items-center gap-2.5 bg-slate-900 border border-slate-800 px-3 py-1.5 rounded-xl">
+                <span className="text-[11px] text-slate-400 font-medium" title="Nested archives automatically discover each stage dynamically from decrypted inner ZIPs">Nested Stages Architecture:</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={20}
+                  value={bulkStageCount}
+                  onChange={(e) => setBulkStageCount(Math.max(1, parseInt(e.target.value) || 1))}
+                  className="w-12 px-2 py-0.5 bg-slate-950 border border-slate-700 rounded text-center text-xs font-bold text-emerald-400 font-mono"
+                />
+                {detectingStages && (
+                  <span className="text-[10px] text-cyan-400 flex items-center gap-1 font-mono">
+                    <Loader2 className="w-3 h-3 animate-spin" /> Auto-detecting...
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Drop Zone */}
+            <label className="block border-2 border-dashed border-slate-700 hover:border-emerald-500/60 rounded-2xl p-6 text-center cursor-pointer transition-colors bg-slate-900/40 hover:bg-slate-900/70">
+              <Upload className="w-8 h-8 text-emerald-400 mx-auto mb-2 opacity-80" />
+              <span className="text-xs font-bold text-slate-200 block">
+                {bulkZipFiles.length === 0
+                  ? 'Click or drag & drop all X multi-stage ZIP archives here'
+                  : `${bulkZipFiles.length} ZIP archive(s) selected (${(bulkZipFiles.reduce((acc, f) => acc + f.size, 0) / 1024 / 1024).toFixed(1)} MB total)`}
+              </span>
+              <span className="text-[11px] text-slate-400 block mt-1">
+                Select all participant archives simultaneously • *.zip only
+              </span>
+              <input
+                type="file"
+                multiple
+                accept=".zip,application/zip"
+                onChange={handleZipFilesChange}
+                className="hidden"
+              />
+            </label>
+          </div>
+
+          {/* Token Assignment & Archive Preview Table */}
+          {bulkZipFiles.length > 0 && (
+            <div className="p-5 rounded-2xl bg-app-surface border border-app-border space-y-4 animate-in fade-in duration-200">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-800">
+                <div>
+                  <h4 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                    <KeyRound className="w-4 h-4 text-amber-400" />
+                    Participant Token Binding ({bulkZipFiles.length} Archives)
+                  </h4>
+                  <p className="text-[11px] text-slate-400 mt-0.5">
+                    Assign each challenge archive to a team token. Unlocking is strictly in-browser via RAM decryption.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2 flex-wrap">
+                  <div className="flex items-center border border-slate-700 rounded-xl overflow-hidden">
+                    <button
+                      type="button"
+                      onClick={() => handleSortZips('asc')}
+                      disabled={bulkZipFiles.length <= 1}
+                      className="px-2.5 py-1.5 text-[11px] bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white border-r border-slate-700 disabled:opacity-40 cursor-pointer"
+                      title="Sort ZIPs 1→N"
+                    >
+                      Sort 1→N
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleSortZips('desc')}
+                      disabled={bulkZipFiles.length <= 1}
+                      className="px-2.5 py-1.5 text-[11px] bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white disabled:opacity-40 cursor-pointer"
+                      title="Sort ZIPs N→1"
+                    >
+                      Sort N→1
+                    </button>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleRandomizeAssignments}
+                    disabled={availableTokens.length === 0}
+                    className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/25 transition-all cursor-pointer disabled:opacity-50 font-bold shadow-xs"
+                    title="Randomly distribute challenge archives across all registered participants"
+                  >
+                    <Shuffle className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>🎲 Randomize to All Participants ({availableTokens.length})</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBulkZipFiles([]);
+                      setBulkTokenMappings([]);
+                    }}
+                    className="px-2.5 py-1.5 rounded-xl text-xs text-rose-400 hover:bg-rose-500/10 border border-rose-500/20 transition-colors cursor-pointer"
+                  >
+                    Clear All
+                  </button>
+                </div>
+              </div>
+
+              {/* Roster Table */}
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead>
+                    <tr className="border-b border-slate-800 text-[11px] font-mono text-slate-400">
+                      <th className="py-2.5 px-3">Order</th>
+                      <th className="py-2.5 px-3">Challenge Archive</th>
+                      <th className="py-2.5 px-3">Stage Structure</th>
+                      <th className="py-2.5 px-3">Assigned Access Token</th>
+                      <th className="py-2.5 px-3">Team / Participant</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/60 font-mono">
+                    {bulkZipFiles.map((zipFile, idx) => {
+                      const currentToken = bulkTokenMappings[idx] || '';
+                      const matchedTokenObj = availableTokens.find((t) => t.token === currentToken);
+
+                      return (
+                        <tr key={idx} className="hover:bg-slate-900/50 transition-colors">
+                          <td className="py-2.5 px-3 text-slate-400 font-bold whitespace-nowrap">
+                            <div className="flex items-center gap-1.5">
+                              <span className="w-5 text-right font-mono">{idx + 1}</span>
+                              <div className="flex flex-col gap-0.5">
+                                <button
+                                  type="button"
+                                  disabled={idx === 0}
+                                  onClick={() => handleMoveZip(idx, 'up')}
+                                  className="text-[9px] text-slate-400 hover:text-white disabled:opacity-20 cursor-pointer p-0.5 leading-none rounded hover:bg-slate-800"
+                                  title="Move ZIP Up"
+                                >
+                                  ▲
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={idx === bulkZipFiles.length - 1}
+                                  onClick={() => handleMoveZip(idx, 'down')}
+                                  className="text-[9px] text-slate-400 hover:text-white disabled:opacity-20 cursor-pointer p-0.5 leading-none rounded hover:bg-slate-800"
+                                  title="Move ZIP Down"
+                                >
+                                  ▼
+                                </button>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="py-2.5 px-3 text-slate-200">
+                            <div className="flex items-center gap-2">
+                              <FileArchive className="w-4 h-4 text-emerald-400 shrink-0" />
+                              <span className="truncate max-w-[200px] font-semibold">{zipFile.name}</span>
+                              <span className="text-[10px] text-slate-500">({(zipFile.size / 1024 / 1024).toFixed(1)} MB)</span>
+                            </div>
+                          </td>
+                          <td className="py-2.5 px-3">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="px-1.5 py-0.5 rounded text-[10px] bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
+                                S1: Unlocked
+                              </span>
+                              {Array.from({ length: Math.max(0, bulkStageCount - 1) }).map((_, sIdx) => (
+                                <span
+                                  key={sIdx}
+                                  className="px-1.5 py-0.5 rounded text-[10px] bg-cyan-500/10 border border-cyan-500/20 text-cyan-400"
+                                >
+                                  S{sIdx + 2}: Native Encrypted
+                                </span>
+                              ))}
+                            </div>
+                          </td>
+                          <td className="py-2.5 px-3">
+                            <div className="flex items-center gap-2">
+                              <span className="px-2.5 py-1 bg-emerald-950/60 border border-emerald-500/30 rounded-lg text-xs font-mono text-emerald-400 font-bold tracking-wider">
+                                {currentToken || 'PENDING'}
+                              </span>
+                              <span className="px-1.5 py-0.5 rounded text-[10px] bg-slate-800 text-slate-400 border border-slate-700">
+                                🎲 Auto-Randomized
+                              </span>
+                            </div>
+                          </td>
+                          <td className="py-2.5 px-3 text-slate-300">
+                            {matchedTokenObj ? (
+                              <div className="flex items-center gap-1.5">
+                                <Users className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+                                <span className="font-semibold text-white text-xs">
+                                  {matchedTokenObj.label}
+                                </span>
+                              </div>
+                            ) : currentToken ? (
+                              <span className="text-[11px] text-slate-400 font-mono">Token: {currentToken}</span>
+                            ) : (
+                              <span className="text-[11px] text-amber-400 italic">Unassigned</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Deploy Action Bar */}
+              <div className="pt-3 border-t border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="text-[11px] text-slate-400">
+                  {bulkUploadProgress && (
+                    <div className="flex items-center gap-2 text-cyan-400 font-mono">
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>{bulkUploadProgress}</span>
+                    </div>
+                  )}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleExecuteBulkUpload}
+                  disabled={bulkUploading || bulkZipFiles.length === 0}
+                  className="flex items-center justify-center gap-2 px-6 py-2.5 text-xs font-bold text-slate-950 bg-emerald-400 hover:bg-emerald-300 rounded-xl transition-all shadow-neon-emerald disabled:opacity-50 cursor-pointer"
+                >
+                  {bulkUploading ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>Deploying Archives...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Upload className="w-4 h-4" />
+                      <span>Deploy All {bulkZipFiles.length} Challenge Archives</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Active Deployed Token Archives Table */}
+          <div className="p-5 rounded-2xl bg-app-surface border border-app-border space-y-3">
+            <div className="flex items-center justify-between">
+              <h4 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                <Database className="w-4 h-4 text-cyan-400" />
+                Active Deployed Token Archives in Database ({bulkCommittedArchives.length})
+              </h4>
+              <button
+                type="button"
+                onClick={fetchCommittedArchives}
+                className="text-xs text-cyan-400 hover:underline cursor-pointer flex items-center gap-1"
+              >
+                <RefreshCw className="w-3 h-3" />
+                <span>Refresh</span>
+              </button>
+            </div>
+
+            {loadingCommittedArchives ? (
+              <div className="p-6 text-center text-xs text-slate-400 flex items-center justify-center gap-2">
+                <Loader2 className="w-4 h-4 animate-spin text-cyan-400" />
+                <span>Loading committed archives...</span>
+              </div>
+            ) : bulkCommittedArchives.length === 0 ? (
+              <div className="p-6 text-center text-xs text-slate-500 bg-slate-950/40 rounded-xl border border-slate-800">
+                No token archives deployed yet. Upload your multi-stage ZIP archives above to deploy.
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead>
+                    <tr className="border-b border-slate-800 text-[11px] font-mono text-slate-400">
+                      <th className="py-2.5 px-3">#</th>
+                      <th className="py-2.5 px-3">Access Token</th>
+                      <th className="py-2.5 px-3">Storage Path</th>
+                      <th className="py-2.5 px-3">Stages</th>
+                      <th className="py-2.5 px-3">Deployed At</th>
+                      <th className="py-2.5 px-3 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/60 font-mono">
+                    {bulkCommittedArchives.map((arch, idx) => (
+                      <tr key={arch.id} className="hover:bg-slate-900/50 transition-colors">
+                        <td className="py-2.5 px-3 text-slate-400 font-bold">{idx + 1}</td>
+                        <td className="py-2.5 px-3 font-bold text-emerald-400">{arch.access_token}</td>
+                        <td className="py-2.5 px-3 text-slate-300 text-[11px] truncate max-w-[220px]">
+                          {arch.storage_path}
+                        </td>
+                        <td className="py-2.5 px-3 text-cyan-400 font-bold">
+                          {arch.stage_count} Stages
+                        </td>
+                        <td className="py-2.5 px-3 text-slate-400 text-[11px]">
+                          {new Date(arch.uploaded_at).toLocaleString()}
+                        </td>
+                        <td className="py-2.5 px-3 text-right">
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteArchive(arch.access_token)}
+                            className="px-2 py-1 rounded-lg text-rose-400 hover:bg-rose-500/10 border border-transparent hover:border-rose-500/20 text-[11px] transition-colors cursor-pointer"
+                          >
+                            Delete
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
         </div>
       )}
 

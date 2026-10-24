@@ -53,15 +53,29 @@ export async function POST(req: NextRequest) {
     const cleanParticipants: Array<{
       email: string;
       name: string;
+      team_name: string | null;
+      team_size: string | null;
       role: 'participant';
       access_token: string;
     }> = [];
 
     const seenEmails = new Set<string>();
+    const teamTokens = new Map<string, string>();
+
+    // First pass: collect any pre-assigned tokens for teams
+    for (const p of participants) {
+      const teamName = (p.team_name || p.teamName || '').trim();
+      const customToken = (p.access_token || p.token || '').trim().toUpperCase();
+      if (teamName && customToken && !teamTokens.has(teamName.toLowerCase())) {
+        teamTokens.set(teamName.toLowerCase(), customToken);
+      }
+    }
 
     for (const p of participants) {
       const email = (p.email || '').trim().toLowerCase();
       const name = (p.name || '').trim();
+      const team_name = (p.team_name || p.teamName || '').trim() || null;
+      const team_size = (p.team_size || p.teamSize || '').trim() || null;
       const customToken = (p.access_token || p.token || '').trim().toUpperCase();
 
       if (!email || !email.includes('@')) {
@@ -72,12 +86,25 @@ export async function POST(req: NextRequest) {
       }
 
       seenEmails.add(email);
+
+      let tokenForUser = customToken;
+      if (team_name) {
+        const teamKey = team_name.toLowerCase();
+        if (!teamTokens.has(teamKey)) {
+          teamTokens.set(teamKey, customToken || generateAccessToken());
+        }
+        tokenForUser = teamTokens.get(teamKey)!;
+      } else if (!tokenForUser) {
+        tokenForUser = generateAccessToken();
+      }
+
       cleanParticipants.push({
         email,
         name: name || email.split('@')[0],
+        team_name,
+        team_size,
         role: 'participant',
-        // Preserve exact token if supplied by admin/user, else generate
-        access_token: customToken || generateAccessToken(),
+        access_token: tokenForUser,
       });
     }
 
@@ -90,14 +117,43 @@ export async function POST(req: NextRequest) {
 
     const supabaseAdmin = getSupabaseAdmin();
 
-    // Upsert into Supabase users table with preserved tokens
-    const { data, error } = await supabaseAdmin
-      .from('users')
-      .upsert(cleanParticipants, {
-        onConflict: 'email',
-        ignoreDuplicates: false,
-      })
-      .select('id, email, name, role, access_token, total_score, current_stage');
+    // Try upserting with team_name and team_size
+    let data: any[] | null = null;
+    let error: any = null;
+
+    try {
+      const res = await supabaseAdmin
+        .from('users')
+        .upsert(cleanParticipants, {
+          onConflict: 'email',
+          ignoreDuplicates: false,
+        })
+        .select('id, email, name, team_name, team_size, role, access_token, total_score, current_stage');
+      data = res.data;
+      error = res.error;
+    } catch (e: any) {
+      error = e;
+    }
+
+    // Fallback if team_name column not yet present in users table
+    if (error && (error.message?.includes('team_name') || error.message?.includes('column'))) {
+      console.warn('[Participants Import]: team_name column not found in database, falling back to base columns');
+      const baseParticipants = cleanParticipants.map((p) => ({
+        email: p.email,
+        name: p.name,
+        role: p.role,
+        access_token: p.access_token,
+      }));
+      const resFallback = await supabaseAdmin
+        .from('users')
+        .upsert(baseParticipants, {
+          onConflict: 'email',
+          ignoreDuplicates: false,
+        })
+        .select('id, email, name, role, access_token, total_score, current_stage');
+      data = resFallback.data;
+      error = resFallback.error;
+    }
 
     if (error) throw error;
 

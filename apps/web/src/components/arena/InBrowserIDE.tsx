@@ -59,10 +59,14 @@ interface InBrowserIDEProps {
   allowedCopyFilename: string;
   loading: boolean;
   participantName: string;
+  teamName?: string | null;
+  teamSize?: string | null;
   totalScore: number;
   contestStatus?: ContestStatus;
   onSelectStage: (stageNum: number) => void;
   onSelectFile: (file: ParsedFile | null) => void;
+  isLastStage?: boolean;
+  onOpenCompleteModal?: () => void;
   onOpenUnlockModal: () => void;
   onOpenLeaderboard: () => void;
   onLogout?: () => void;
@@ -89,10 +93,14 @@ export function InBrowserIDE({
   allowedCopyFilename,
   loading,
   participantName,
+  teamName,
+  teamSize,
   totalScore,
   contestStatus = 'LIVE',
   onSelectStage,
   onSelectFile,
+  isLastStage = false,
+  onOpenCompleteModal,
   onOpenUnlockModal,
   onOpenLeaderboard,
   onLogout,
@@ -135,6 +143,22 @@ export function InBrowserIDE({
   }, []);
 
   // VS Code Explorer Stage Folders Expansion State
+  // Subfolders expansion state (default: expanded so all files are directly shown)
+  const [collapsedSubfolders, setCollapsedSubfolders] = useState<Record<string, boolean>>({});
+
+  const isFolderExpanded = (stageNum: number, folderName: string) => {
+    const key = `${stageNum}:${folderName}`;
+    return collapsedSubfolders[key] !== true; // Default true!
+  };
+
+  const toggleSubfolder = (stageNum: number, folderName: string) => {
+    const key = `${stageNum}:${folderName}`;
+    setCollapsedSubfolders((prev) => ({
+      ...prev,
+      [key]: prev[key] === true ? false : true,
+    }));
+  };
+
   const [expandedStages, setExpandedStages] = useState<Record<number, boolean>>(() => ({
     [selectedStageNumber]: true,
   }));
@@ -613,6 +637,12 @@ export function InBrowserIDE({
             <div className="flex items-center space-x-1.5 min-w-0">
               <Folder className="w-3.5 h-3.5 text-app-subtext shrink-0" />
               <span className="text-app-subtext truncate">Stage {file.stageNumber || selectedStageNumber}</span>
+              {file.folder && (
+                <>
+                  <span className="text-app-subtext/60">/</span>
+                  <span className="text-amber-400/90 font-medium truncate">{file.folder}</span>
+                </>
+              )}
               <span className="text-app-subtext/60">/</span>
               <FileExtensionIcon filename={file.name} className="w-3.5 h-3.5 shrink-0" />
               <span className="font-semibold text-slate-100 truncate">{file.name}</span>
@@ -858,7 +888,7 @@ export function InBrowserIDE({
         {/* Right: Unlock Button (leftmost) + Theme Dropdown + Leaderboard Logo Button + Profile Dropdown */}
         <div className="flex items-center space-x-2 sm:space-x-3 shrink-0">
           
-          {/* 1. Unlock Next Stage Button (Far Left of Right-Side Actions) */}
+          {/* 1. Unlock Next Stage OR Complete Investigation Button */}
           {isFrozen ? (
             <button
               disabled
@@ -877,6 +907,18 @@ export function InBrowserIDE({
               <CheckCircle2 className="w-3.5 h-3.5 text-purple-400" />
               <span>Contest Concluded</span>
             </button>
+          ) : isLastStage ? (
+            <button
+              onClick={onOpenCompleteModal}
+              className="flex items-center space-x-1 sm:space-x-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-amber-500 via-yellow-500 to-emerald-400 text-slate-950 font-bold text-xs hover:brightness-110 active:scale-[0.98] transition-all cursor-pointer shadow-[0_4px_16px_rgba(245,158,11,0.45),_inset_0_1px_0_rgba(255,255,255,0.4)] whitespace-nowrap animate-pulse"
+              title="Final Stage Complete: Submit Final Recovery Phrase to Lock Stats"
+            >
+              <Trophy className="w-3.5 h-3.5 shrink-0 text-slate-950" />
+              <span>Complete Investigation</span>
+              <span className="text-[10px] font-bold bg-black/20 px-1.5 py-0.5 rounded ml-0.5 sm:ml-1">
+                +200 PTS
+              </span>
+            </button>
           ) : (
             <button
               onClick={onOpenUnlockModal}
@@ -884,10 +926,10 @@ export function InBrowserIDE({
               title={`Unlock Stage ${selectedStageNumber + 1}`}
             >
               <Lock className="w-3.5 h-3.5 shrink-0" />
-              <span className="hidden sm:inline">Unlock Stage {selectedStageNumber + 1}</span>
-              <span className="sm:hidden">Stage {selectedStageNumber + 1}</span>
+              <span className="hidden sm:inline">Unlock Stage ${selectedStageNumber + 1}</span>
+              <span className="sm:hidden">Stage ${selectedStageNumber + 1}</span>
               <span className="text-[10px] font-bold bg-black/20 px-1.5 py-0.5 rounded ml-0.5 sm:ml-1">
-                +{selectedStage?.points || 100} PTS
+                +${selectedStage?.points || 100} PTS
               </span>
             </button>
           )}
@@ -975,6 +1017,11 @@ export function InBrowserIDE({
               <span className="text-xs font-semibold text-app-text hidden sm:inline max-w-[120px] truncate">
                 {participantName || 'Contestant'}
               </span>
+              {teamName && (
+                <span className="hidden md:inline-flex text-[10px] font-mono px-1.5 py-0.2 rounded bg-cyan-500/15 text-cyan-400 border border-cyan-500/30 font-bold truncate max-w-[110px]">
+                  {teamName}
+                </span>
+              )}
               <ChevronDown className={`w-3 h-3 text-app-subtext transition-transform duration-150 ${profileMenuOpen ? 'rotate-180' : ''}`} />
             </button>
 
@@ -985,12 +1032,17 @@ export function InBrowserIDE({
               >
                 {/* User Info Header */}
                 <div className="px-3.5 py-2 border-b border-app-border">
-                  <div className="font-semibold text-app-text truncate text-xs">
-                    {participantName || 'Contestant'}
+                  <div className="font-semibold text-app-text truncate text-xs flex items-center justify-between gap-1">
+                    <span className="truncate">{participantName || 'Contestant'}</span>
+                    {teamName && (
+                      <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-cyan-500/15 text-cyan-400 border border-cyan-500/30 font-bold shrink-0">
+                        {teamName}
+                      </span>
+                    )}
                   </div>
                   <div className="flex items-center justify-between mt-1 text-[11px] text-app-subtext">
                     <span className="px-2 py-0.5 rounded-md bg-app-muted border border-app-border text-[10px] font-mono uppercase">
-                      Participant
+                      {teamSize ? `Team (${teamSize})` : 'Participant'}
                     </span>
                     <span className="font-bold text-app-accent font-mono">
                       {totalScore} PTS

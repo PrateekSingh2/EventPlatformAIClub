@@ -133,6 +133,6 @@ export async function signInWithGoogle(): Promise<GoogleAuthResult> {
     }
 
     // User deliberately interacted and closed the window after reading
-    throw new Error('Google Sign-In was closed. You can retry or click below to enter directly.');
+    throw new Error('Google Sign-In was closed. Please try signing in again.');
   }
 }

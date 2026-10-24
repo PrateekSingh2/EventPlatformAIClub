@@ -1,7 +1,7 @@
 'use client';
 
-import React, { useState } from 'react';
-import { Lock, KeyRound, AlertCircle, Loader2, X } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Lock, KeyRound, Loader2, X } from 'lucide-react';
 
 interface ZipPasswordModalProps {
   isOpen: boolean;
@@ -22,6 +22,13 @@ export function ZipPasswordModal({
   const [loading, setLoading] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (isOpen) {
+      setPassword('');
+      setLocalError(null);
+    }
+  }, [isOpen, stageNumber]);
+
   if (!isOpen) return null;
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -34,6 +41,7 @@ export function ZipPasswordModal({
     setLocalError(null);
     try {
       await onSubmit(password);
+      setPassword('');
     } catch (err: any) {
       setLocalError(err.message || 'Decryption failed. Please check the password.');
     } finally {
@@ -41,9 +49,15 @@ export function ZipPasswordModal({
     }
   };
 
+  const handleCancel = () => {
+    setPassword('');
+    setLocalError(null);
+    onCancel();
+  };
+
   return (
     <div
-      onClick={onCancel}
+      onClick={handleCancel}
       className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xl select-none animate-in fade-in duration-200"
     >
       <div
@@ -65,7 +79,7 @@ export function ZipPasswordModal({
             </div>
           </div>
           <button
-            onClick={onCancel}
+            onClick={handleCancel}
             className="text-app-subtext hover:text-app-text cursor-pointer p-1.5 rounded-xl hover:bg-app-hover transition-colors"
           >
             <X className="w-4 h-4" />
@@ -102,7 +116,7 @@ export function ZipPasswordModal({
           <div className="flex items-center justify-end space-x-2 pt-3 border-t border-app-border">
             <button
               type="button"
-              onClick={onCancel}
+              onClick={handleCancel}
               disabled={loading}
               className="px-3.5 py-1.5 rounded-xl text-xs text-app-subtext hover:text-app-text hover:bg-app-hover transition-colors cursor-pointer font-medium"
             >

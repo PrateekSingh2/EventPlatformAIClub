@@ -177,3 +177,11 @@ export function clearLocalPasswordAttemptState(userId: string, stageNumber: numb
   record.updated_at = new Date().toISOString();
   fs.writeFileSync(getTelemetryFilePath(), JSON.stringify(records, null, 2), 'utf-8');
 }
+
+export function resetLocalTelemetryForUser(userId: string) {
+  try {
+    const records = readLocalTelemetry();
+    const filtered = records.filter((item) => item.user_id !== userId);
+    fs.writeFileSync(getTelemetryFilePath(), JSON.stringify(filtered, null, 2), 'utf-8');
+  } catch {}
+}

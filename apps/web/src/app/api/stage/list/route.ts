@@ -47,6 +47,27 @@ export async function POST(req: NextRequest) {
     if (isSupabaseConfigured) {
       try {
         const supabaseAdmin = getSupabaseAdmin();
+
+        // 1. Check if participant has a per-token archive bundle assigned
+        const { data: archive } = await supabaseAdmin
+          .from('token_archives')
+          .select('stage_count')
+          .eq('access_token', accessToken)
+          .maybeSingle();
+
+        if (archive && (archive as any).stage_count > 0) {
+          const stageCount = Number((archive as any).stage_count);
+          const manifestList: StageManifest[] = Array.from({ length: stageCount }, (_, i) => ({
+            stageNumber: i + 1,
+            title: `Stage ${i + 1}`,
+            isPasswordProtected: i > 0,
+            allowedCopyFilename: 'ai_prompt.txt',
+            points: (i + 1) * 100,
+          }));
+          return NextResponse.json({ stages: manifestList });
+        }
+
+        // 2. Fall back to global stages table
         const { data: dbStages, error: stageErr } = await supabaseAdmin
           .from('stages')
           .select('stage_number, title, is_password_protected, allowed_copy_filename, points')

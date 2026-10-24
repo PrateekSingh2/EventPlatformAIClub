@@ -88,3 +88,105 @@ export async function getCachedStageArchive(
     return null;
   }
 }
+
+// ─── Token Archive Cache ──────────────────────────────────────────────────────
+// Caches the full outer archive ZIP blob (per-token bundle) in IndexedDB.
+// Once cached, all stage unlocking is done client-side without re-downloading.
+
+const TOKEN_ARCHIVE_STORE = 'token-archive';
+const TOKEN_ARCHIVE_DB_VERSION = 2;
+
+function openTokenArchiveDb(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    if (typeof indexedDB === 'undefined') {
+      reject(new Error('IndexedDB unavailable'));
+      return;
+    }
+    const req = indexedDB.open(DB_NAME, TOKEN_ARCHIVE_DB_VERSION);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      // Ensure legacy stage-archives store is preserved
+      if (!db.objectStoreNames.contains(STORE_NAME)) {
+        db.createObjectStore(STORE_NAME, { keyPath: 'stageNumber' });
+      }
+      // Create new token archive store
+      if (!db.objectStoreNames.contains(TOKEN_ARCHIVE_STORE)) {
+        db.createObjectStore(TOKEN_ARCHIVE_STORE, { keyPath: 'accessToken' });
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error || new Error('Failed to open token archive DB'));
+  });
+}
+
+interface CachedTokenArchiveRecord {
+  accessToken: string;
+  blob: Blob;
+  stageCount: number;
+  cachedAt: number;
+}
+
+/** Persists the full outer archive ZIP blob for a token to IndexedDB. */
+export async function saveTokenArchive(
+  accessToken: string,
+  blob: Blob,
+  stageCount: number
+): Promise<void> {
+  if (typeof window === 'undefined') return;
+  try {
+    const db = await openTokenArchiveDb();
+    const tx = db.transaction(TOKEN_ARCHIVE_STORE, 'readwrite');
+    const store = tx.objectStore(TOKEN_ARCHIVE_STORE);
+    const record: CachedTokenArchiveRecord = {
+      accessToken,
+      blob,
+      stageCount,
+      cachedAt: Date.now(),
+    };
+    store.put(record);
+    await new Promise<void>((resolve, reject) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+    db.close();
+  } catch (err) {
+    console.warn('[StageCache] Could not save token archive to IndexedDB:', err);
+  }
+}
+
+/** Retrieves the cached outer archive ZIP blob for a token from IndexedDB. */
+export async function getCachedTokenArchive(
+  accessToken: string
+): Promise<{ blob: Blob; stageCount: number } | null> {
+  if (typeof window === 'undefined') return null;
+  try {
+    const db = await openTokenArchiveDb();
+    const tx = db.transaction(TOKEN_ARCHIVE_STORE, 'readonly');
+    const store = tx.objectStore(TOKEN_ARCHIVE_STORE);
+    const req = store.get(accessToken);
+    const result = await new Promise<CachedTokenArchiveRecord | undefined>((resolve, reject) => {
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    db.close();
+    if (!result) return null;
+    return { blob: result.blob, stageCount: result.stageCount };
+  } catch {
+    return null;
+  }
+}
+
+/** Clears the cached outer archive for a token (e.g. on logout). */
+export async function clearTokenArchive(accessToken: string): Promise<void> {
+  if (typeof window === 'undefined') return;
+  try {
+    const db = await openTokenArchiveDb();
+    const tx = db.transaction(TOKEN_ARCHIVE_STORE, 'readwrite');
+    tx.objectStore(TOKEN_ARCHIVE_STORE).delete(accessToken);
+    await new Promise<void>((resolve, reject) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+    db.close();
+  } catch {}
+}

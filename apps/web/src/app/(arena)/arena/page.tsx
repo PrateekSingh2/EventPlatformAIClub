@@ -1,9 +1,9 @@
 'use client';
 
-import React, { useEffect, useState, useCallback, Suspense } from 'react';
+import React, { useEffect, useState, useCallback, useRef, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { ParsedFile, StageManifest, SanitizedQuizQuestion, User } from '@/lib/types';
-import { extractZipInBrowser, ZipEngineError } from '@/lib/zip-engine';
+import { extractZipInBrowser, extractStageArchiveInBrowser, ZipEngineError } from '@/lib/zip-engine';
 import { AntiCheatWrapper } from '@/components/arena/AntiCheatWrapper';
 import { InBrowserIDE } from '@/components/arena/InBrowserIDE';
 import { UnlockNextStageModal } from '@/components/arena/UnlockNextStageModal';
@@ -11,14 +11,28 @@ import { LiveLeaderboard } from '@/components/arena/LiveLeaderboard';
 import { ZipPasswordModal } from '@/components/arena/ZipPasswordModal';
 import { DraftArenaLock } from '@/components/arena/DraftArenaLock';
 import { DisqualifiedScreen } from '@/components/arena/DisqualifiedScreen';
+import { ContestCompletedScreen } from '@/components/arena/ContestCompletedScreen';
+import { ContestCompletionModal } from '@/components/arena/ContestCompletionModal';
 import { BroadcastAnnouncementModal } from '@/components/arena/BroadcastAnnouncementModal';
 import { BroadcastHistoryDrawer } from '@/components/arena/BroadcastHistoryDrawer';
 import { useContestLifecycle } from '@/hooks/useContestLifecycle';
 import { useAdminBroadcasts } from '@/hooks/useAdminBroadcasts';
 import { initializeProgressQueueListeners } from '@/lib/offline-progress-queue';
-import { saveStageArchive, getCachedStageArchive } from '@/lib/stage-cache';
+import { saveStageArchive, getCachedStageArchive, saveTokenArchive, getCachedTokenArchive, clearTokenArchive } from '@/lib/stage-cache';
+import { extractInnerZipBlob, listZipEntries } from '@/lib/zip-engine';
 import { supabase } from '@/lib/supabase';
-import { Loader2, AlertCircle } from 'lucide-react';
+import {
+  getContestantSession,
+  clearContestantSession,
+  updateContestantSessionToken,
+} from '@/lib/session';
+import {
+  Loader2,
+  AlertCircle,
+  ShieldAlert,
+  LogOut,
+  ArrowLeft,
+} from 'lucide-react';
 
 const DEFAULT_STAGES: StageManifest[] = [
   {
@@ -52,6 +66,13 @@ function ArenaContent() {
   const [token, setToken] = useState<string>('');
   const [user, setUser] = useState<User | null>(null);
 
+  // Account Mismatch State (when token does not belong to logged in user)
+  const [accountMismatch, setAccountMismatch] = useState<{
+    error: string;
+    sessionEmail: string;
+    token: string;
+  } | null>(null);
+
   // Initialize offline progress queue listeners
   useEffect(() => {
     const cleanup = initializeProgressQueueListeners();
@@ -62,10 +83,18 @@ function ArenaContent() {
   useEffect(() => {
     const handleSyncRefresh = () => {
       if (!token) return;
+      const session = getContestantSession();
+      if (!session) return;
+
       fetch('/api/auth/verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token }),
+        body: JSON.stringify({
+          token,
+          userEmail: session.email,
+          userName: session.name,
+          userId: session.uid,
+        }),
       })
         .then((res) => res.json())
         .then((data) => {
@@ -116,6 +145,17 @@ function ArenaContent() {
   // Active Stage ZIP Blob held in RAM
   const [activeZipBlob, setActiveZipBlob] = useState<Blob | null>(null);
 
+  // Token Archive Blob — the full outer ZIP containing all stage ZIPs
+  // Fetched once per session, cached in IndexedDB, used for all stage unlocks
+  const [tokenArchiveBlob, setTokenArchiveBlob] = useState<Blob | null>(null);
+  const [tokenArchiveStageCount, setTokenArchiveStageCount] = useState<number>(0);
+  const [usingTokenArchive, setUsingTokenArchive] = useState<boolean>(false);
+
+  // Nested Stages & Terminal Level States
+  const [isLastStage, setIsLastStage] = useState(false);
+  const [isCompleteModalOpen, setIsCompleteModalOpen] = useState(false);
+  const nextStageZipBlobsRef = useRef<Record<number, Blob>>({});
+
   // Unlock Next Stage Modal State
   const [isUnlockModalOpen, setIsUnlockModalOpen] = useState(false);
 
@@ -130,39 +170,77 @@ function ArenaContent() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // 1. Authenticate user from token param or localStorage with mandatory login check
+  // Stable refs to prevent re-render cascading loops
+  const tokenRef = useRef<string | null>(token);
   useEffect(() => {
-    const rawToken = tokenParam || searchParams.get('tokenid') || '';
-    const storedToken = typeof window !== 'undefined' ? (localStorage.getItem('participant_token') || '') : '';
-    const activeToken = (rawToken || storedToken).trim().toUpperCase();
+    tokenRef.current = token;
+  }, [token]);
+
+  const tokenArchiveBlobRef = useRef<Blob | null>(null);
+  const stageFilesMapRef = useRef<Record<number, ParsedFile[]>>({});
+  const unlockedStagePasswordsRef = useRef<Record<number, string>>(unlockedStagePasswords);
+  const fetchTokenArchivePromiseRef = useRef<Promise<Blob | null> | null>(null);
+  const loadingStageRef = useRef<number | null>(null);
+
+  // 1. Mandatory Login Check & Token Ownership Cross-Verification
+  useEffect(() => {
+    // Check if user is logged in
+    const session = getContestantSession();
+    const rawToken = (tokenParam || searchParams.get('tokenid') || '').trim().toUpperCase();
+
+    if (!session || !session.email) {
+      // User is NOT logged in: redirect to login page preserving any target token
+      const redirectUrl = rawToken
+        ? `/?token=${encodeURIComponent(rawToken)}&loginRequired=true&redirect=/arena`
+        : '/?loginRequired=true&redirect=/arena';
+      router.replace(redirectUrl);
+      return;
+    }
+
+    const storedToken =
+      typeof window !== 'undefined'
+        ? (localStorage.getItem('participant_token') || '').trim().toUpperCase()
+        : '';
+    const activeToken = rawToken || session.assignedToken || storedToken;
 
     if (!activeToken) {
-      router.replace('/?loginRequired=true&redirect=/arena');
+      // Logged in, but hasn't entered a team code yet -> redirect to home page team code entry
+      router.replace('/?redirect=/arena');
       return;
     }
 
     setToken(activeToken);
-    localStorage.setItem('participant_token', activeToken);
 
     const authenticate = async () => {
       try {
         const res = await fetch('/api/auth/verify', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ token: activeToken }),
+          body: JSON.stringify({
+            token: activeToken,
+            userEmail: session.email,
+            userName: session.name,
+            userId: session.uid,
+          }),
         });
 
         const data = await res.json();
         if (!res.ok || !data.authenticated) {
-          if (res.status === 403 || data.role === 'disqualified' || data.user?.is_disqualified) {
+          if (res.status === 403 && (data.role === 'disqualified' || data.user?.is_disqualified)) {
             setIsDisqualified(true);
             setDisqualifyReason(data.error || 'Account suspended for fair-play violations.');
             setUser(data.user || null);
             setLoading(false);
             return;
           }
-          // Only redirect to login if token is actually rejected
-          router.replace('/?loginRequired=true&redirect=/arena');
+
+          // Token mismatch: token does NOT belong to the logged-in account
+          setAccountMismatch({
+            error: data.error || 'Access Denied: This token is not signed for your account.',
+            sessionEmail: session.email,
+            token: activeToken,
+          });
+          setLoading(false);
           return;
         }
 
@@ -174,8 +252,8 @@ function ArenaContent() {
           return;
         }
 
-        // Mark session active so contestant is never prompted again on reload or state transition
-        sessionStorage.setItem('contestant_session_active', 'true');
+        // Token is verified and belongs to this user!
+        updateContestantSessionToken(activeToken);
         setUser(data.user);
         setSelectedStageNumber(data.user.current_stage || 1);
 
@@ -204,7 +282,314 @@ function ArenaContent() {
     authenticate();
   }, [tokenParam, searchParams, router]);
 
-  // Real-time listener for administrative disqualification
+
+
+  // ── Token Archive Fetcher ──────────────────────────────────────────────────
+  // Fetches the outer archive ZIP once and caches it in IndexedDB + RAM.
+  const fetchTokenArchive = useCallback(async (currentToken: string): Promise<Blob | null> => {
+    // Check RAM ref first
+    if (tokenArchiveBlobRef.current) return tokenArchiveBlobRef.current;
+
+    // Concurrency deduplication
+    if (fetchTokenArchivePromiseRef.current) {
+      return fetchTokenArchivePromiseRef.current;
+    }
+
+    const fetchPromise = (async () => {
+      try {
+        // Check IndexedDB cache
+        const cached = await getCachedTokenArchive(currentToken);
+        if (cached) {
+          tokenArchiveBlobRef.current = cached.blob;
+          setTokenArchiveBlob(cached.blob);
+          setTokenArchiveStageCount(cached.stageCount);
+          setUsingTokenArchive(true);
+          return cached.blob;
+        }
+
+        // Fetch from server
+        const res = await fetch('/api/stage/fetch-archive', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ accessToken: currentToken }),
+        });
+
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          if (data.error === 'NO_TOKEN_ARCHIVE') return null; // fallback to legacy
+          throw new Error(data.error || 'Failed to fetch archive');
+        }
+
+        const data = await res.json();
+        if (!data.isTokenArchive || !data.downloadUrl) return null;
+
+        const storageRes = await fetch(data.downloadUrl);
+        if (!storageRes.ok) throw new Error('Failed to download archive from storage');
+
+        const blob = await storageRes.blob();
+        const stageCount = data.stageCount || 1;
+
+        // Cache in IndexedDB for offline durability
+        void saveTokenArchive(currentToken, blob, stageCount);
+
+        tokenArchiveBlobRef.current = blob;
+        setTokenArchiveBlob(blob);
+        setTokenArchiveStageCount(stageCount);
+        setUsingTokenArchive(true);
+
+        // Update stages manifest based on archive stage count
+        const generatedStages: import('@/lib/types').StageManifest[] = Array.from({ length: stageCount }, (_, i) => ({
+          stageNumber: i + 1,
+          title: `Stage ${i + 1}`,
+          isPasswordProtected: i > 0,
+          allowedCopyFilename: 'ai_prompt.txt',
+          points: (i + 1) * 100,
+        }));
+        setStages(generatedStages);
+
+        return blob;
+      } finally {
+        fetchTokenArchivePromiseRef.current = null;
+      }
+    })();
+
+    fetchTokenArchivePromiseRef.current = fetchPromise;
+    return fetchPromise;
+  }, []);
+
+  // 2. Fetch stage manifest and download ZIP to RAM
+  const loadStage = useCallback(
+    async (stageNum: number, providedPassword?: string) => {
+      const currentToken = tokenRef.current;
+      if (!currentToken) return;
+
+      // Check if files for this stage are already decoded and cached in RAM
+      const cachedStageFiles = stageFilesMapRef.current[stageNum];
+      if (cachedStageFiles && cachedStageFiles.length > 0) {
+        setFiles(cachedStageFiles);
+        setActiveFile(cachedStageFiles[0]);
+        setOpenFiles((prev) => (prev.some((f) => f.path === cachedStageFiles[0].path) ? prev : [...prev, cachedStageFiles[0]]));
+        setIsPasswordModalOpen(false);
+        setPasswordModalError(null);
+        setLoading(false);
+        // Check if next zip exists for this cached stage
+        if (!nextStageZipBlobsRef.current[stageNum + 1]) {
+          // If no next zip blob stored, it might be the last stage
+          // Check if any stage after this exists in stages list
+        }
+        return;
+      }
+
+      // Concurrency guard: avoid duplicate loading of the same stage
+      if (loadingStageRef.current === stageNum) return;
+      loadingStageRef.current = stageNum;
+
+      setLoading(true);
+      setError(null);
+      setPasswordModalError(null);
+
+      const effectivePassword = providedPassword || unlockedStagePasswordsRef.current[stageNum] || undefined;
+
+      try {
+        let tokenArchive: Blob | null = null;
+        try {
+          tokenArchive = await fetchTokenArchive(currentToken);
+        } catch {}
+
+        if (!tokenArchive) {
+          // Fallback fetch from public case-study-archive.zip
+          try {
+            const fallbackRes = await fetch('/case-study-archive.zip');
+            if (fallbackRes.ok) {
+              tokenArchive = await fallbackRes.blob();
+              tokenArchiveBlobRef.current = tokenArchive;
+              setTokenArchiveBlob(tokenArchive);
+            }
+          } catch {}
+        }
+
+        if (tokenArchive) {
+          let stageBlob: Blob;
+
+          if (stageNum === 1) {
+            stageBlob = tokenArchive;
+            setActiveZipBlob(stageBlob);
+
+            const result = await extractStageArchiveInBrowser(stageBlob);
+            const taggedFiles = result.files.map((f) => ({ ...f, stageNumber: 1 }));
+            stageFilesMapRef.current[1] = taggedFiles;
+            setFiles(taggedFiles);
+            setStageFilesMap((prev) => ({ ...prev, [1]: taggedFiles }));
+
+            if (result.hasNextZip && result.nextZipBlob) {
+              nextStageZipBlobsRef.current[2] = result.nextZipBlob;
+              setIsLastStage(false);
+              setStages((prev) => {
+                const s1 = prev.find((s) => s.stageNumber === 1) || {
+                  stageNumber: 1,
+                  title: result.stageTitle || 'Stage 1: Initial Investigation',
+                  isPasswordProtected: false,
+                  allowedCopyFilename: 'AI_TUTOR_PROMPT.txt',
+                  points: 100,
+                  hasNextStage: true,
+                };
+                const s2 = prev.find((s) => s.stageNumber === 2) || {
+                  stageNumber: 2,
+                  title: 'Stage 2',
+                  isPasswordProtected: true,
+                  allowedCopyFilename: 'AI_TUTOR_PROMPT.txt',
+                  points: 100,
+                };
+                return [s1, s2];
+              });
+            } else {
+              setIsLastStage(true);
+            }
+
+            if (taggedFiles.length > 0) {
+              const defaultFile =
+                taggedFiles.find((f) => f.name === 'START_HERE.md') ||
+                taggedFiles.find((f) => f.name === 'README.md') ||
+                taggedFiles[0];
+              setActiveFile(defaultFile);
+              setOpenFiles([defaultFile]);
+            }
+
+            setIsPasswordModalOpen(false);
+            setLoading(false);
+            return;
+          } else {
+            // Stage N > 1: get the inner zip blob stored from previous stage extraction
+            stageBlob = nextStageZipBlobsRef.current[stageNum];
+
+            // If not directly present in ref (e.g. page refreshed into Stage N), replay extraction from stage 1
+            if (!stageBlob) {
+              let currentBlob = tokenArchive;
+              for (let s = 1; s < stageNum; s++) {
+                const sPass = unlockedStagePasswordsRef.current[s] || (s === 1 ? undefined : '');
+                const sResult = await extractStageArchiveInBrowser(currentBlob, sPass);
+                if (sResult.nextZipBlob) {
+                  currentBlob = sResult.nextZipBlob;
+                  nextStageZipBlobsRef.current[s + 1] = sResult.nextZipBlob;
+                }
+              }
+              stageBlob = currentBlob;
+            }
+
+            setActiveZipBlob(stageBlob);
+
+            if (!effectivePassword) {
+              setIsPasswordModalOpen(true);
+              setLoading(false);
+              return;
+            }
+
+            try {
+              const result = await extractStageArchiveInBrowser(stageBlob, effectivePassword, 'AI_TUTOR_PROMPT.txt');
+              const taggedFiles = result.files.map((f) => ({ ...f, stageNumber: stageNum }));
+              stageFilesMapRef.current[stageNum] = taggedFiles;
+              setFiles(taggedFiles);
+              setStageFilesMap((prev) => ({ ...prev, [stageNum]: taggedFiles }));
+
+              // Cache validated password
+              unlockedStagePasswordsRef.current = { ...unlockedStagePasswordsRef.current, [stageNum]: effectivePassword };
+              setUnlockedStagePasswords((prev) => {
+                const next = { ...prev, [stageNum]: effectivePassword };
+                try { sessionStorage.setItem('unlocked_stage_passwords', JSON.stringify(next)); } catch {}
+                return next;
+              });
+
+              if (result.hasNextZip && result.nextZipBlob) {
+                nextStageZipBlobsRef.current[stageNum + 1] = result.nextZipBlob;
+                setIsLastStage(false);
+
+                // Add next stage to stages manifest dynamically
+                setStages((prev) => {
+                  const updated = [...prev];
+                  const curIdx = updated.findIndex((s) => s.stageNumber === stageNum);
+                  if (curIdx >= 0) {
+                    updated[curIdx] = {
+                      ...updated[curIdx],
+                      title: result.stageTitle || `Stage ${stageNum}`,
+                      isPasswordProtected: false,
+                      hasNextStage: true,
+                    };
+                  } else {
+                    updated.push({
+                      stageNumber: stageNum,
+                      title: result.stageTitle || `Stage ${stageNum}`,
+                      isPasswordProtected: false,
+                      allowedCopyFilename: 'AI_TUTOR_PROMPT.txt',
+                      points: 100,
+                      hasNextStage: true,
+                    });
+                  }
+
+                  if (!updated.some((s) => s.stageNumber === stageNum + 1)) {
+                    updated.push({
+                      stageNumber: stageNum + 1,
+                      title: `Stage ${stageNum + 1}`,
+                      isPasswordProtected: true,
+                      allowedCopyFilename: 'AI_TUTOR_PROMPT.txt',
+                      points: 100,
+                    });
+                  }
+                  return updated.sort((a, b) => a.stageNumber - b.stageNumber);
+                });
+              } else {
+                // No further zip found: THIS IS THE LAST STAGE!
+                setIsLastStage(true);
+                setStages((prev) =>
+                  prev.map((s) =>
+                    s.stageNumber === stageNum
+                      ? {
+                          ...s,
+                          title: result.stageTitle || `Stage ${stageNum} (Final)`,
+                          isPasswordProtected: false,
+                          isLastStage: true,
+                          hasNextStage: false,
+                        }
+                      : s
+                  )
+                );
+              }
+
+              if (taggedFiles.length > 0) {
+                const defaultFile =
+                  taggedFiles.find((f) => f.name === 'README.md') ||
+                  taggedFiles.find((f) => f.name === 'START_HERE.md') ||
+                  taggedFiles[0];
+                setActiveFile(defaultFile);
+                setOpenFiles([defaultFile]);
+              }
+
+              setIsPasswordModalOpen(false);
+              setLoading(false);
+              return;
+            } catch (zipErr: any) {
+              if (zipErr instanceof ZipEngineError) {
+                if (zipErr.code === 'PASSWORD_REQUIRED' || zipErr.code === 'INVALID_PASSWORD') {
+                  setIsPasswordModalOpen(true);
+                  if (effectivePassword) setPasswordModalError('Incorrect archive password. Please try again.');
+                  setLoading(false);
+                  return;
+                }
+              }
+              throw zipErr;
+            }
+          }
+        }
+      } catch (err: any) {
+        setError(err.message || 'Failed to load stage archive');
+      } finally {
+        loadingStageRef.current = null;
+        setLoading(false);
+      }
+    },
+    [fetchTokenArchive]
+  );
+
+  // Real-time listener for administrative disqualification & unblock / reinstatement
   useEffect(() => {
     if (!user?.id) return;
 
@@ -221,7 +606,42 @@ function ArenaContent() {
           setIsDisqualified(false);
           setDisqualifyReason(null);
           setPasswordModalError(null);
-          setUser((prev) => (prev ? { ...prev, is_disqualified: false, role: 'participant', is_flagged: false } : prev));
+          setIsUnlockModalOpen(false);
+          setIsCompleteModalOpen(false);
+          setIsLastStage(false);
+
+          // Reset stored passwords and RAM file cache
+          unlockedStagePasswordsRef.current = {};
+          setUnlockedStagePasswords({});
+          try {
+            sessionStorage.removeItem('unlocked_stage_passwords');
+          } catch {}
+
+          stageFilesMapRef.current = {};
+          setStageFilesMap({});
+          nextStageZipBlobsRef.current = {};
+          setActiveFile(null);
+          setOpenFiles([]);
+
+          // Start from beginning: Stage 1 with Score 0
+          setUser((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  is_disqualified: false,
+                  role: 'participant',
+                  is_flagged: false,
+                  current_stage: 1,
+                  total_score: 0,
+                  is_completed: false,
+                  completed_at: null,
+                }
+              : prev
+          );
+
+          setSelectedStageNumber(1);
+          loadingStageRef.current = null;
+          void loadStage(1);
         }
       })
       .subscribe();
@@ -229,214 +649,15 @@ function ArenaContent() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [user?.id]);
+  }, [user?.id, loadStage]);
 
-  // 2. Fetch stage manifest and download ZIP to RAM
-  const loadStage = useCallback(
-    async (stageNum: number, providedPassword?: string) => {
-      if (!token) return;
-
-      // Check if files for this stage are already decoded and cached in RAM
-      if (stageFilesMap[stageNum] && stageFilesMap[stageNum].length > 0) {
-        const cachedFiles = stageFilesMap[stageNum];
-        setFiles(cachedFiles);
-        if (cachedFiles.length > 0) {
-          setActiveFile(cachedFiles[0]);
-          setOpenFiles((prev) => (prev.some((f) => f.path === cachedFiles[0].path) ? prev : [...prev, cachedFiles[0]]));
-        }
-        setIsPasswordModalOpen(false);
-        setPasswordModalError(null);
-        setLoading(false);
-        return;
-      }
-
-      setLoading(true);
-      setError(null);
-      setPasswordModalError(null);
-
-      const effectivePassword = providedPassword || unlockedStagePasswords[stageNum] || undefined;
-
-      try {
-        // Fetch 60-second presigned GET URL & sanitized quiz questions
-        const accessRes = await fetch('/api/stage/access-zip', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ accessToken: token, stageNumber: stageNum }),
-        });
-
-        const accessData = await accessRes.json();
-        if (!accessRes.ok) {
-          // If contest is in draft, don't set fatal error; DraftArenaLock will handle UI
-          if (accessData.error?.includes('DRAFT')) {
-            setLoading(false);
-            return;
-          }
-          throw new Error(accessData.error || `Unable to access Stage ${stageNum}`);
-        }
-
-        setAllowedCopyFilename(accessData.allowedCopyFilename || '');
-
-        // Fetch binary archive directly from Supabase Storage into browser RAM & cache locally
-        let blob: Blob;
-        try {
-          const storageRes = await fetch(accessData.downloadUrl);
-          if (!storageRes.ok) {
-            throw new Error('Failed to download stage archive from storage');
-          }
-          blob = await storageRes.blob();
-          setActiveZipBlob(blob);
-          void saveStageArchive(stageNum, blob, {
-            title: accessData.title,
-            allowedCopyFilename: accessData.allowedCopyFilename,
-          });
-
-          // Background prefetch next stage archive so contestants can play uninterrupted even if connection drops
-          if (typeof navigator !== 'undefined' && navigator.onLine) {
-            const nextStageNum = stageNum + 1;
-            void (async () => {
-              try {
-                const cachedNext = await getCachedStageArchive(nextStageNum);
-                if (!cachedNext) {
-                  const nextRes = await fetch('/api/stage/access-zip', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ accessToken: token, stageNumber: nextStageNum }),
-                  });
-                  if (nextRes.ok) {
-                    const nextData = await nextRes.json();
-                    if (nextData.downloadUrl) {
-                      const nextStoreRes = await fetch(nextData.downloadUrl);
-                      if (nextStoreRes.ok) {
-                        const nextBlob = await nextStoreRes.blob();
-                        await saveStageArchive(nextStageNum, nextBlob, {
-                          title: nextData.title,
-                          allowedCopyFilename: nextData.allowedCopyFilename,
-                        });
-                      }
-                    }
-                  }
-                }
-              } catch {}
-            })();
-          }
-        } catch (downloadErr) {
-          const cached = await getCachedStageArchive(stageNum);
-          if (cached?.blob) {
-            blob = cached.blob;
-            setActiveZipBlob(blob);
-          } else {
-            throw downloadErr;
-          }
-        }
-
-        // Decompress strictly in memory
-        try {
-          const extractedFiles = await extractZipInBrowser(
-            blob,
-            effectivePassword,
-            accessData.allowedCopyFilename
-          );
-
-          const taggedFiles = extractedFiles.map((f) => ({ ...f, stageNumber: stageNum }));
-          setFiles(taggedFiles);
-          setStageFilesMap((prev) => ({ ...prev, [stageNum]: taggedFiles }));
-
-          if (effectivePassword) {
-            setUnlockedStagePasswords((prev) => {
-              const next = { ...prev, [stageNum]: effectivePassword };
-              try {
-                sessionStorage.setItem('unlocked_stage_passwords', JSON.stringify(next));
-              } catch {}
-              return next;
-            });
-          }
-
-          if (taggedFiles.length > 0) {
-            const defaultFile =
-              taggedFiles.find((f) => f.name.toLowerCase() === accessData.allowedCopyFilename?.toLowerCase()) ||
-              taggedFiles.find((f) => f.type === 'markdown' || f.type === 'text') ||
-              taggedFiles[0];
-            setActiveFile(defaultFile);
-            setOpenFiles((prev) => {
-              if (prev.some((f) => f.path === defaultFile.path)) return prev;
-              return [...prev, defaultFile];
-            });
-          } else {
-            setActiveFile(null);
-            setOpenFiles([]);
-          }
-
-          setIsPasswordModalOpen(false);
-
-          // Update stages manifest list
-          setStages((prev) => {
-            const exists = prev.some((s) => s.stageNumber === stageNum);
-            if (!exists) {
-              return [
-                ...prev,
-                {
-                  stageNumber: stageNum,
-                  title: accessData.title,
-                  isPasswordProtected: accessData.isPasswordProtected,
-                  allowedCopyFilename: accessData.allowedCopyFilename,
-                  points: accessData.points,
-                },
-              ].sort((a, b) => a.stageNumber - b.stageNumber);
-            }
-            return prev.map((s) =>
-              s.stageNumber === stageNum
-                ? {
-                    ...s,
-                    title: accessData.title || s.title,
-                    isPasswordProtected: accessData.isPasswordProtected,
-                    allowedCopyFilename: accessData.allowedCopyFilename || s.allowedCopyFilename,
-                    points: accessData.points || s.points,
-                  }
-                : s
-            );
-          });
-        } catch (zipErr: any) {
-          if (zipErr instanceof ZipEngineError) {
-            if (zipErr.code === 'PASSWORD_REQUIRED' || zipErr.code === 'INVALID_PASSWORD') {
-              setIsPasswordModalOpen(true);
-              if (effectivePassword) {
-                setPasswordModalError('Incorrect archive password. Please try again.');
-              }
-              return;
-            }
-          }
-          throw zipErr;
-        }
-      } catch (err: any) {
-        setError(err.message || 'Failed to load stage archive');
-      } finally {
-        setLoading(false);
-      }
-    },
-    [token, stageFilesMap, unlockedStagePasswords]
-  );
-
-  // Trigger stage loading when user or selected stage changes
+  // Trigger stage loading when user, token, or selected stage changes
   useEffect(() => {
     if (status === 'DRAFT') return;
     if (user && token && selectedStageNumber) {
-      if (stageFilesMap[selectedStageNumber] && stageFilesMap[selectedStageNumber].length > 0) {
-        setFiles(stageFilesMap[selectedStageNumber]);
-      } else {
-        loadStage(selectedStageNumber, unlockedStagePasswords[selectedStageNumber]);
-      }
+      loadStage(selectedStageNumber);
     }
-  }, [user, token, selectedStageNumber, status, loadStage, stageFilesMap, unlockedStagePasswords]);
-
-  // Seamless auto-reload when contest status updates from DRAFT to LIVE or FROZEN without login prompt
-  useEffect(() => {
-    if (status === 'LIVE' || status === 'FROZEN') {
-      setError(null);
-      if (user && token && selectedStageNumber && files.length === 0) {
-        loadStage(selectedStageNumber, unlockedStagePasswords[selectedStageNumber]);
-      }
-    }
-  }, [status, user, token, selectedStageNumber, files.length, loadStage, unlockedStagePasswords]);
+  }, [user?.id, token, selectedStageNumber, status, loadStage]);
 
   // Handler for password modal submit
   const handlePasswordSubmit = async (password: string) => {
@@ -449,10 +670,12 @@ function ArenaContent() {
       );
 
       const taggedFiles = extractedFiles.map((f) => ({ ...f, stageNumber: selectedStageNumber }));
+      stageFilesMapRef.current[selectedStageNumber] = taggedFiles;
       setFiles(taggedFiles);
       setStageFilesMap((prev) => ({ ...prev, [selectedStageNumber]: taggedFiles }));
 
       // Cache password so it never asks again!
+      unlockedStagePasswordsRef.current = { ...unlockedStagePasswordsRef.current, [selectedStageNumber]: password };
       setUnlockedStagePasswords((prev) => {
         const next = { ...prev, [selectedStageNumber]: password };
         try {
@@ -494,6 +717,7 @@ function ArenaContent() {
     }
 
     // Cache the verified password immediately so it never prompts again
+    unlockedStagePasswordsRef.current = { ...unlockedStagePasswordsRef.current, [nextStageNumber]: password };
     setUnlockedStagePasswords((prev) => {
       const next = { ...prev, [nextStageNumber]: password };
       try {
@@ -509,6 +733,94 @@ function ArenaContent() {
 
   if (isDisqualified || user?.role === 'disqualified' || user?.is_disqualified) {
     return <DisqualifiedScreen user={user} reason={disqualifyReason} />;
+  }
+
+  // CONTEST COMPLETED SCREEN: Lock stats and throw contestant out of arena editor
+  if (user?.is_completed) {
+    return (
+      <>
+        <ContestCompletedScreen
+          user={user}
+          totalStages={stages.length}
+          onOpenLeaderboard={() => setIsLeaderboardOpen(true)}
+          onLogout={async () => {
+            if (token) { try { await clearTokenArchive(token); } catch {} }
+            tokenArchiveBlobRef.current = null;
+            stageFilesMapRef.current = {};
+            await clearContestantSession();
+            router.push('/');
+          }}
+        />
+
+        {/* Live Leaderboard Modal */}
+        <LiveLeaderboard
+          isOpen={isLeaderboardOpen}
+          onClose={() => setIsLeaderboardOpen(false)}
+          currentUserId={user?.id}
+          currentUserToken={token}
+          contestStatus={status}
+        />
+      </>
+    );
+  }
+
+
+  // ACCOUNT MISMATCH SCREEN: Strict security barrier when direct URL token does not match user account
+  if (accountMismatch) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen p-4 bg-app-bg text-app-text font-sans selection:bg-emerald-500/20">
+        <div className="p-6 sm:p-8 max-w-md w-full bg-app-surface border border-rose-500/35 rounded-3xl shadow-[0_20px_50px_rgba(0,0,0,0.5)] text-center space-y-4">
+          <div className="w-14 h-14 rounded-2xl bg-rose-500/10 border border-rose-500/25 flex items-center justify-center text-rose-500 mx-auto shadow-xs">
+            <ShieldAlert className="w-7 h-7" />
+          </div>
+
+          <div>
+            <h2 className="text-lg sm:text-xl font-bold tracking-tight text-app-text">
+              Access Denied
+            </h2>
+            <p className="text-xs text-rose-500 dark:text-rose-400 mt-1 font-medium leading-relaxed">
+              {accountMismatch.error}
+            </p>
+          </div>
+
+          <div className="p-3.5 rounded-2xl bg-app-bg/70 border border-app-border text-left space-y-2 text-xs">
+            <div className="flex justify-between items-center">
+              <span className="text-[11px] text-app-subtext">Logged-In Account:</span>
+              <span className="font-mono font-bold text-app-text">{accountMismatch.sessionEmail}</span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="text-[11px] text-app-subtext">Target Token:</span>
+              <span className="font-mono font-bold text-rose-500">{accountMismatch.token}</span>
+            </div>
+          </div>
+
+          <p className="text-[11px] text-app-subtext leading-relaxed">
+            This room token is not registered for your currently logged-in account. Please switch to the account this token was generated for, or enter your own team code.
+          </p>
+
+          <div className="space-y-2 pt-2">
+            <button
+              onClick={async () => {
+                await clearContestantSession();
+                router.replace(`/?token=${encodeURIComponent(accountMismatch.token)}&loginRequired=true`);
+              }}
+              className="w-full py-2.5 px-4 rounded-xl bg-app-accent text-app-bg font-bold text-xs hover:opacity-95 transition-all cursor-pointer shadow-xs flex items-center justify-center space-x-2"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              <span>Log In with Matching Account</span>
+            </button>
+
+            <button
+              onClick={() => router.push('/')}
+              className="w-full py-2 px-4 rounded-xl border border-app-border bg-app-surface hover:bg-app-hover text-app-subtext hover:text-app-text text-xs font-semibold transition-all cursor-pointer flex items-center justify-center space-x-1.5"
+            >
+              <ArrowLeft className="w-3.5 h-3.5" />
+              <span>Enter Your Team Code</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   if (status === 'DRAFT') {
@@ -559,7 +871,11 @@ function ArenaContent() {
           allowedCopyFilename={allowedCopyFilename}
           loading={loading}
           participantName={user?.name || 'Participant'}
+          teamName={user?.team_name}
+          teamSize={user?.team_size}
           totalScore={user?.total_score || 0}
+          isLastStage={isLastStage}
+          onOpenCompleteModal={() => setIsCompleteModalOpen(true)}
           contestStatus={status}
           unreadBroadcastCount={unreadCount}
           onOpenBroadcastDrawer={() => setIsBroadcastDrawerOpen(true)}
@@ -596,8 +912,11 @@ function ArenaContent() {
           }}
           onOpenUnlockModal={() => setIsUnlockModalOpen(true)}
           onOpenLeaderboard={() => setIsLeaderboardOpen(true)}
-          onLogout={() => {
-            localStorage.removeItem('participant_token');
+          onLogout={async () => {
+            if (token) { try { await clearTokenArchive(token); } catch {} }
+            tokenArchiveBlobRef.current = null;
+            stageFilesMapRef.current = {};
+            await clearContestantSession();
             router.push('/');
           }}
         />
@@ -610,6 +929,8 @@ function ArenaContent() {
           nextStageTitle={`Stage ${selectedStageNumber + 1}`}
           points={selectedStage?.points || 100}
           accessToken={token}
+          nextStageZipBlob={nextStageZipBlobsRef.current[selectedStageNumber + 1] || null}
+          tokenArchiveBlob={usingTokenArchive ? tokenArchiveBlob : undefined}
           onClose={() => setIsUnlockModalOpen(false)}
           onUnlockSuccess={handleUnlockSuccess}
         />

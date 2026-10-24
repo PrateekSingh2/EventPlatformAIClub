@@ -1,6 +1,6 @@
 import { ZipReader, BlobReader, TextWriter, Uint8ArrayWriter } from '@zip.js/zip.js';
 import * as XLSX from 'xlsx';
-import { ParsedFile, SheetData } from './types';
+import { ParsedFile, SheetData, ExtractedStageResult, PreflightValidationResult } from './types';
 
 export class ZipEngineError extends Error {
   code: 'PASSWORD_REQUIRED' | 'INVALID_PASSWORD' | 'EXTRACTION_FAILED';
@@ -12,83 +12,146 @@ export class ZipEngineError extends Error {
   }
 }
 
+const TEXT_EXTENSIONS = new Set([
+  'txt', 'md', 'json', 'py', 'js', 'ts', 'jsx', 'tsx', 'html', 'css',
+  'log', 'patch', 'diff', 'sql', 'env', 'sh', 'bash', 'yml', 'yaml',
+  'ini', 'conf', 'cfg', 'xml', 'prompt', 'toml', 'properties'
+]);
+
 /**
- * Extracts a ZIP archive strictly in-memory within the client's browser RAM.
- * No data is written to the user's hard drive or persistent disk storage.
- *
- * @param zipBlob The raw binary ZIP Blob fetched from Supabase Storage Signed GET URL
- * @param password Optional password for AES / ZipCrypto encrypted entries
- * @param allowedCopyFilename Whitelisted filename permitted for clipboard copy operations
+ * Computes a clean relative path for a file inside a stage archive.
+ * Automatically strips root archive wrapper directories (e.g. "Chakravyuh_Case_Study_02/")
+ * and stage folder prefixes (e.g. "STAGE_01/", "STAGE_02/", "BONUS_11/") so files
+ * inside folders like "evidence/pager_feed.txt" are cleanly organized.
  */
-export async function extractZipInBrowser(
+export function cleanRelativePath(
+  rawFilename: string,
+  allArchivePaths: string[] = []
+): { relativePath: string; folder: string; name: string } {
+  let clean = rawFilename.replace(/\\/g, '/').replace(/^\/+/, '');
+
+  // Check if all entries share a single common root folder (e.g. "Chakravyuh_Case_Study_02/")
+  if (allArchivePaths.length > 0) {
+    const firstSlash = clean.indexOf('/');
+    if (firstSlash > 0) {
+      const candidateRoot = clean.slice(0, firstSlash + 1);
+      const allShare = allArchivePaths.every((p) => {
+        const norm = p.replace(/\\/g, '/').replace(/^\/+/, '');
+        return norm.startsWith(candidateRoot);
+      });
+      if (allShare) {
+        clean = clean.slice(firstSlash + 1);
+      }
+    }
+  }
+
+  // Strip stage wrapper folder if present (e.g. STAGE_01/, STAGE_02/, BONUS_11/)
+  clean = clean.replace(/^(STAGE_\d+|BONUS_\d+|Stage_\d+|bonus_\d+)[/]/i, '');
+
+  const parts = clean.split('/');
+  const name = parts.pop() || clean;
+  const folder = parts.length > 0 ? parts.join('/') : '';
+
+  return {
+    relativePath: clean,
+    folder,
+    name,
+  };
+}
+
+/**
+ * Extracts a stage archive in browser RAM.
+ * - Extracts all stage files (markdown, text, logs, code, spreadsheets)
+ * - Directly preserves and classifies folder hierarchies (e.g. evidence/)
+ * - Identifies any nested stage .zip file and extracts it as a Blob for the next stage
+ * - If no inner .zip exists, marks this stage as the terminal / final level
+ */
+export async function extractStageArchiveInBrowser(
   zipBlob: Blob,
   password?: string,
   allowedCopyFilename: string = ''
-): Promise<ParsedFile[]> {
+): Promise<ExtractedStageResult> {
   try {
     const blobReader = new BlobReader(zipBlob);
     const zipReader = new ZipReader(blobReader, { password });
-    const entries = await zipReader.getEntries();
+    const rawEntries = await zipReader.getEntries();
 
-    const parsedFiles: ParsedFile[] = [];
+    // Filter out OS junk
+    const validEntries = rawEntries.filter(
+      (e) =>
+        !e.directory &&
+        !e.filename.startsWith('__MACOSX/') &&
+        !e.filename.includes('/__MACOSX/') &&
+        !e.filename.includes('.DS_Store') &&
+        !e.filename.endsWith('.DS_Store')
+    );
 
-    for (const entry of entries) {
-      // Skip directory entries and hidden/OS metadata files
-      if (
-        entry.directory ||
-        entry.filename.startsWith('__MACOSX/') ||
-        entry.filename.includes('/.DS_Store') ||
-        entry.filename.endsWith('.DS_Store')
-      ) {
-        continue;
+    const allPaths = validEntries.map((e) => e.filename);
+
+    // 1. Check for nested next-stage zip archive
+    let nextZipEntry: any = null;
+    for (const entry of validEntries) {
+      if (entry.filename.toLowerCase().endsWith('.zip')) {
+        nextZipEntry = entry;
+        break;
       }
+    }
 
-      const basename = entry.filename.split('/').pop() || entry.filename;
-      const lowerBasename = basename.toLowerCase();
+    let nextZipBlob: Blob | undefined;
+    let nextZipFilename: string | undefined;
+
+    if (nextZipEntry) {
+      nextZipFilename = nextZipEntry.filename.split('/').pop() || nextZipEntry.filename;
+      try {
+        const uintWriter = new Uint8ArrayWriter();
+        const nextZipBytes = await (nextZipEntry as any).getData(uintWriter, { password });
+        nextZipBlob = new Blob([nextZipBytes], { type: 'application/zip' });
+      } catch (zipExtractErr: any) {
+        if (
+          zipExtractErr?.message?.toLowerCase().includes('password') ||
+          zipExtractErr?.name === 'ZipCryptoError' ||
+          zipExtractErr?.name === 'AesError'
+        ) {
+          await zipReader.close();
+          throw new ZipEngineError(
+            password ? 'INVALID_PASSWORD' : 'PASSWORD_REQUIRED',
+            'Password required to decrypt nested stage archive.'
+          );
+        }
+        throw zipExtractErr;
+      }
+    }
+
+    // 2. Extract all non-zip files
+    const parsedFiles: ParsedFile[] = [];
+    let detectedStageTitle: string | undefined;
+
+    for (const entry of validEntries) {
+      // Skip the nested zip file from the editor view so it doesn't show as binary noise
+      if (entry === nextZipEntry) continue;
+
+      const { relativePath, folder, name } = cleanRelativePath(entry.filename, allPaths);
+      const lowerBasename = name.toLowerCase();
+      const ext = lowerBasename.split('.').pop() || '';
+
       const isCopyAllowed =
         Boolean(allowedCopyFilename) &&
-        lowerBasename === allowedCopyFilename.trim().toLowerCase();
+        (lowerBasename === allowedCopyFilename.trim().toLowerCase() ||
+          lowerBasename.includes('prompt'));
 
-      // Check if entry requires a password
       if (entry.encrypted && !password) {
         await zipReader.close();
         throw new ZipEngineError(
           'PASSWORD_REQUIRED',
-          `Archive contains encrypted file '${basename}' requiring a decryption password.`
+          `Archive contains encrypted file '${name}' requiring a decryption password.`
         );
       }
 
       try {
-        if (
-          lowerBasename.endsWith('.txt') ||
-          lowerBasename.endsWith('.md') ||
-          lowerBasename.endsWith('.json') ||
-          lowerBasename.endsWith('.py') ||
-          lowerBasename.endsWith('.js') ||
-          lowerBasename.endsWith('.html') ||
-          lowerBasename.endsWith('.css')
-        ) {
-          // Extract text content
-          const textWriter = new TextWriter();
-          const content = await entry.getData(textWriter, { password });
-          const fileType = lowerBasename.endsWith('.md') ? 'markdown' : 'text';
-
-          parsedFiles.push({
-            name: basename,
-            path: entry.filename,
-            type: fileType,
-            size: entry.uncompressedSize,
-            content,
-            isCopyAllowed,
-          });
-        } else if (
-          lowerBasename.endsWith('.xlsx') ||
-          lowerBasename.endsWith('.xls') ||
-          lowerBasename.endsWith('.csv')
-        ) {
-          // Extract spreadsheet binary and parse via SheetJS in RAM
+        if (ext === 'xlsx' || ext === 'xls' || ext === 'csv' || ext === 'tsv') {
+          // Spreadsheet extraction
           const uintWriter = new Uint8ArrayWriter();
-          const uint8Array = await entry.getData(uintWriter, { password });
+          const uint8Array = await (entry as any).getData(uintWriter, { password });
 
           const workbook = XLSX.read(uint8Array, {
             type: 'array',
@@ -103,36 +166,71 @@ export async function extractZipInBrowser(
               raw: false,
             }) as (string | number | boolean | null)[][];
 
-            const rowCount = rawData.length;
-            const columnCount = rawData.reduce(
-              (max, row) => Math.max(max, Array.isArray(row) ? row.length : 0),
-              0
-            );
-
             return {
               sheetName,
               data: rawData,
-              rowCount,
-              columnCount,
+              rowCount: rawData.length,
+              columnCount: rawData.reduce(
+                (max, row) => Math.max(max, Array.isArray(row) ? row.length : 0),
+                0
+              ),
             };
           });
 
+          // For CSV / TSV, also extract plain text content for source inspection
+          let rawText: string | undefined;
+          if (ext === 'csv' || ext === 'tsv') {
+            try {
+              const decoder = new TextDecoder('utf-8');
+              rawText = decoder.decode(uint8Array);
+            } catch {}
+          }
+
           parsedFiles.push({
-            name: basename,
+            name,
             path: entry.filename,
+            relativePath,
+            folder,
             type: 'spreadsheet',
             size: entry.uncompressedSize,
             sheets,
+            content: rawText,
+            isCopyAllowed,
+          });
+        } else if (TEXT_EXTENSIONS.has(ext)) {
+          // Text / Code / Log / Markdown
+          const textWriter = new TextWriter();
+          const content = await (entry as any).getData(textWriter, { password });
+          const fileType = ext === 'md' ? 'markdown' : 'text';
+
+          // Extract title if this is README.md or START_HERE.md
+          if (!detectedStageTitle && (name === 'README.md' || name === 'START_HERE.md')) {
+            const firstHeaderMatch = content.match(/^#\s+([^\r\n]+)/m);
+            if (firstHeaderMatch && firstHeaderMatch[1]) {
+              detectedStageTitle = firstHeaderMatch[1].trim();
+            }
+          }
+
+          parsedFiles.push({
+            name,
+            path: entry.filename,
+            relativePath,
+            folder,
+            type: fileType,
+            size: entry.uncompressedSize,
+            content,
             isCopyAllowed,
           });
         } else {
           // Generic binary representation
           parsedFiles.push({
-            name: basename,
+            name,
             path: entry.filename,
+            relativePath,
+            folder,
             type: 'binary',
             size: entry.uncompressedSize,
-            content: `[Binary file preview unavailable for ${basename} (${(entry.uncompressedSize / 1024).toFixed(1)} KB)]`,
+            content: `[Binary file: ${name} (${(entry.uncompressedSize / 1024).toFixed(1)} KB)]`,
             isCopyAllowed,
           });
         }
@@ -146,7 +244,7 @@ export async function extractZipInBrowser(
           await zipReader.close();
           throw new ZipEngineError(
             password ? 'INVALID_PASSWORD' : 'PASSWORD_REQUIRED',
-            `Failed to decrypt '${basename}'. ${password ? 'Invalid password provided.' : 'Password required.'}`
+            `Failed to decrypt '${name}'. ${password ? 'Invalid password provided.' : 'Password required.'}`
           );
         }
         throw entryErr;
@@ -154,18 +252,32 @@ export async function extractZipInBrowser(
     }
 
     await zipReader.close();
-    return parsedFiles;
+
+    // Natural sorting: README.md and START_HERE.md first, then folders, then other files
+    parsedFiles.sort((a, b) => {
+      const isTopA = a.name === 'START_HERE.md' ? 2 : a.name === 'README.md' ? 1 : 0;
+      const isTopB = b.name === 'START_HERE.md' ? 2 : b.name === 'README.md' ? 1 : 0;
+      if (isTopA !== isTopB) return isTopB - isTopA;
+      if ((a.folder || '') !== (b.folder || '')) {
+        return (a.folder || '').localeCompare(b.folder || '');
+      }
+      return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+    });
+
+    return {
+      files: parsedFiles,
+      hasNextZip: Boolean(nextZipBlob),
+      nextZipBlob,
+      nextZipFilename,
+      stageTitle: detectedStageTitle,
+    };
   } catch (err: any) {
-    if (err instanceof ZipEngineError) {
-      throw err;
-    }
-    const msg = err?.message?.toLowerCase() || '';
-    if (msg.includes('password') || msg.includes('encrypted')) {
+    if (err instanceof ZipEngineError) throw err;
+    const msg = (err?.message || '').toLowerCase();
+    if (msg.includes('password') || msg.includes('encrypted') || err?.name === 'ZipCryptoError' || err?.name === 'AesError') {
       throw new ZipEngineError(
         password ? 'INVALID_PASSWORD' : 'PASSWORD_REQUIRED',
-        password
-          ? 'Incorrect archive password provided.'
-          : 'This stage archive is password protected.'
+        password ? 'Incorrect archive password provided.' : 'This stage archive is password protected.'
       );
     }
     throw new ZipEngineError('EXTRACTION_FAILED', err?.message || 'Archive decompression failed.');
@@ -173,15 +285,92 @@ export async function extractZipInBrowser(
 }
 
 /**
+ * Legacy wrapper: extracts archive entries to ParsedFile[] array.
+ */
+export async function extractZipInBrowser(
+  zipBlob: Blob,
+  password?: string,
+  allowedCopyFilename: string = ''
+): Promise<ParsedFile[]> {
+  const result = await extractStageArchiveInBrowser(zipBlob, password, allowedCopyFilename);
+  return result.files;
+}
+
+/**
+ * Extracts a single inner (nested) ZIP file entry from an outer ZIP blob.
+ */
+export async function extractInnerZipBlob(
+  outerZipBlob: Blob,
+  innerZipEntryName: string
+): Promise<Blob> {
+  const blobReader = new BlobReader(outerZipBlob);
+  const zipReader = new ZipReader(blobReader);
+  const entries = await zipReader.getEntries();
+
+  const target = entries.find(
+    (e: any) =>
+      !e.directory &&
+      (e.filename.toLowerCase() === innerZipEntryName.toLowerCase() ||
+        e.filename.toLowerCase().endsWith('/' + innerZipEntryName.toLowerCase()) ||
+        e.filename.split('/').pop()?.toLowerCase() === innerZipEntryName.toLowerCase())
+  );
+
+  if (!target) {
+    // If not found by name, pick the first .zip file inside
+    const anyZip = entries.find((e: any) => !e.directory && e.filename.toLowerCase().endsWith('.zip'));
+    if (anyZip) {
+      const uintWriter = new Uint8ArrayWriter();
+      const uint8Array = await (anyZip as any).getData(uintWriter);
+      await zipReader.close();
+      return new Blob([uint8Array], { type: 'application/zip' });
+    }
+
+    await zipReader.close();
+    throw new ZipEngineError(
+      'EXTRACTION_FAILED',
+      `Inner archive "${innerZipEntryName}" not found in outer ZIP.`
+    );
+  }
+
+  const uintWriter = new Uint8ArrayWriter();
+  const uint8Array = await (target as any).getData(uintWriter);
+  await zipReader.close();
+  return new Blob([uint8Array], { type: 'application/zip' });
+}
+
+/**
+ * Lists all file entries inside an outer ZIP blob without extracting.
+ */
+export async function listZipEntries(
+  outerZipBlob: Blob
+): Promise<Array<{ filename: string; directory: boolean; size: number; encrypted: boolean }>> {
+  const blobReader = new BlobReader(outerZipBlob);
+  const zipReader = new ZipReader(blobReader);
+  const entries = await zipReader.getEntries();
+  const result = entries
+    .filter(
+      (e: any) =>
+        !e.filename.startsWith('__MACOSX/') &&
+        !e.filename.includes('/.DS_Store') &&
+        !e.filename.endsWith('.DS_Store')
+    )
+    .map((e: any) => ({
+      filename: e.filename,
+      directory: e.directory,
+      size: e.uncompressedSize || 0,
+      encrypted: e.encrypted || false,
+    }));
+  await zipReader.close();
+  return result;
+}
+
+/**
  * Pre-flight in-browser archive decryption validator for administrators.
- * Verifies that the selected ZIP archive can be parsed, checks encryption status,
- * and tests decompression against the entered password in RAM before upload/save.
  */
 export async function validateArchiveDecryption(
   file: File | Blob,
   zipPassword?: string
-): Promise<import('./types').PreflightValidationResult> {
-  // 1. File existence and size check
+): Promise<PreflightValidationResult> {
   if (!file || file.size === 0) {
     return {
       valid: false,
@@ -193,138 +382,26 @@ export async function validateArchiveDecryption(
     };
   }
 
-  const MAX_SIZE = 104857600; // 100MB
-  if (file.size > MAX_SIZE) {
-    return {
-      valid: false,
-      isEncrypted: false,
-      fileCount: 0,
-      filenames: [],
-      message: `Archive exceeds maximum allowed size of 100MB (${(file.size / (1024 * 1024)).toFixed(1)}MB).`,
-      error: 'FILE_TOO_LARGE',
-    };
-  }
-
   const cleanPassword = zipPassword ? zipPassword.trim() : '';
 
   try {
-    const blobReader = new BlobReader(file);
-    const zipReader = new ZipReader(blobReader, { password: cleanPassword || undefined });
-    const entries = await zipReader.getEntries();
-
-    const validEntries = entries.filter(
-      (e) =>
-        !e.directory &&
-        !e.filename.startsWith('__MACOSX/') &&
-        !e.filename.includes('/.DS_Store') &&
-        !e.filename.endsWith('.DS_Store')
-    );
-
-    if (validEntries.length === 0) {
-      await zipReader.close();
-      return {
-        valid: false,
-        isEncrypted: false,
-        fileCount: 0,
-        filenames: [],
-        message: 'Archive contains no valid readable files or directories.',
-        error: 'NO_VALID_FILES',
-      };
-    }
-
-    const filenames = validEntries.map((e) => e.filename.split('/').pop() || e.filename);
-    const hasEncryptedEntries = validEntries.some((e) => e.encrypted);
-
-    // Case A: Archive has encrypted entries
-    if (hasEncryptedEntries) {
-      if (!cleanPassword) {
-        await zipReader.close();
-        return {
-          valid: false,
-          isEncrypted: true,
-          fileCount: validEntries.length,
-          filenames,
-          message: `Archive contains encrypted files (${validEntries.length} total). Enter the stage decryption password to validate.`,
-          error: 'PASSWORD_REQUIRED',
-        };
-      }
-
-      // Test decrypt the first 3 encrypted entries in RAM to confirm password works
-      const encryptedEntries = validEntries.filter((e) => e.encrypted).slice(0, 3);
-      for (const entry of encryptedEntries) {
-        try {
-          const testWriter = new Uint8ArrayWriter();
-          await (entry as any).getData(testWriter, { password: cleanPassword });
-        } catch (decryptErr: any) {
-          await zipReader.close();
-          const errStr = (decryptErr?.message || '').toLowerCase();
-          const isPassError =
-            errStr.includes('password') ||
-            errStr.includes('aes') ||
-            errStr.includes('zipcrypto') ||
-            decryptErr?.name === 'ZipCryptoError' ||
-            decryptErr?.name === 'AesError';
-
-          return {
-            valid: false,
-            isEncrypted: true,
-            fileCount: validEntries.length,
-            filenames,
-            message: isPassError
-              ? `Decryption Failed: Incorrect password for '${entry.filename.split('/').pop()}'. Try another password.`
-              : `Decryption Failed on '${entry.filename.split('/').pop()}': ${decryptErr?.message || 'Corrupt data.'}`,
-            error: 'INVALID_PASSWORD',
-          };
-        }
-      }
-
-      await zipReader.close();
-      return {
-        valid: true,
-        isEncrypted: true,
-        fileCount: validEntries.length,
-        filenames,
-        message: `Validation Passed: Decryption verified with password '${cleanPassword}' across ${validEntries.length} file(s).`,
-      };
-    }
-
-    // Case B: Archive is unencrypted
-    // Test read the first entry to confirm ZIP integrity
-    try {
-      const testEntry = validEntries[0];
-      const testWriter = new Uint8ArrayWriter();
-      await (testEntry as any).getData(testWriter);
-    } catch (readErr: any) {
-      await zipReader.close();
-      return {
-        valid: false,
-        isEncrypted: false,
-        fileCount: validEntries.length,
-        filenames,
-        message: `Archive read error: ${readErr?.message || 'Corrupt file stream.'}`,
-        error: 'CORRUPT_ARCHIVE',
-      };
-    }
-
-    await zipReader.close();
+    const result = await extractStageArchiveInBrowser(file, cleanPassword || undefined);
     return {
       valid: true,
-      isEncrypted: false,
-      fileCount: validEntries.length,
-      filenames,
-      message: cleanPassword
-        ? `Validation Passed: Archive is unencrypted (contains ${validEntries.length} files). Note: No password is required for this archive.`
-        : `Validation Passed: Archive verified cleanly (contains ${validEntries.length} files, unencrypted).`,
+      isEncrypted: Boolean(cleanPassword),
+      fileCount: result.files.length,
+      filenames: result.files.map((f) => f.relativePath || f.name),
+      message: `Archive successfully validated (${result.files.length} readable files${result.hasNextZip ? ', contains next nested stage ZIP: ' + result.nextZipFilename : ', terminal stage'})`,
     };
   } catch (err: any) {
+    const isPass = err?.code === 'PASSWORD_REQUIRED' || err?.code === 'INVALID_PASSWORD';
     return {
       valid: false,
-      isEncrypted: false,
+      isEncrypted: true,
       fileCount: 0,
       filenames: [],
-      message: `Failed to inspect archive: ${err?.message || 'Invalid ZIP format or corrupt file.'}`,
-      error: 'CORRUPT_ARCHIVE',
+      message: err.message || 'Validation error',
+      error: isPass ? err.code : 'CORRUPT_ARCHIVE',
     };
   }
 }
-

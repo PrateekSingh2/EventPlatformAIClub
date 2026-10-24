@@ -2,10 +2,29 @@ import { NextRequest, NextResponse } from 'next/server';
 import nodemailer from 'nodemailer';
 import { verifyAdminSecret } from '@/lib/auth';
 
+export const dynamic = 'force-dynamic';
+
+interface ParticipantRecipient {
+  name: string;
+  email: string;
+  token: string;
+  team_name?: string;
+  team_size?: string;
+}
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { adminSecret, subject, htmlTemplate, participants } = body;
+    const {
+      adminSecret,
+      subject,
+      htmlTemplate,
+      participants,
+      apiKey: customApiKey,
+      senderEmail: customSenderEmail,
+      senderName: customSenderName,
+      deliveryEngine: customDeliveryEngine, // 'api' | 'smtp' | 'auto'
+    } = body;
 
     const secret = adminSecret || req.headers.get('x-admin-secret');
     if (!verifyAdminSecret(secret)) {
@@ -14,7 +33,7 @@ export async function POST(req: NextRequest) {
 
     if (!Array.isArray(participants) || participants.length === 0) {
       return NextResponse.json(
-        { error: 'participants array is required' },
+        { error: 'participants array is required and must not be empty' },
         { status: 400 }
       );
     }
@@ -26,65 +45,157 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Configuration resolution (environment variables + optional UI overrides)
     const host = process.env.BREVO_SMTP_HOST || 'smtp-relay.brevo.com';
     const port = Number(process.env.BREVO_SMTP_PORT) || 587;
-    const user = process.env.BREVO_SMTP_USER;
-    const pass = process.env.BREVO_SMTP_KEY;
-    const senderEmail = process.env.BREVO_SENDER_EMAIL || 'contests@aiclub.org';
-    const senderName = process.env.BREVO_SENDER_NAME || 'AI Club Contest Master';
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+    const smtpUser = process.env.BREVO_SMTP_USER;
+    const smtpPass = process.env.BREVO_SMTP_KEY;
+    const brevoApiKey = (customApiKey || process.env.BREVO_API_KEY || process.env.BREVO_SMTP_KEY || '').trim();
+    const senderEmail = (customSenderEmail || process.env.BREVO_SENDER_EMAIL || 'contests@aiclub.org').trim();
+    const senderName = (customSenderName || process.env.BREVO_SENDER_NAME || 'AI Club Contest Master').trim();
+    const appUrl = (process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000').replace(/\/$/, '');
 
-    if (!user || !pass) {
+    // Decide delivery engine:
+    // When IP whitelisting is disabled in Brevo, the direct HTTPS REST API v3 (port 443)
+    // is ideal: zero firewall blocking, universal cloud compatibility, and instant response.
+    const hasApiKey = Boolean(brevoApiKey);
+    const hasSmtpCredentials = Boolean(smtpUser && smtpPass);
+
+    if (!hasApiKey && !hasSmtpCredentials) {
       return NextResponse.json(
         {
           error:
-            'Brevo SMTP credentials (BREVO_SMTP_USER or BREVO_SMTP_KEY) not configured on server.',
+            'Brevo credentials not configured. Please provide a Brevo API Key (v3) or SMTP credentials (BREVO_SMTP_USER / BREVO_SMTP_KEY).',
         },
         { status: 500 }
       );
     }
 
-    // Configure pooled transporter to reuse SMTP connections and minimize TLS handshake overhead
-    const transporter = nodemailer.createTransport({
-      host,
-      port,
-      secure: port === 465, // true for 465, false for 587
-      pool: true,
-      maxConnections: 5,
-      maxMessages: Infinity,
-      auth: {
-        user,
-        pass,
-      },
-      connectionTimeout: 4000,
-      greetingTimeout: 4000,
-      socketTimeout: 5000,
-    });
+    const preferRestApi = customDeliveryEngine === 'api' || (customDeliveryEngine !== 'smtp' && hasApiKey);
 
     let sentCount = 0;
     let failedCount = 0;
     const errors: string[] = [];
 
-    // Chunk participants into batches of 25 to guarantee execution completes within Netlify's 10-second limit
+    // Helper: Replace dynamic participant variables in HTML or Subject
+    const substituteVariables = (templateText: string, p: ParticipantRecipient) => {
+      const participantName = (p.name || 'Contestant').trim();
+      const participantToken = (p.token || '').trim();
+      const participantTeam = (p.team_name || participantName).trim();
+      const participantTeamSize = (p.team_size || 'Solo').trim();
+      const accessLink = `${appUrl}/arena?token=${encodeURIComponent(participantToken)}`;
+      const portalLink = `${appUrl}/token?tokenid=${encodeURIComponent(participantToken)}`;
+
+      return templateText
+        .replace(/\{\{name\}\}/gi, participantName)
+        .replace(/\{\{participant_name\}\}/gi, participantName)
+        .replace(/\{\{token\}\}/gi, participantToken)
+        .replace(/\{\{access_token\}\}/gi, participantToken)
+        .replace(/\{\{team_name\}\}/gi, participantTeam)
+        .replace(/\{\{team\}\}/gi, participantTeam)
+        .replace(/\{\{team_size\}\}/gi, participantTeamSize)
+        .replace(/\{\{access_link\}\}/gi, accessLink)
+        .replace(/\{\{arena_url\}\}/gi, accessLink)
+        .replace(/\{\{portal_link\}\}/gi, portalLink)
+        .replace(/\{\{portal_url\}\}/gi, portalLink)
+        .replace(/\{\{email\}\}/gi, p.email);
+    };
+
+    // ── Delivery Option A: Brevo HTTPS REST API v3 ────────────────────────────
+    if (preferRestApi && hasApiKey) {
+      const CHUNK_SIZE = 10;
+      for (let i = 0; i < participants.length; i += CHUNK_SIZE) {
+        const chunk = participants.slice(i, i + CHUNK_SIZE);
+
+        const promises = chunk.map(async (p: ParticipantRecipient) => {
+          const personalizedHtml = substituteVariables(htmlTemplate, p);
+          const personalizedSubject = substituteVariables(subject, p);
+
+          try {
+            const apiRes = await fetch('https://api.brevo.com/v3/smtp/email', {
+              method: 'POST',
+              headers: {
+                'accept': 'application/json',
+                'api-key': brevoApiKey,
+                'content-type': 'application/json',
+              },
+              body: JSON.stringify({
+                sender: { name: senderName, email: senderEmail },
+                to: [{ email: p.email.trim(), name: p.name || 'Contestant' }],
+                subject: personalizedSubject,
+                htmlContent: personalizedHtml,
+              }),
+            });
+
+            const apiData = await apiRes.json().catch(() => ({}));
+
+            if (!apiRes.ok) {
+              const code = apiData?.code || '';
+              const msg = apiData?.message || `Brevo HTTP status ${apiRes.status}`;
+
+              if (msg.toLowerCase().includes('ip not authorized') || code === 'unauthorized') {
+                throw new Error(
+                  `Brevo IP Whitelist restriction active: ${msg}. Please disable IP Whitelisting in Brevo Dashboard > Security > Authorized IPs.`
+                );
+              }
+              throw new Error(msg);
+            }
+
+            return { success: true, email: p.email };
+          } catch (err: any) {
+            return { success: false, email: p.email, error: err.message || 'Transmission failed' };
+          }
+        });
+
+        const results = await Promise.all(promises);
+        for (const res of results) {
+          if (res.success) {
+            sentCount++;
+          } else {
+            failedCount++;
+            errors.push(`Failed for ${res.email}: ${res.error}`);
+          }
+        }
+      }
+
+      return NextResponse.json({
+        engine: 'brevo-rest-api-v3',
+        total: participants.length,
+        sent: sentCount,
+        failed: failedCount,
+        errors: errors.slice(0, 10),
+      });
+    }
+
+    // ── Delivery Option B: Nodemailer Pooled SMTP Relay ───────────────────────
+    const transporter = nodemailer.createTransport({
+      host,
+      port,
+      secure: port === 465,
+      pool: true,
+      maxConnections: 5,
+      maxMessages: Infinity,
+      auth: {
+        user: smtpUser!,
+        pass: smtpPass!,
+      },
+      connectionTimeout: 5000,
+      greetingTimeout: 5000,
+      socketTimeout: 8000,
+    });
+
     const CHUNK_SIZE = 25;
     for (let i = 0; i < participants.length; i += CHUNK_SIZE) {
       const chunk = participants.slice(i, i + CHUNK_SIZE);
 
-      const sendPromises = chunk.map(async (p: { name: string; email: string; token: string }) => {
-        const participantName = p.name || 'Contestant';
-        const participantToken = p.token || '';
-        const accessLink = `${appUrl}/arena?token=${encodeURIComponent(participantToken)}`;
-
-        // Replace template variables
-        const personalizedHtml = htmlTemplate
-          .replace(/\{\{name\}\}/g, participantName)
-          .replace(/\{\{token\}\}/g, participantToken)
-          .replace(/\{\{access_link\}\}/g, accessLink);
+      const sendPromises = chunk.map(async (p: ParticipantRecipient) => {
+        const personalizedHtml = substituteVariables(htmlTemplate, p);
+        const personalizedSubject = substituteVariables(subject, p);
 
         return transporter.sendMail({
           from: `"${senderName}" <${senderEmail}>`,
-          to: p.email,
-          subject: subject.replace(/\{\{name\}\}/g, participantName),
+          to: p.email.trim(),
+          subject: personalizedSubject,
           html: personalizedHtml,
         });
       });
@@ -97,26 +208,25 @@ export async function POST(req: NextRequest) {
           sentCount++;
         } else {
           failedCount++;
-          errors.push(
-            `Failed for ${chunk[j].email}: ${res.reason?.message || 'SMTP transmission error'}`
-          );
+          const errReason = res.reason?.message || 'SMTP transmission error';
+          errors.push(`Failed for ${chunk[j].email}: ${errReason}`);
         }
       }
     }
 
-    // Close the pooled transporter connections cleanly
     transporter.close();
 
     return NextResponse.json({
+      engine: 'brevo-smtp-pooled',
       total: participants.length,
       sent: sentCount,
       failed: failedCount,
-      errors: errors.slice(0, 10), // return top 10 errors if any
+      errors: errors.slice(0, 10),
     });
   } catch (error: any) {
     console.error('[API POST /api/brevo/send error]:', error);
     return NextResponse.json(
-      { error: error.message || 'Failed to dispatch emails via Brevo SMTP' },
+      { error: error.message || 'Failed to dispatch emails via Brevo' },
       { status: 500 }
     );
   }
