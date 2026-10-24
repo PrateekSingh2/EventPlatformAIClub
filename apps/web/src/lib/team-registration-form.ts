@@ -126,6 +126,29 @@ export function parseTeamRegistrationBody(body: unknown):
     if (err) return { ok: false, error: err };
   }
 
+  for (let i = 1; i < 4; i++) {
+    if (!isMemberEmpty(slots[i]) && isMemberEmpty(slots[i - 1])) {
+      return { ok: false, error: `Complete member ${i} before member ${i + 1}.` };
+    }
+  }
+
+  const enrollSeen = new Set<string>();
+  const emailSeen = new Set<string>();
+  for (let i = 0; i < 4; i++) {
+    const member = slots[i];
+    if (isMemberEmpty(member)) continue;
+    const enrollKey = member.enrollment_number.trim().toLowerCase();
+    const emailKey = member.email.trim().toLowerCase();
+    if (enrollSeen.has(enrollKey)) {
+      return { ok: false, error: 'Duplicate enrollment number within this team.' };
+    }
+    if (emailSeen.has(emailKey)) {
+      return { ok: false, error: 'Duplicate email within this team.' };
+    }
+    enrollSeen.add(enrollKey);
+    emailSeen.add(emailKey);
+  }
+
   const members: TeamMemberPayload[] = slots
     .map((m, i) => ({ slot: i + 1, ...m }))
     .filter((m) => m.slot === 1 || !isMemberEmpty(m));

@@ -556,6 +556,10 @@ export function BrevoStudioTab({ adminSecret }: BrevoStudioTabProps) {
       if (!res.ok) {
         throw new Error(data.error || 'SMTP/API dispatch failed');
       }
+      if (!data.sent || data.sent < 1) {
+        const detail = data.errors?.[0] || 'No messages were accepted by Brevo.';
+        throw new Error(detail);
+      }
 
       setProgressResult(data);
     } catch (err: any) {

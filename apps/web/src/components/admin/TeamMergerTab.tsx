@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   GitMerge,
   Loader2,
@@ -51,13 +51,17 @@ export function TeamMergerTab({ adminSecret }: TeamMergerTabProps) {
   const [submissions, setSubmissions] = useState<TeamSubmission[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [autoMerge, setAutoMerge] = useState(false);
+  const [autoMerge, setAutoMerge] = useState(() =>
+    typeof window !== 'undefined' ? readStoredAutoMerge() : false
+  );
   const [manualGroupMap, setManualGroupMap] = useState<Map<string, string>>(new Map());
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [previewGroup, setPreviewGroup] = useState<MergeGroup | null>(null);
   const [excludedOptOutCount, setExcludedOptOutCount] = useState(0);
+  const fetchGeneration = useRef(0);
 
   const fetchSubmissions = useCallback(async () => {
+    const generation = ++fetchGeneration.current;
     try {
       setLoading(true);
       setError(null);
@@ -65,7 +69,8 @@ export function TeamMergerTab({ adminSecret }: TeamMergerTabProps) {
         headers: { 'x-admin-secret': adminSecret },
       });
       const data = await res.json();
-      if (!res.ok) {
+      if (generation !== fetchGeneration.current) return;
+      if (!res.ok || data.error) {
         setError(data.error || 'Failed to load submissions');
         setSubmissions([]);
         return;
@@ -82,10 +87,6 @@ export function TeamMergerTab({ adminSecret }: TeamMergerTabProps) {
   }, [adminSecret]);
 
   useEffect(() => {
-    setAutoMerge(readStoredAutoMerge());
-  }, []);
-
-  useEffect(() => {
     if (adminSecret) fetchSubmissions();
   }, [adminSecret, fetchSubmissions]);
 
@@ -93,6 +94,7 @@ export function TeamMergerTab({ adminSecret }: TeamMergerTabProps) {
     setAutoMerge((prev) => {
       const next = !prev;
       writeStoredAutoMerge(next);
+      if (next) setManualGroupMap(new Map());
       return next;
     });
   };
@@ -381,8 +383,8 @@ function MemberMiniTable({ members }: { members: TeamMemberPayload[] }) {
           </tr>
         </thead>
         <tbody>
-          {members.map((m) => (
-            <tr key={`${m.slot}-${m.enrollment_number}-${m.email}`} className="border-t border-app-border/40">
+          {members.map((m, idx) => (
+            <tr key={`${idx}-${m.slot}-${m.enrollment_number}-${m.email}`} className="border-t border-app-border/40">
               <td className="pr-2 py-1 font-mono">{m.slot}</td>
               <td className="pr-2 py-1">{m.name}</td>
               <td className="pr-2 py-1 font-mono">{m.enrollment_number}</td>

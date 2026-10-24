@@ -6,9 +6,7 @@ export const dynamic = 'force-dynamic';
 
 export async function GET(req: NextRequest) {
   try {
-    const adminSecret =
-      req.headers.get('x-admin-secret') ||
-      req.nextUrl.searchParams.get('adminSecret');
+    const adminSecret = req.headers.get('x-admin-secret');
 
     if (!verifyAdminSecret(adminSecret)) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -52,12 +50,15 @@ export async function GET(req: NextRequest) {
 
     if (error) {
       console.error('[GET /api/admin/form-submissions]', error.message);
-      return NextResponse.json({ submissions: [], error: error.message }, { status: 200 });
+      return NextResponse.json({ submissions: [], error: error.message }, { status: 503 });
     }
 
     return NextResponse.json({ submissions: data ?? [] });
   } catch (err) {
     console.error('[GET /api/admin/form-submissions]', err);
-    return NextResponse.json({ submissions: [] });
+    return NextResponse.json(
+      { submissions: [], error: 'Failed to load submissions' },
+      { status: 500 }
+    );
   }
 }

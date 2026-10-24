@@ -55,13 +55,20 @@ export default function TeamRegistrationFormPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
-      const data = await res.json();
+      const raw = await res.text();
+      let data: { error?: string; message?: string } = {};
+      try {
+        data = raw ? (JSON.parse(raw) as { error?: string; message?: string }) : {};
+      } catch {
+        data = { error: raw.trim() || 'Submission failed' };
+      }
 
       if (!res.ok) {
         setError(data.error || 'Submission failed');
         return;
       }
 
+      setSquadPromptOpen(false);
       setSuccess(data.message || 'Team merge submitted successfully.');
       setTeamName('');
       setMembers([
@@ -74,7 +81,6 @@ export default function TeamRegistrationFormPage() {
       setError('Network error. Please try again.');
     } finally {
       setSubmitting(false);
-      setSquadPromptOpen(false);
     }
   };
 

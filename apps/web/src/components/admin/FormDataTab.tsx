@@ -45,7 +45,7 @@ export function FormDataTab({ adminSecret }: FormDataTabProps) {
         headers: { 'x-admin-secret': adminSecret },
       });
       const data = await res.json();
-      if (!res.ok) {
+      if (!res.ok || data.error) {
         setError(data.error || 'Failed to load submissions');
         setSubmissions([]);
         return;

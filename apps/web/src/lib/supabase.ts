@@ -37,9 +37,14 @@ let adminInstance: any = null;
 
 export function getSupabaseAdmin(): any {
   if (!adminInstance) {
-    if (!supabaseServiceRoleKey && process.env.NODE_ENV === 'production') {
+    if (!supabaseServiceRoleKey) {
+      if (process.env.NODE_ENV === 'production') {
+        throw new Error(
+          'SUPABASE_SERVICE_ROLE_KEY is required in production for server-side database access.'
+        );
+      }
       console.warn(
-        '[Supabase Admin Warning] SUPABASE_SERVICE_ROLE_KEY is not defined. Server mutations will fail.'
+        '[Supabase Admin Warning] SUPABASE_SERVICE_ROLE_KEY is not defined. Server mutations may fail under RLS.'
       );
     }
     adminInstance = createClient<any>(

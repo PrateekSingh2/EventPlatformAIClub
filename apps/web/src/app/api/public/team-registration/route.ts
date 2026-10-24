@@ -32,7 +32,7 @@ export async function POST(req: NextRequest) {
     if (error) {
       if (error.code === '23505') {
         return NextResponse.json(
-          { error: 'This team name is already merged. Choose another name.' },
+          { error: 'This team name is already registered. Choose another name.' },
           { status: 409 }
         );
       }

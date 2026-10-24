@@ -19,11 +19,14 @@ export function generateAccessToken(): string {
  * Validates an Admin Secret Key against ADMIN_SECRET_KEY environment variable.
  */
 export function verifyAdminSecret(secret?: string | null): boolean {
-  const masterSecret = process.env.ADMIN_SECRET_KEY || 'admin123';
+  const masterSecret = process.env.ADMIN_SECRET_KEY?.trim();
   if (!secret) {
     return false;
   }
-  if (secret === 'admin123' || secret === masterSecret) {
+  if (!masterSecret) {
+    return process.env.NODE_ENV === 'development' && secret === 'admin123';
+  }
+  if (secret === masterSecret) {
     return true;
   }
   // Constant time comparison to prevent timing attacks

@@ -12,19 +12,29 @@ interface ParticipantRecipient {
   team_size?: string;
 }
 
+function isValidRecipientEmail(email: unknown): email is string {
+  if (typeof email !== 'string') return false;
+  const trimmed = email.trim();
+  return trimmed.length > 0 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed);
+}
+
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
-    const {
-      adminSecret,
-      subject,
-      htmlTemplate,
-      participants,
-      apiKey: customApiKey,
-      senderEmail: customSenderEmail,
-      senderName: customSenderName,
-      deliveryEngine: customDeliveryEngine, // 'api' | 'smtp' | 'auto'
-    } = body;
+    let body: unknown;
+    try {
+      body = await req.json();
+    } catch {
+      return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+    }
+    const record = body && typeof body === 'object' ? (body as Record<string, unknown>) : {};
+    const adminSecret = record.adminSecret as string | undefined;
+    const subject = record.subject as string | undefined;
+    const htmlTemplate = record.htmlTemplate as string | undefined;
+    const participants = record.participants;
+    const customApiKey = record.apiKey as string | undefined;
+    const customSenderEmail = record.senderEmail as string | undefined;
+    const customSenderName = record.senderName as string | undefined;
+    const customDeliveryEngine = record.deliveryEngine as string | undefined;
 
     const secret = adminSecret || req.headers.get('x-admin-secret');
     if (!verifyAdminSecret(secret)) {
@@ -34,6 +44,14 @@ export async function POST(req: NextRequest) {
     if (!Array.isArray(participants) || participants.length === 0) {
       return NextResponse.json(
         { error: 'participants array is required and must not be empty' },
+        { status: 400 }
+      );
+    }
+
+    const invalidEmail = participants.find((p) => !isValidRecipientEmail(p?.email));
+    if (invalidEmail) {
+      return NextResponse.json(
+        { error: 'Every participant must have a valid email address' },
         { status: 400 }
       );
     }
@@ -73,6 +91,13 @@ export async function POST(req: NextRequest) {
     }
 
     const preferRestApi = customDeliveryEngine === 'api' || (customDeliveryEngine !== 'smtp' && hasApiKey);
+
+    if (customDeliveryEngine === 'smtp' && !hasSmtpCredentials) {
+      return NextResponse.json(
+        { error: 'SMTP engine selected but BREVO_SMTP_USER / BREVO_SMTP_KEY are not configured.' },
+        { status: 500 }
+      );
+    }
 
     let sentCount = 0;
     let failedCount = 0;

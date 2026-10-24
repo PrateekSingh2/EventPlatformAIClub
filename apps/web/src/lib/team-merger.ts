@@ -1,4 +1,6 @@
-import type { TeamMemberPayload } from '@/lib/team-registration-form';
+import { isMemberComplete, type TeamMemberPayload } from '@/lib/team-registration-form';
+
+const MAX_SQUAD_MEMBERS = 4;
 
 export type TeamSubmission = {
   id: string;
@@ -8,9 +10,14 @@ export type TeamSubmission = {
   created_at: string;
 };
 
-/** Teams eligible for merger: opted in Yes, or legacy rows before opt-in (null). Excludes explicit No. */
+/** Eligible: explicit Yes, or legacy null with room for merger (<4 complete members). Excludes No and full squads. */
 export function filterMergerEligibleSubmissions(submissions: TeamSubmission[]): TeamSubmission[] {
-  return submissions.filter((s) => s.squad_merge_opt_in !== false);
+  return submissions.filter((s) => {
+    if (s.squad_merge_opt_in === false) return false;
+    if (s.squad_merge_opt_in === true) return countFilledMembers(s) < MAX_SQUAD_MEMBERS;
+    const filled = countFilledMembers(s);
+    return filled > 0 && filled < MAX_SQUAD_MEMBERS;
+  });
 }
 
 export type MergeGroup = {
@@ -31,7 +38,7 @@ export function formatMergedTeamName(teamNames: string[]): string {
 }
 
 export function countFilledMembers(sub: TeamSubmission): number {
-  return (sub.members || []).filter((m) => memberIdentityKey(m) !== null || (m.name || '').trim()).length;
+  return (sub.members || []).filter((m) => isMemberComplete(m)).length;
 }
 
 /** One row per person with slots 1…n for merged squad display and export. */
@@ -200,7 +207,12 @@ export function buildMergeGroup(
     }
   }
 
-  const members = normalizeMergedMemberSlots(Array.from(memberByKey.values()));
+  let members = normalizeMergedMemberSlots(Array.from(memberByKey.values()));
+  let reason = matchReason;
+  if (members.length > MAX_SQUAD_MEMBERS) {
+    reason = `${matchReason} (showing first ${MAX_SQUAD_MEMBERS} of ${members.length} members)`;
+    members = members.slice(0, MAX_SQUAD_MEMBERS);
+  }
 
   return {
     id: submissionIds.slice().sort().join('_'),
@@ -208,7 +220,7 @@ export function buildMergeGroup(
     teamNames,
     mergedTeamName: formatMergedTeamName(teamNames),
     members,
-    matchReason,
+    matchReason: reason,
   };
 }
 
@@ -320,7 +332,10 @@ export function buildMergerExportRows(
     return rows;
   }
 
-  for (const group of groups) {
+  const exportGroups =
+    mode === 'merged' ? groups.filter((g) => g.submissionIds.length > 1) : groups;
+
+  for (const group of exportGroups) {
     const label = group.mergedTeamName;
     const sources = group.teamNames.join(', ');
     if (group.members.length === 0) {
