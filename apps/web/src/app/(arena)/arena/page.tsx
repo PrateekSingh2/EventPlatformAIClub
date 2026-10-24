@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState, useCallback, useRef, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
-import { ParsedFile, StageManifest, SanitizedQuizQuestion, User } from '@/lib/types';
+import { ParsedFile, StageManifest, User } from '@/lib/types';
 import {
   extractZipInBrowser,
   extractStageArchiveInBrowser,
@@ -960,12 +960,18 @@ function ArenaContent() {
         {/* Unlock Next Stage Archive Password Modal */}
         <UnlockNextStageModal
           isOpen={isUnlockModalOpen}
-          currentStageNumber={selectedStageNumber}
-          nextStageNumber={selectedStageNumber + 1}
-          nextStageTitle={`Stage ${selectedStageNumber + 1}`}
-          points={selectedStage?.points || 100}
+          currentStageNumber={Math.max(user?.current_stage ?? 1, selectedStageNumber)}
+          nextStageNumber={Math.max(user?.current_stage ?? 1, selectedStageNumber) + 1}
+          nextStageTitle={`Stage ${Math.max(user?.current_stage ?? 1, selectedStageNumber) + 1}`}
+          points={
+            stages.find(
+              (s) => s.stageNumber === Math.max(user?.current_stage ?? 1, selectedStageNumber) + 1
+            )?.points || selectedStage?.points || 100
+          }
           accessToken={token}
-          nextStageZipBlob={nextStageZipBlobs[selectedStageNumber + 1] ?? null}
+          nextStageZipBlob={
+            nextStageZipBlobs[Math.max(user?.current_stage ?? 1, selectedStageNumber) + 1] ?? null
+          }
           tokenArchiveBlob={usingTokenArchive ? tokenArchiveBlob : undefined}
           stagePasswords={unlockedStagePasswords}
           onClose={() => setIsUnlockModalOpen(false)}
@@ -996,6 +1002,17 @@ function ArenaContent() {
           isOpen={isBroadcastDrawerOpen}
           onClose={() => setIsBroadcastDrawerOpen(false)}
           announcements={announcementsHistory}
+        />
+
+        {/* Final Contest Completion Modal — allows participants to submit recovery phrase */}
+        <ContestCompletionModal
+          isOpen={isCompleteModalOpen}
+          totalStages={stages.length}
+          accessToken={token}
+          onClose={() => setIsCompleteModalOpen(false)}
+          onContestComplete={(score) => {
+            setUser((prev) => (prev ? { ...prev, is_completed: true, total_score: score ?? prev.total_score } : null));
+          }}
         />
       </AntiCheatWrapper>
     </>

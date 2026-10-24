@@ -64,6 +64,7 @@ export default function TeamRegistrationFormPage() {
       }
 
       if (!res.ok) {
+        setSquadPromptOpen(false);
         setError(data.error || 'Submission failed');
         return;
       }
@@ -78,6 +79,7 @@ export default function TeamRegistrationFormPage() {
         { ...EMPTY_MEMBER },
       ]);
     } catch {
+      setSquadPromptOpen(false);
       setError('Network error. Please try again.');
     } finally {
       setSubmitting(false);
@@ -228,7 +230,21 @@ export default function TeamRegistrationFormPage() {
               If you choose No, your team will not be included in automatic or manual squad merging.
               If you choose Yes, your team can be merged and receive an assigned 4th member.
             </p>
+            {error && (
+              <div className="mb-4 flex items-start gap-2 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-600 dark:text-rose-400">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span>{error}</span>
+              </div>
+            )}
             <div className="flex flex-col sm:flex-row gap-2">
+              <button
+                type="button"
+                disabled={submitting}
+                onClick={() => setSquadPromptOpen(false)}
+                className="sm:order-first py-3 rounded-xl border border-app-border font-semibold text-sm hover:bg-app-hover disabled:opacity-50"
+              >
+                Cancel
+              </button>
               <button
                 type="button"
                 disabled={submitting}

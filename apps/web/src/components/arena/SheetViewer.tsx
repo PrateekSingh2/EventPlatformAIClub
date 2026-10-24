@@ -34,10 +34,17 @@ function getColumnLabel(index: number): string {
 const isEmpty = (v: unknown) => v === null || v === undefined || v === '';
 
 function compareCells(a: unknown, b: unknown): number {
-  const an = typeof a === 'number' ? a : Number(a);
-  const bn = typeof b === 'number' ? b : Number(b);
-  if (!Number.isNaN(an) && !Number.isNaN(bn)) return an - bn;
-  return String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' });
+  if (typeof a === 'number' && typeof b === 'number') return a - b;
+  if (typeof a === 'number' && (b === '' || b === null || b === undefined)) return 1;
+  if (typeof b === 'number' && (a === '' || a === null || a === undefined)) return -1;
+  const aStr = String(a);
+  const bStr = String(b);
+  const an = Number(aStr);
+  const bn = Number(bStr);
+  if (aStr.trim() !== '' && bStr.trim() !== '' && !Number.isNaN(an) && !Number.isNaN(bn)) {
+    return an - bn;
+  }
+  return aStr.localeCompare(bStr, undefined, { numeric: true, sensitivity: 'base' });
 }
 
 export function SheetViewer({ sheets, filename }: SheetViewerProps) {
@@ -47,8 +54,27 @@ export function SheetViewer({ sheets, filename }: SheetViewerProps) {
   const [active, setActive] = useState<ActiveCell>(null);
   const [columnWidths, setColumnWidths] = useState<Record<number, number>>({});
   const resizingColRef = useRef<{ colIdx: number; startX: number; startWidth: number } | null>(null);
+  const columnResizeListenersRef = useRef<{
+    move: (moveEvent: MouseEvent) => void;
+    up: () => void;
+  } | null>(null);
   const parentRef = useRef<HTMLDivElement>(null);
   const [containerSize, setContainerSize] = useState<{ width: number; height: number }>({ width: 0, height: 0 });
+
+  useEffect(() => {
+    return () => {
+      const listeners = columnResizeListenersRef.current;
+      if (listeners) {
+        window.removeEventListener('mousemove', listeners.move);
+        window.removeEventListener('mouseup', listeners.up);
+        columnResizeListenersRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    setActive(null);
+  }, [searchQuery]);
 
   useEffect(() => {
     if (!parentRef.current) return;
@@ -113,8 +139,10 @@ export function SheetViewer({ sheets, filename }: SheetViewerProps) {
       resizingColRef.current = null;
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
+      columnResizeListenersRef.current = null;
     };
 
+    columnResizeListenersRef.current = { move: handleMouseMove, up: handleMouseUp };
     window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('mouseup', handleMouseUp);
   };
@@ -142,7 +170,6 @@ type CellValue = string | number | boolean | null;
       r = r.filter(({ row }) =>
         row.some((cell) => !isEmpty(cell) && String(cell).toLowerCase().includes(q))
       );
-      return r;
     }
 
     if (sort) {

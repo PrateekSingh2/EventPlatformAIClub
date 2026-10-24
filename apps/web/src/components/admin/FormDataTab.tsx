@@ -203,8 +203,11 @@ export function FormDataTab({ adminSecret }: FormDataTabProps) {
                     </tr>
                   </thead>
                   <tbody>
-                    {((row.members || []) as TeamMemberPayload[]).map((m) => (
-                      <tr key={`${row.id}-${m.slot}`} className="border-b border-app-border/50 last:border-0">
+                    {((row.members || []) as TeamMemberPayload[]).map((m, memberIdx) => (
+                      <tr
+                        key={`${row.id}-${m.slot ?? memberIdx}-${memberIdx}`}
+                        className="border-b border-app-border/50 last:border-0"
+                      >
                         <td className="px-4 py-2.5 font-mono">{m.slot}</td>
                         <td className="px-4 py-2.5">{m.name}</td>
                         <td className="px-4 py-2.5 font-mono">{m.enrollment_number}</td>
@@ -283,7 +286,8 @@ function downloadBlob(blob: Blob, filename: string) {
 }
 
 function csvEscape(value: string | undefined): string {
-  const s = value ?? '';
-  if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+  let s = value ?? '';
+  if (/^[=+\-@]/.test(s)) s = `'${s}`;
+  if (/[",\r\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
   return s;
 }

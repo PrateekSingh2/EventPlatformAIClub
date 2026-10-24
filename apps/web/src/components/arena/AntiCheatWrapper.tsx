@@ -5,7 +5,6 @@ import { enqueueTelemetryPing, flushOfflineTelemetryQueue } from '@/lib/offline-
 import {
   ShieldAlert,
   Maximize2,
-  Lock,
   Tv2,
   AppWindow,
 } from 'lucide-react';
@@ -181,7 +180,7 @@ export function AntiCheatWrapper({
       winY + winH > availTop + availHeight + TOLERANCE;
 
     // E. Screen Details API: if extended displays are active and window is moved
-    const isExtendedMove = isExtended && (isOnSecondaryMonitor || winX !== 0 || winY !== 0 || isOutsideLeft || isOutsideRight);
+    const isExtendedMove = isExtended && (isOnSecondaryMonitor || isOutsideLeft || isOutsideRight);
 
     if (
       isOnSecondaryMonitor ||
@@ -202,7 +201,7 @@ export function AntiCheatWrapper({
     }
 
     return { isViolating: false, reason: '' };
-  }, [sendTelemetryPing]);
+  }, []);
 
   // Continuous monitoring: Screen Details API and window boundary tracking.
   useEffect(() => {
@@ -228,18 +227,21 @@ export function AntiCheatWrapper({
 
     // Event listeners
     window.addEventListener('resize', runCheck);
-    window.addEventListener('mousemove', runCheck);
 
     if (window.screen && (window.screen as any).addEventListener) {
       (window.screen as any).addEventListener('change', runCheck);
     }
 
+    let permissionStatus: { removeEventListener: (type: string, listener: () => void) => void } | null =
+      null;
+
     // Window Management API permission change listener if supported
     if (typeof navigator !== 'undefined' && (navigator as any).permissions?.query) {
       (navigator as any).permissions
         .query({ name: 'window-management' as any })
-        .then((permissionStatus: any) => {
-          permissionStatus.addEventListener('change', runCheck);
+        .then((status: any) => {
+          permissionStatus = status;
+          status.addEventListener('change', runCheck);
         })
         .catch(() => {});
     }
@@ -247,9 +249,11 @@ export function AntiCheatWrapper({
     return () => {
       clearInterval(intervalId);
       window.removeEventListener('resize', runCheck);
-      window.removeEventListener('mousemove', runCheck);
       if (window.screen && (window.screen as any).removeEventListener) {
         (window.screen as any).removeEventListener('change', runCheck);
+      }
+      if (permissionStatus) {
+        permissionStatus.removeEventListener('change', runCheck);
       }
     };
   }, [inspectDisplayAndWindowBounds, sendTelemetryPing]);
@@ -404,7 +408,8 @@ export function AntiCheatWrapper({
         return false;
       }
 
-      if (e.key === 'Meta' || e.key === 'OS') {
+      const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad|iPod/.test(navigator.platform);
+      if (!isMac && (e.key === 'Meta' || e.key === 'OS')) {
         triggerWindowSwitchViolation('Operating system task switch key detected (Windows key).');
       }
 

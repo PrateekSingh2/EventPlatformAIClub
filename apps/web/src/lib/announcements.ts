@@ -2,6 +2,7 @@ import { getSupabaseAdmin } from './supabase';
 import { sendSupabaseBroadcast } from './realtime-broadcast';
 import { Announcement, AnnouncementUrgency } from './types';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 
 declare global {
@@ -9,16 +10,19 @@ declare global {
   var __announcementsHistory: Announcement[] | undefined;
 }
 
-function getCacheFilePath(): string {
-  const tmpDir = path.join(process.cwd(), '.next');
-  if (!fs.existsSync(tmpDir)) {
-    try {
-      fs.mkdirSync(tmpDir, { recursive: true });
-    } catch {
-      // Ignore
+function getCacheFilePath(): string | null {
+  const baseDir =
+    process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME
+      ? os.tmpdir()
+      : path.join(process.cwd(), '.next');
+  try {
+    if (!fs.existsSync(baseDir)) {
+      fs.mkdirSync(baseDir, { recursive: true });
     }
+    return path.join(baseDir, 'announcements-cache.json');
+  } catch {
+    return null;
   }
-  return path.join(tmpDir, 'announcements-cache.json');
 }
 
 function readCache(): Announcement[] {
@@ -27,7 +31,7 @@ function readCache(): Announcement[] {
   }
   try {
     const filePath = getCacheFilePath();
-    if (fs.existsSync(filePath)) {
+    if (filePath && fs.existsSync(filePath)) {
       const data = fs.readFileSync(filePath, 'utf-8');
       const parsed = JSON.parse(data) as Announcement[];
       globalThis.__announcementsHistory = parsed;
@@ -43,9 +47,11 @@ function writeCache(list: Announcement[]): void {
   globalThis.__announcementsHistory = list;
   try {
     const filePath = getCacheFilePath();
-    fs.writeFileSync(filePath, JSON.stringify(list, null, 2), 'utf-8');
+    if (filePath) {
+      fs.writeFileSync(filePath, JSON.stringify(list, null, 2), 'utf-8');
+    }
   } catch {
-    // Ignore
+    // Ignore read-only filesystem on serverless
   }
 }
 

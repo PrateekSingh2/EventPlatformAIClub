@@ -1,8 +1,8 @@
 'use client';
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { User } from '@/lib/types';
-import { Trophy, ShieldCheck, Lock, LogOut, CheckCircle2 } from 'lucide-react';
+import { Trophy, ShieldCheck, Lock, LogOut } from 'lucide-react';
 
 interface ContestCompletedScreenProps {
   user: User | null;
@@ -17,9 +17,15 @@ export function ContestCompletedScreen({
   onOpenLeaderboard,
   onLogout,
 }: ContestCompletedScreenProps) {
-  const completedDate = user?.completed_at
-    ? new Date(user.completed_at).toLocaleString()
-    : new Date().toLocaleString();
+  const [completedDate, setCompletedDate] = useState('Verified');
+
+  useEffect(() => {
+    if (user?.completed_at) {
+      setCompletedDate(new Date(user.completed_at).toLocaleString());
+    } else {
+      setCompletedDate('Verified');
+    }
+  }, [user?.completed_at]);
 
   return (
     <div className="flex flex-col items-center justify-center min-h-screen p-4 sm:p-6 bg-app-bg text-app-text font-sans selection:bg-zinc-800 selection:text-white relative">

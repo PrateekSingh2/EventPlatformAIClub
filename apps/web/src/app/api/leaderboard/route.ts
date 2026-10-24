@@ -10,7 +10,7 @@ export async function GET() {
 
     const { data: users, error } = await supabaseAdmin
       .from('users')
-      .select('id, name, email, role, access_token, team_name, team_size, total_score, current_stage, is_flagged, is_disqualified, is_completed, created_at, updated_at, contest_started_at, stage_timestamps, stage_durations, total_time_seconds, last_stage_completed_at')
+      .select('id, name, email, role, team_name, team_size, total_score, current_stage, is_flagged, is_disqualified, is_completed, created_at, updated_at, contest_started_at, stage_timestamps, stage_durations, total_time_seconds, last_stage_completed_at')
       .eq('role', 'participant')
       .limit(1000);
 

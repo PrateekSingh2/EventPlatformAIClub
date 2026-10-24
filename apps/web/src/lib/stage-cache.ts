@@ -15,10 +15,11 @@ interface CachedStageRecord {
 }
 
 const DB_NAME = 'event-platform-stage-cache';
-const DB_VERSION = 1;
+const DB_VERSION = 3;
 const STORE_NAME = 'stage-archives';
+const TOKEN_ARCHIVE_STORE = 'token-archive';
 
-function openStageCacheDb(): Promise<IDBDatabase> {
+function openContestCacheDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     if (typeof indexedDB === 'undefined') {
       reject(new Error('IndexedDB unavailable'));
@@ -30,10 +31,17 @@ function openStageCacheDb(): Promise<IDBDatabase> {
       if (!db.objectStoreNames.contains(STORE_NAME)) {
         db.createObjectStore(STORE_NAME, { keyPath: 'stageNumber' });
       }
+      if (!db.objectStoreNames.contains(TOKEN_ARCHIVE_STORE)) {
+        db.createObjectStore(TOKEN_ARCHIVE_STORE, { keyPath: 'accessToken' });
+      }
     };
     req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error || new Error('Failed to open stage cache DB'));
+    req.onerror = () => reject(req.error || new Error('Failed to open contest cache DB'));
   });
+}
+
+function openStageCacheDb(): Promise<IDBDatabase> {
+  return openContestCacheDb();
 }
 
 export async function saveStageArchive(
@@ -93,30 +101,8 @@ export async function getCachedStageArchive(
 // Caches the full outer archive ZIP blob (per-token bundle) in IndexedDB.
 // Once cached, all stage unlocking is done client-side without re-downloading.
 
-const TOKEN_ARCHIVE_STORE = 'token-archive';
-const TOKEN_ARCHIVE_DB_VERSION = 3;
-
 function openTokenArchiveDb(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    if (typeof indexedDB === 'undefined') {
-      reject(new Error('IndexedDB unavailable'));
-      return;
-    }
-    const req = indexedDB.open(DB_NAME, TOKEN_ARCHIVE_DB_VERSION);
-    req.onupgradeneeded = () => {
-      const db = req.result;
-      // Ensure legacy stage-archives store is preserved
-      if (!db.objectStoreNames.contains(STORE_NAME)) {
-        db.createObjectStore(STORE_NAME, { keyPath: 'stageNumber' });
-      }
-      // Create new token archive store
-      if (!db.objectStoreNames.contains(TOKEN_ARCHIVE_STORE)) {
-        db.createObjectStore(TOKEN_ARCHIVE_STORE, { keyPath: 'accessToken' });
-      }
-    };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error || new Error('Failed to open token archive DB'));
-  });
+  return openContestCacheDb();
 }
 
 interface CachedTokenArchiveRecord {

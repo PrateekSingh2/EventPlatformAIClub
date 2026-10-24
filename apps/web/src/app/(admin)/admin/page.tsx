@@ -214,7 +214,7 @@ export default function AdminPage() {
     sessionStorage.removeItem('admin_secret');
     setAdminSecret('');
     setIsAuthenticated(false);
-    router.push('/form');
+    router.replace('/admin');
   };
 
   if (checkingAuth) {

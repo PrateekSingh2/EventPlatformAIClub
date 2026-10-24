@@ -903,38 +903,26 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
         lastErrMsg = sdkErr.message || 'SDK upload error';
       }
 
-      // 2. Fallback: Direct fetch with FormData (standard Supabase storage-api endpoint)
+      // 2. Fallback: Raw binary PUT to signed storage URL
       if (!uploadSuccess && presignData.uploadUrl) {
         try {
-          const formData = new FormData();
-          formData.append('', uploadFile);
-          formData.append('cacheControl', '3600');
-
-          const uploadRes = await fetch(presignData.uploadUrl, {
+          const rawUploadRes = await fetch(presignData.uploadUrl, {
             method: 'PUT',
-            body: formData,
+            headers: { 'Content-Type': uploadFile.type || 'application/zip' },
+            body: uploadFile,
           });
-
-          if (uploadRes.ok) {
+          if (rawUploadRes.ok) {
             uploadSuccess = true;
           } else {
-            // 3. Fallback: Raw binary PUT
-            const rawUploadRes = await fetch(presignData.uploadUrl, {
-              method: 'PUT',
-              headers: { 'Content-Type': 'application/zip' },
-              body: uploadFile,
-            });
-            if (rawUploadRes.ok) {
-              uploadSuccess = true;
-            } else {
-              throw new Error(lastErrMsg || `Storage upload failed with status ${uploadRes.status}`);
-            }
+            lastErrMsg = `Storage upload failed with status ${rawUploadRes.status}`;
           }
         } catch (fetchErr: any) {
-          if (!uploadSuccess) {
-            throw new Error(lastErrMsg || fetchErr.message || 'Storage upload failed');
-          }
+          lastErrMsg = fetchErr.message || lastErrMsg;
         }
+      }
+
+      if (!uploadSuccess) {
+        throw new Error(lastErrMsg || 'Storage upload failed');
       }
 
       const savedPath = presignData.storagePath || presignData.s3Key;
@@ -1050,6 +1038,11 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
           type: 'success',
           text: `Contest "${contestTitle}" deployed! Generated and downloaded ${data.tokens?.length || numberOfTeams} unique team tokens in AX-DEMO-2026 format.`,
         });
+
+        if (data.contest?.id) {
+          setActiveEditingContestId(data.contest.id);
+          setMode('edit');
+        }
 
         await fetchContests();
       } else {

@@ -369,7 +369,7 @@ export function InBrowserIDE({
         if (!openFiles.some((f) => f.path === activeFile.path)) {
           setOpenFiles((prev) => [...prev, activeFile]);
         }
-      } else if (!activeFile) {
+      } else {
         setOpenFiles([files[0]]);
         onSelectFile(files[0]);
       }
@@ -389,7 +389,7 @@ export function InBrowserIDE({
       });
       addLog('info', `Focused file: ${activeFile.name} (${activeFile.type})`);
     }
-  }, [activeFile?.path, addLog, setOpenFiles]);
+  }, [activeFile, addLog, setOpenFiles]);
 
   // Auto-scroll active tab into view when active tab changes
   useEffect(() => {
@@ -418,38 +418,39 @@ export function InBrowserIDE({
   };
 
   // Handle closing a tab
-  const handleCloseTab = (fileToClose: ParsedFile, e?: React.MouseEvent) => {
-    if (e) {
-      e.stopPropagation();
-    }
-    const nextOpen = openFiles.filter((f) => f.path !== fileToClose.path);
-    setOpenFiles(nextOpen);
-
-    // If closing the split pane file:
-    if (splitFile?.path === fileToClose.path) {
-      const remainingForSplit = nextOpen.find((f) => f.path !== activeFile?.path);
-      if (remainingForSplit) {
-        setSplitFile(remainingForSplit);
-      } else {
-        setSplitView(false);
-        setSplitFile(null);
-        setActivePane('left');
+  const handleCloseTab = useCallback(
+    (fileToClose: ParsedFile, e?: React.MouseEvent) => {
+      if (e) {
+        e.stopPropagation();
       }
-    }
+      const nextOpen = openFiles.filter((f) => f.path !== fileToClose.path);
+      setOpenFiles(nextOpen);
 
-    // If closing the active tab:
-    if (activeFile?.path === fileToClose.path) {
-      if (nextOpen.length > 0) {
-        const closedIdx = openFiles.findIndex((f) => f.path === fileToClose.path);
-        const newActiveIdx = Math.max(0, Math.min(closedIdx, nextOpen.length - 1));
-        onSelectFile(nextOpen[newActiveIdx]);
-      } else {
-        onSelectFile(null);
-        setSplitView(false);
-        setActivePane('left');
+      if (splitFile?.path === fileToClose.path) {
+        const remainingForSplit = nextOpen.find((f) => f.path !== activeFile?.path);
+        if (remainingForSplit) {
+          setSplitFile(remainingForSplit);
+        } else {
+          setSplitView(false);
+          setSplitFile(null);
+          setActivePane('left');
+        }
       }
-    }
-  };
+
+      if (activeFile?.path === fileToClose.path) {
+        if (nextOpen.length > 0) {
+          const closedIdx = openFiles.findIndex((f) => f.path === fileToClose.path);
+          const newActiveIdx = Math.max(0, Math.min(closedIdx, nextOpen.length - 1));
+          onSelectFile(nextOpen[newActiveIdx]);
+        } else {
+          onSelectFile(null);
+          setSplitView(false);
+          setActivePane('left');
+        }
+      }
+    },
+    [openFiles, splitFile, activeFile, onSelectFile, setOpenFiles]
+  );
 
   const handleCloseAllTabs = () => {
     setOpenFiles([]);
@@ -529,7 +530,7 @@ export function InBrowserIDE({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [toggleSidebar, activeFile, openFiles, handleToggleSplitView]);
+  }, [toggleSidebar, activeFile, openFiles, handleToggleSplitView, handleCloseTab]);
 
   // Close dropdowns when clicking outside
   useEffect(() => {

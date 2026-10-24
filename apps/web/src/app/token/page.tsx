@@ -28,8 +28,20 @@ function TokenRedirectHandler() {
         : '/?loginRequired=true&redirect=/arena';
       router.replace(redirectUrl);
     } else {
-      // User is logged in, redirect straight to arena with token (arena will cross-check account ownership)
       const targetToken = cleanToken || session.assignedToken || '';
+      const hasGeminiKey = Boolean(
+        localStorage.getItem('contest_gemini_api_key')?.trim() ||
+          sessionStorage.getItem('contest_gemini_api_key')?.trim()
+      );
+
+      if (!hasGeminiKey) {
+        const q = targetToken
+          ? `/?token=${encodeURIComponent(targetToken)}&loginRequired=false&needGeminiKey=1&redirect=/arena`
+          : '/?needGeminiKey=1&redirect=/arena';
+        router.replace(q);
+        return;
+      }
+
       if (targetToken) {
         router.replace(`/arena?token=${encodeURIComponent(targetToken)}`);
       } else {

@@ -134,15 +134,31 @@ export function ParticipantImportTab({ adminSecret }: ParticipantImportTabProps)
     setTimeout(() => setCopiedToken(null), 2000);
   };
 
+  const csvCell = (val: unknown): string => {
+    let s = String(val ?? '');
+    if (/^[=+\-@]/.test(s)) s = `'${s}`;
+    if (/[",\r\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+    return s;
+  };
+
   const handleExportCSV = () => {
     if (participants.length === 0) return;
     const origin = typeof window !== 'undefined' ? window.location.origin : '';
 
     const headers = 'Team Name,Team Size,Name,Email,Access Token,Magic Link,Current Stage,Total Score,Status\n';
     const rows = participants
-      .map(
-        (p) =>
-          `"${p.team_name || 'Solo'}","${p.team_size || 'Solo'}","${p.name}","${p.email}","${p.access_token}","${origin}/arena?token=${p.access_token}",${p.current_stage},${p.total_score},"${p.is_disqualified ? 'DISQUALIFIED' : 'ACTIVE'}"`
+      .map((p) =>
+        [
+          csvCell(p.team_name || 'Solo'),
+          csvCell(p.team_size || 'Solo'),
+          csvCell(p.name),
+          csvCell(p.email),
+          csvCell(p.access_token),
+          csvCell(`${origin}/arena?token=${p.access_token}`),
+          csvCell(p.current_stage),
+          csvCell(p.total_score),
+          csvCell(p.is_disqualified ? 'DISQUALIFIED' : 'ACTIVE'),
+        ].join(',')
       )
       .join('\n');
 
@@ -155,12 +171,13 @@ export function ParticipantImportTab({ adminSecret }: ParticipantImportTabProps)
     URL.revokeObjectURL(url);
   };
 
+  const term = search.toLowerCase();
   const filtered = participants.filter(
     (p) =>
-      p.name.toLowerCase().includes(search.toLowerCase()) ||
-      p.email.toLowerCase().includes(search.toLowerCase()) ||
-      p.access_token.toLowerCase().includes(search.toLowerCase()) ||
-      (p.team_name && p.team_name.toLowerCase().includes(search.toLowerCase()))
+      (p.name?.toLowerCase() || '').includes(term) ||
+      (p.email?.toLowerCase() || '').includes(term) ||
+      (p.access_token?.toLowerCase() || '').includes(term) ||
+      (p.team_name?.toLowerCase() || '').includes(term)
   );
 
   return (

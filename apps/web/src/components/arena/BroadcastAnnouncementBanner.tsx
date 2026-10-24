@@ -51,7 +51,7 @@ export function BroadcastAnnouncementBanner({ announcement }: BroadcastAnnouncem
             >
               {config.badge}
             </span>
-            <span className="text-xs sm:text-sm font-medium truncate text-app-text">
+            <span className="text-xs sm:text-sm font-medium truncate">
               {announcement.message}
             </span>
           </div>

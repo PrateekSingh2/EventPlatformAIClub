@@ -2,16 +2,30 @@ import fs from 'fs';
 import path from 'path';
 import { StageTelemetry, TelemetryPingRequest, User } from './types';
 
-function getTelemetryFilePath() {
-  const nextDir = path.join(process.cwd(), '.next');
-  fs.mkdirSync(nextDir, { recursive: true });
-  return path.join(nextDir, 'local-stage-telemetry.json');
+function getTelemetryFilePath(): string | null {
+  try {
+    const nextDir = path.join(process.cwd(), '.next');
+    fs.mkdirSync(nextDir, { recursive: true });
+    return path.join(nextDir, 'local-stage-telemetry.json');
+  } catch {
+    return null;
+  }
+}
+
+function writeTelemetryRecords(records: StageTelemetry[]): void {
+  const filePath = getTelemetryFilePath();
+  if (!filePath) return;
+  try {
+    fs.writeFileSync(filePath, JSON.stringify(records, null, 2), 'utf-8');
+  } catch {
+    // Read-only or serverless filesystem — skip local persistence
+  }
 }
 
 export function readLocalTelemetry(): StageTelemetry[] {
   try {
     const filePath = getTelemetryFilePath();
-    if (!fs.existsSync(filePath)) return [];
+    if (!filePath || !fs.existsSync(filePath)) return [];
     const records = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
     return Array.isArray(records) ? records : [];
   } catch {
@@ -89,7 +103,7 @@ export function recordLocalTelemetryPing(
     is_disqualified: user.is_disqualified || false,
   };
 
-  fs.writeFileSync(getTelemetryFilePath(), JSON.stringify(records, null, 2), 'utf-8');
+  writeTelemetryRecords(records);
 }
 
 export function recordLocalPasswordFailure(user: User, stageNumber: number) {
@@ -148,7 +162,7 @@ export function recordLocalPasswordFailure(user: User, stageNumber: number) {
     is_flagged: user.is_flagged || false,
     is_disqualified: user.is_disqualified || false,
   };
-  fs.writeFileSync(getTelemetryFilePath(), JSON.stringify(records, null, 2), 'utf-8');
+  writeTelemetryRecords(records);
   return { failedAttempts: attempts, cooldownSeconds, excessive: attempts >= 5 };
 }
 
@@ -175,13 +189,13 @@ export function clearLocalPasswordAttemptState(userId: string, stageNumber: numb
   record.password_failed_attempts = 0;
   record.password_cooldown_until = null;
   record.updated_at = new Date().toISOString();
-  fs.writeFileSync(getTelemetryFilePath(), JSON.stringify(records, null, 2), 'utf-8');
+  writeTelemetryRecords(records);
 }
 
 export function resetLocalTelemetryForUser(userId: string) {
   try {
     const records = readLocalTelemetry();
     const filtered = records.filter((item) => item.user_id !== userId);
-    fs.writeFileSync(getTelemetryFilePath(), JSON.stringify(filtered, null, 2), 'utf-8');
+    writeTelemetryRecords(filtered);
   } catch {}
 }

@@ -1,8 +1,8 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import confetti from 'canvas-confetti';
-import { Trophy, KeyRound, X, CheckCircle2, Loader2, Sparkles } from 'lucide-react';
+import { Trophy, KeyRound, X, CheckCircle2, Loader2 } from 'lucide-react';
 
 interface ContestCompletionModalProps {
   isOpen: boolean;
@@ -23,6 +23,15 @@ export function ContestCompletionModal({
   const [validating, setValidating] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const successTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (successTimerRef.current) {
+        clearTimeout(successTimerRef.current);
+      }
+    };
+  }, []);
 
   if (!isOpen) return null;
 
@@ -66,7 +75,10 @@ export function ContestCompletionModal({
 
       setSuccessMessage('Investigation Concluded! Stats locked. Exiting arena...');
 
-      setTimeout(() => {
+      if (successTimerRef.current) {
+        clearTimeout(successTimerRef.current);
+      }
+      successTimerRef.current = setTimeout(() => {
         onContestComplete(data.totalScore);
         onClose();
       }, 1500);
@@ -83,7 +95,6 @@ export function ContestCompletionModal({
         className="w-full max-w-md bg-app-surface border border-app-border rounded-3xl shadow-2xl p-6 sm:p-7 relative text-app-text space-y-5 animate-in zoom-in-95 duration-200"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Header */}
         <div className="flex items-start justify-between">
           <div className="flex items-center space-x-3">
             <div className="w-11 h-11 rounded-2xl bg-amber-500/10 border border-amber-500/25 flex items-center justify-center text-amber-500 shrink-0">
@@ -106,7 +117,6 @@ export function ContestCompletionModal({
           </button>
         </div>
 
-        {/* Narrative Box */}
         <div className="p-3.5 rounded-2xl bg-app-surface-raised border border-app-border text-xs text-app-text leading-relaxed space-y-1.5">
           <p className="font-semibold text-amber-500">
             You have extracted the deepest evidence layer.
@@ -116,7 +126,6 @@ export function ContestCompletionModal({
           </p>
         </div>
 
-        {/* Form */}
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-1.5">
             <label className="text-[11px] font-semibold text-app-subtext tracking-wide uppercase">
@@ -125,6 +134,7 @@ export function ContestCompletionModal({
             <div className="relative">
               <input
                 type="text"
+                data-paste-allowed="true"
                 value={finalPhrase}
                 onChange={(e) => setFinalPhrase(e.target.value)}
                 placeholder="e.g. LEDGER-RESTORED-02"
@@ -177,7 +187,6 @@ export function ContestCompletionModal({
             </button>
           </div>
         </form>
-
       </div>
     </div>
   );

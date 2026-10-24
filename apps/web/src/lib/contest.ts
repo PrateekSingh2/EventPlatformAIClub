@@ -213,7 +213,10 @@ export async function updateContestSettings(
     updated_at: nowIso,
   };
 
-  // 1. Try to persist to Supabase
+  // 1. Persist to local cache first so this instance can serve transitions immediately
+  writeLocalCache(updated);
+
+  // 2. Try to persist to Supabase (best-effort; local cache + realtime still update clients)
   if (isSupabaseConfigured) {
     try {
       const supabaseAdmin = getSupabaseAdmin();
@@ -231,22 +234,12 @@ export async function updateContestSettings(
         });
 
       if (error) {
-        const msg = `[updateContestSettings] Supabase upsert failed: ${error.message}`;
-        if (process.env.NODE_ENV === 'production') {
-          throw new Error(msg);
-        }
-        console.warn(msg);
+        console.error('[updateContestSettings] Supabase upsert failed:', error.message);
       }
     } catch (err: any) {
-      if (process.env.NODE_ENV === 'production' && isSupabaseConfigured) {
-        throw err;
-      }
       console.warn('[updateContestSettings] Supabase unavailable, cached locally:', err.message);
     }
   }
-
-  // 2. Persist to local cache
-  writeLocalCache(updated);
 
   // 3. Broadcast update to connected clients via Supabase Realtime channel
   try {

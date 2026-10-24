@@ -165,7 +165,7 @@ export function ConfigIcon({ className = 'w-3.5 h-3.5' }: { className?: string }
  * Returns the exact VS Code style extension icon based on filename
  */
 export function FileExtensionIcon({ filename, className = 'w-3.5 h-3.5 shrink-0' }: FileIconProps) {
-  const name = filename.toLowerCase();
+  const name = (filename || '').toLowerCase();
 
   // Python
   if (name.endsWith('.py') || name.endsWith('.pyw') || name.endsWith('.ipynb')) {

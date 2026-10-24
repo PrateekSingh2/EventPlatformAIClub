@@ -78,12 +78,8 @@ export function TeamMergerTab({ adminSecret }: TeamMergerTabProps) {
   const [submissions, setSubmissions] = useState<TeamSubmission[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [autoMerge, setAutoMerge] = useState(() =>
-    typeof window !== 'undefined' ? readStoredAutoMerge() : false
-  );
-  const [manualGroupMap, setManualGroupMap] = useState<Map<string, string>>(() =>
-    typeof window !== 'undefined' ? readStoredManualGroups() : new Map()
-  );
+  const [autoMerge, setAutoMerge] = useState(false);
+  const [manualGroupMap, setManualGroupMap] = useState<Map<string, string>>(() => new Map());
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [previewGroup, setPreviewGroup] = useState<MergeGroup | null>(null);
   const [excludedOptOutCount, setExcludedOptOutCount] = useState(0);
@@ -111,9 +107,16 @@ export function TeamMergerTab({ adminSecret }: TeamMergerTabProps) {
       setError('Network error while loading submissions');
       setSubmissions([]);
     } finally {
-      setLoading(false);
+      if (generation === fetchGeneration.current) {
+        setLoading(false);
+      }
     }
   }, [adminSecret]);
+
+  useEffect(() => {
+    setAutoMerge(readStoredAutoMerge());
+    setManualGroupMap(readStoredManualGroups());
+  }, []);
 
   useEffect(() => {
     if (adminSecret) fetchSubmissions();

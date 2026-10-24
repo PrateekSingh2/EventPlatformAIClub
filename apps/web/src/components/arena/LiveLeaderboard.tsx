@@ -168,9 +168,8 @@ export function LiveLeaderboard({
         if (!search.trim()) return true;
         const q = search.toLowerCase();
         return (
-          u.name.toLowerCase().includes(q) ||
+          (u.name || '').toLowerCase().includes(q) ||
           (u.email && u.email.toLowerCase().includes(q)) ||
-          (u.access_token && u.access_token.toLowerCase().includes(q)) ||
           (u.team_name && u.team_name.toLowerCase().includes(q))
         );
       })
@@ -370,6 +369,12 @@ export function LiveLeaderboard({
               <AnimatePresence mode="popLayout">
                 {filteredUsers.map((user, idx) => {
                   const rank = idx + 1;
+                  const globalIndex = users.findIndex(
+                    (u) =>
+                      (user.id && u.id === user.id) ||
+                      (user.access_token && u.access_token === user.access_token)
+                  );
+                  const globalRank = globalIndex >= 0 ? globalIndex + 1 : rank;
                   const isCurrentUser =
                     (currentUserId && user.id === currentUserId) ||
                     (currentUserToken && user.access_token === currentUserToken);
@@ -377,8 +382,8 @@ export function LiveLeaderboard({
                   const userTotalTime = getUserTotalTime(user);
                   const isExpanded = expandedUser === (user.id || user.access_token);
 
-                  // Detect if tied in score with user directly above
-                  const higherUser = idx > 0 ? filteredUsers[idx - 1] : null;
+                  const higherUser =
+                    globalIndex > 0 ? users[globalIndex - 1] : null;
                   const tieReasonWithAbove =
                     higherUser && (higherUser.total_score || 0) === (user.total_score || 0)
                       ? getTieBreakReason(higherUser, user)
@@ -399,11 +404,11 @@ export function LiveLeaderboard({
                       className={`p-2.5 rounded-xl border flex flex-col transition-all cursor-pointer backdrop-blur-sm ${
                         isCurrentUser
                           ? 'border-app-accentBorder/80 bg-app-accentBg/70 shadow-[0_4px_12px_rgba(0,0,0,0.25),_inset_0_1px_0_rgba(255,255,255,0.12)] ring-1 ring-app-accent/40'
-                          : rank === 1
+                          : globalRank === 1
                           ? 'border-amber-500/30 bg-amber-500/10 shadow-[0_4px_12px_rgba(245,158,11,0.1),_inset_0_1px_0_rgba(255,255,255,0.1)]'
-                          : rank === 2
+                          : globalRank === 2
                           ? 'border-slate-400/20 bg-slate-400/5 shadow-[0_2px_8px_rgba(0,0,0,0.2),_inset_0_1px_0_rgba(255,255,255,0.06)]'
-                          : rank === 3
+                          : globalRank === 3
                           ? 'border-amber-700/20 bg-amber-700/5 shadow-[0_2px_8px_rgba(0,0,0,0.2),_inset_0_1px_0_rgba(255,255,255,0.06)]'
                           : 'border-white/[0.06] bg-app-bg/50 hover:bg-app-hover/50 shadow-[0_2px_6px_rgba(0,0,0,0.2),_inset_0_1px_0_rgba(255,255,255,0.04)]'
                       }`}
@@ -413,25 +418,25 @@ export function LiveLeaderboard({
                           {/* Rank Badge */}
                           <div
                             className={`w-6 h-6 rounded-lg font-bold text-[10px] flex items-center justify-center shrink-0 shadow-xs ${
-                              rank === 1
+                              globalRank === 1
                                 ? 'bg-amber-400 text-slate-950 font-black shadow-[0_2px_6px_rgba(251,191,36,0.4)]'
-                                : rank === 2
+                                : globalRank === 2
                                 ? 'bg-slate-300 text-slate-950 font-black shadow-[0_2px_6px_rgba(203,213,225,0.3)]'
-                                : rank === 3
+                                : globalRank === 3
                                 ? 'bg-amber-600 text-white font-black shadow-[0_2px_6px_rgba(217,119,6,0.3)]'
                                 : isCurrentUser
                                 ? 'bg-app-accent text-app-bg font-bold'
                                 : 'bg-app-muted text-app-subtext border border-white/10'
                             }`}
                           >
-                            {rank}
+                            {globalRank}
                           </div>
 
                           {/* Contestant Info */}
                           <div className="truncate min-w-0">
                             <div className="font-semibold text-app-text text-xs truncate flex items-center gap-1.5">
                               <span className="truncate">{user.name}</span>
-                              {rank === 1 && <Flame className="w-3.5 h-3.5 text-amber-400 shrink-0 inline" />}
+                              {globalRank === 1 && <Flame className="w-3.5 h-3.5 text-amber-400 shrink-0 inline" />}
                               {isCurrentUser && (
                                 <span className="text-[9px] px-1.5 py-0.2 rounded bg-app-accent/20 text-app-accent font-mono font-bold shrink-0">
                                   YOU
@@ -442,7 +447,7 @@ export function LiveLeaderboard({
                               <span>Stage {user.current_stage || 1}</span>
                               <span>&bull;</span>
                               <span className="truncate max-w-[140px]">
-                                {user.team_name ? `Team: ${user.team_name}` : (user.access_token || 'Active')}
+                                {user.team_name ? `Team: ${user.team_name}` : (user.name || 'Contestant')}
                               </span>
                             </div>
                           </div>
@@ -465,7 +470,7 @@ export function LiveLeaderboard({
                       {tieReasonWithAbove && (
                         <div className="mt-1.5 pt-1.5 border-t border-white/5 flex items-center gap-1 text-[9px] font-mono text-amber-400/90">
                           <Zap className="w-2.5 h-2.5 shrink-0 text-amber-400" />
-                          <span className="truncate">Behind #{rank - 1}: {tieReasonWithAbove}</span>
+                          <span className="truncate">Behind #{globalRank - 1}: {tieReasonWithAbove}</span>
                         </div>
                       )}
 

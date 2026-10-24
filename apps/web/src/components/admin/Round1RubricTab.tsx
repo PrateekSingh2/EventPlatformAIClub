@@ -228,7 +228,7 @@ export function Round1RubricTab({ adminSecret }: Round1RubricTabProps) {
     for (const c of RUBRIC_CRITERIA) {
       const val = parseFloat(scores[c.key] || '0');
       if (!isNaN(val) && val >= 0) {
-        sum += Math.min(val, c.maxMarks);
+        sum += val;
       }
     }
     return Math.round(sum * 100) / 100;
@@ -257,9 +257,13 @@ export function Round1RubricTab({ adminSecret }: Round1RubricTabProps) {
 
   // Fetch Leaderboard and Evaluations
   const isFetchingRef = useRef(false);
+  const pendingSilentRefreshRef = useRef(false);
   const fetchLeaderboard = useCallback(
     async (isSilent = false) => {
-      if (isFetchingRef.current) return;
+      if (isFetchingRef.current) {
+        if (isSilent) pendingSilentRefreshRef.current = true;
+        return;
+      }
       isFetchingRef.current = true;
 
       if (!isSilent) setLeaderboardLoading(true);
@@ -293,6 +297,10 @@ export function Round1RubricTab({ adminSecret }: Round1RubricTabProps) {
         isFetchingRef.current = false;
         setLeaderboardLoading(false);
         setRefreshing(false);
+        if (pendingSilentRefreshRef.current) {
+          pendingSilentRefreshRef.current = false;
+          void fetchLeaderboard(true);
+        }
       }
     },
     [adminSecret]
@@ -482,9 +490,9 @@ export function Round1RubricTab({ adminSecret }: Round1RubricTabProps) {
     const q = searchTerm.toLowerCase();
     return leaderboard.filter(
       (entry) =>
-        entry.team_name.toLowerCase().includes(q) ||
-        entry.theme.toLowerCase().includes(q) ||
-        entry.judge_name.toLowerCase().includes(q)
+        (entry.team_name?.toLowerCase() || '').includes(q) ||
+        (entry.theme?.toLowerCase() || '').includes(q) ||
+        (entry.judge_name?.toLowerCase() || '').includes(q)
     );
   }, [leaderboard, searchTerm]);
 
@@ -1021,8 +1029,18 @@ export function Round1RubricTab({ adminSecret }: Round1RubricTabProps) {
                                   placeholder={`0 - ${criterion.maxMarks}`}
                                   value={currentScore}
                                   onChange={(e) => {
-                                    const val = e.target.value;
-                                    setScores((prev) => ({ ...prev, [criterion.key]: val }));
+                                    const raw = e.target.value;
+                                    if (raw === '') {
+                                      setScores((prev) => ({ ...prev, [criterion.key]: '' }));
+                                      return;
+                                    }
+                                    const num = parseFloat(raw);
+                                    if (Number.isNaN(num)) return;
+                                    const clamped = Math.max(0, Math.min(criterion.maxMarks, num));
+                                    setScores((prev) => ({
+                                      ...prev,
+                                      [criterion.key]: clamped.toString(),
+                                    }));
                                   }}
                                   className={`w-full px-3 py-1.5 text-xs text-center font-mono font-bold rounded-lg bg-app-bg border text-app-text focus:outline-none transition-colors ${
                                     isExceeded

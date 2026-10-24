@@ -326,7 +326,7 @@ export function TelemetryRadarTab({ adminSecret }: TelemetryRadarTabProps) {
     const q = search.toLowerCase();
     const name = u.name?.toLowerCase() || '';
     const email = u.email?.toLowerCase() || '';
-    const reasons = u.flag_reasons.join(' ').toLowerCase();
+    const reasons = (u.flag_reasons || []).join(' ').toLowerCase();
     return name.includes(q) || email.includes(q) || reasons.includes(q);
   });
 
@@ -648,7 +648,7 @@ export function TelemetryRadarTab({ adminSecret }: TelemetryRadarTabProps) {
                   </div>
 
                   {/* Flag Reason Banner if any */}
-                  {user.flag_reasons.length > 0 && (
+                  {(user.flag_reasons || []).length > 0 && (
                     <div className="p-2 rounded-lg bg-rose-500/10 border border-rose-500/20 text-[11px] text-rose-300 font-sans">
                       <span className="font-semibold">Alert: </span>
                       {user.flag_reasons[0]}
@@ -666,7 +666,7 @@ export function TelemetryRadarTab({ adminSecret }: TelemetryRadarTabProps) {
                     </button>
 
                     <div className="flex items-center gap-1.5">
-                      {(user.is_flagged || user.flag_reasons.length > 0) && !isDisqualified && (
+                      {(user.is_flagged || (user.flag_reasons || []).length > 0) && !isDisqualified && (
                         <button
                           onClick={() => handleClearFlag(user.user_id)}
                           className="px-2.5 py-1.5 text-xs font-medium text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 rounded-lg cursor-pointer"
@@ -893,7 +893,7 @@ export function TelemetryRadarTab({ adminSecret }: TelemetryRadarTabProps) {
                                 <Ban className="w-3 h-3 text-rose-400" />
                                 DISQUALIFIED
                               </span>
-                              {user.flag_reasons.length > 0 && (
+                              {(user.flag_reasons || []).length > 0 && (
                                 <span className="text-[10px] text-rose-300/80 font-sans max-w-[200px] truncate" title={user.flag_reasons[0]}>
                                   {user.flag_reasons[0]}
                                 </span>
@@ -905,8 +905,8 @@ export function TelemetryRadarTab({ adminSecret }: TelemetryRadarTabProps) {
                                 <ShieldAlert className="w-3 h-3 text-amber-400" />
                                 SUSPICIOUS
                               </span>
-                              {user.flag_reasons.length > 0 && (
-                                <span className="text-[10px] text-amber-300/80 font-sans max-w-[200px] truncate" title={user.flag_reasons.join(', ')}>
+                              {(user.flag_reasons || []).length > 0 && (
+                                <span className="text-[10px] text-amber-300/80 font-sans max-w-[200px] truncate" title={(user.flag_reasons || []).join(', ')}>
                                   {user.flag_reasons[0]}
                                 </span>
                               )}
@@ -937,7 +937,7 @@ export function TelemetryRadarTab({ adminSecret }: TelemetryRadarTabProps) {
                             </button>
 
                             {/* Clear Flag */}
-                            {(user.is_flagged || user.flag_reasons.length > 0) && !isDisqualified && (
+                            {(user.is_flagged || (user.flag_reasons || []).length > 0) && !isDisqualified && (
                               <button
                                 onClick={() => handleClearFlag(user.user_id)}
                                 className="px-2 py-1 text-[11px] font-medium text-emerald-400 hover:text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 rounded-lg border border-emerald-500/30 transition-colors cursor-pointer flex items-center gap-1"

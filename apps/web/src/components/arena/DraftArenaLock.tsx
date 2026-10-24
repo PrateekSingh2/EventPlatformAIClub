@@ -17,7 +17,11 @@ export function DraftArenaLock({ user, contestState }: DraftArenaLockProps) {
     seconds: number;
   } | null>(null);
 
-  const startTime = contestState?.start_time ? new Date(contestState.start_time).getTime() : null;
+  const startTimeMs = contestState?.start_time
+    ? new Date(contestState.start_time).getTime()
+    : null;
+  const startTime =
+    startTimeMs !== null && !Number.isNaN(startTimeMs) ? startTimeMs : null;
 
   useEffect(() => {
     if (!startTime) {
@@ -25,12 +29,18 @@ export function DraftArenaLock({ user, contestState }: DraftArenaLockProps) {
       return;
     }
 
+    const timerHandle = { id: null as ReturnType<typeof setInterval> | null };
+
     const updateTimer = () => {
       const now = Date.now();
       const diff = startTime - now;
 
       if (diff <= 0) {
         setTimeLeft({ days: 0, hours: 0, minutes: 0, seconds: 0 });
+        if (timerHandle.id) {
+          clearInterval(timerHandle.id);
+          timerHandle.id = null;
+        }
         return;
       }
 
@@ -43,8 +53,10 @@ export function DraftArenaLock({ user, contestState }: DraftArenaLockProps) {
     };
 
     updateTimer();
-    const interval = setInterval(updateTimer, 1000);
-    return () => clearInterval(interval);
+    timerHandle.id = setInterval(updateTimer, 1000);
+    return () => {
+      if (timerHandle.id) clearInterval(timerHandle.id);
+    };
   }, [startTime]);
 
   return (

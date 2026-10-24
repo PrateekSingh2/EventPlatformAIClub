@@ -56,6 +56,15 @@ export function UnlockNextStageModal({
   const stageOpenTimeRef = useRef<number>(Date.now());
   const localFailedAttemptsRef = useRef<number>(0);
   const lastStatusFetchRef = useRef<{ stage: number; at: number; cooldown: number } | null>(null);
+  const successTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (successTimerRef.current) {
+        clearTimeout(successTimerRef.current);
+      }
+    };
+  }, []);
 
   // Clear password, errors, and check active cooldown whenever modal opens or stage transitions
   useEffect(() => {
@@ -109,7 +118,7 @@ export function UnlockNextStageModal({
       });
     }, 1000);
     return () => clearInterval(timer);
-  }, [cooldownSeconds > 0]);
+  }, [cooldownSeconds]);
 
   if (!isOpen) return null;
 
@@ -193,7 +202,8 @@ export function UnlockNextStageModal({
       const timeFormatted = new Date(completedTimestamp).toLocaleTimeString();
       setSuccessMessage(`Stage ${nextStageNumber} Key Verified! Offline beacon queued at ${timeFormatted} for leaderboard sync.`);
 
-      setTimeout(() => {
+      if (successTimerRef.current) clearTimeout(successTimerRef.current);
+      successTimerRef.current = setTimeout(() => {
         setPassword('');
         onUnlockSuccess(
           nextStageNumber,
@@ -229,14 +239,6 @@ export function UnlockNextStageModal({
               applyFailureCooldown(undefined, 'Invalid stage key. Decryption failed.');
               setValidating(false);
               return;
-            }
-          } else {
-            // Fallback verification for demo passwords
-            if (
-              (nextStageNumber === 2 && cleanPassword === 'cyber2026') ||
-              (nextStageNumber === 3 && cleanPassword === 'quantum4096')
-            ) {
-              offlineValid = true;
             }
           }
         }
@@ -464,7 +466,8 @@ export function UnlockNextStageModal({
 
         setSuccessMessage(`Stage ${nextStageNumber} Key Verified! +${pointsAwarded} PTS awarded.`);
 
-        setTimeout(() => {
+        if (successTimerRef.current) clearTimeout(successTimerRef.current);
+        successTimerRef.current = setTimeout(() => {
           setPassword('');
           onUnlockSuccess(
             nextStageNumber,

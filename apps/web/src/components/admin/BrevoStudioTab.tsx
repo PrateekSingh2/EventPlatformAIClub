@@ -353,6 +353,7 @@ export function BrevoStudioTab({ adminSecret }: BrevoStudioTabProps) {
   const [parseErrors, setParseErrors] = useState<string[]>([]);
   const [savingRecipients, setSavingRecipients] = useState(false);
   const [importSuccessMsg, setImportSuccessMsg] = useState<string | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Restore saved template and subject from localStorage
@@ -451,7 +452,7 @@ export function BrevoStudioTab({ adminSecret }: BrevoStudioTabProps) {
     if (parsedRecipients.length === 0) return;
 
     setSavingRecipients(true);
-    setErrorMessage(null);
+    setImportError(null);
 
     try {
       const res = await fetch('/api/admin/participants', {
@@ -485,7 +486,7 @@ export function BrevoStudioTab({ adminSecret }: BrevoStudioTabProps) {
         setImportSuccessMsg(null);
       }, 1200);
     } catch (err: any) {
-      setErrorMessage(err.message || 'Batch import failed');
+      setImportError(err.message || 'Batch import failed');
     } finally {
       setSavingRecipients(false);
     }
@@ -501,11 +502,13 @@ export function BrevoStudioTab({ adminSecret }: BrevoStudioTabProps) {
           'Content-Type': 'application/json',
           'x-admin-secret': adminSecret,
         },
-        body: JSON.stringify({ userId, adminSecret }),
+        body: JSON.stringify({ id: userId, adminSecret }),
       });
-      if (res.ok) {
-        await fetchUsers();
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({}));
+        throw new Error(errBody.error || 'Failed to delete participant');
       }
+      await fetchUsers();
     } catch (err: any) {
       setErrorMessage(err.message || 'Failed to delete participant');
     }
@@ -525,9 +528,11 @@ export function BrevoStudioTab({ adminSecret }: BrevoStudioTabProps) {
         },
         body: JSON.stringify({ all: true, adminSecret }),
       });
-      if (res.ok) {
-        await fetchUsers();
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({}));
+        throw new Error(errBody.error || 'Failed to clear participants');
       }
+      await fetchUsers();
     } catch (err: any) {
       setErrorMessage(err.message || 'Failed to clear participants');
     }
@@ -961,10 +966,12 @@ export function BrevoStudioTab({ adminSecret }: BrevoStudioTabProps) {
             </p>
           </div>
         ) : (
-          <div className="rounded-xl overflow-hidden border border-app-border bg-white p-4">
-            <div
-              className="w-full min-h-[480px] overflow-auto"
-              dangerouslySetInnerHTML={{ __html: sampleHtml }}
+          <div className="rounded-xl overflow-hidden border border-app-border bg-white">
+            <iframe
+              sandbox=""
+              srcDoc={sampleHtml}
+              className="w-full min-h-[480px] border-0 rounded-xl bg-white"
+              title="Email Preview"
             />
           </div>
         )}
@@ -1170,6 +1177,12 @@ export function BrevoStudioTab({ adminSecret }: BrevoStudioTabProps) {
                 <div className="p-2.5 rounded-lg bg-emerald-950/60 border border-emerald-800/60 text-xs font-mono text-emerald-300 flex items-center gap-2">
                   <CheckCircle2 className="w-4 h-4 text-emerald-400" />
                   <span>{importSuccessMsg}</span>
+                </div>
+              )}
+
+              {importError && (
+                <div className="p-2.5 rounded-lg bg-rose-950/60 border border-rose-800/60 text-xs text-rose-300">
+                  {importError}
                 </div>
               )}
             </div>

@@ -343,7 +343,7 @@ function pickNextStageZipEntry(validEntries: { filename: string; directory?: boo
   const numbered = zips
     .map((entry) => {
       const base = entry.filename.split('/').pop() || entry.filename;
-      const match = base.match(/^stage(\d+)\.zip$/i);
+      const match = base.match(/^stage_?(\d+)\.zip$/i);
       return match ? { entry, stageNum: parseInt(match[1], 10) } : null;
     })
     .filter((x): x is { entry: (typeof zips)[0]; stageNum: number } => x !== null)
@@ -366,10 +366,10 @@ export async function countStagesInOuterArchive(blob: Blob): Promise<number> {
   const stageNums = new Set<number>([1]);
 
   for (const entry of entries) {
-    const zipMatch = entry.filename.match(/stage(\d+)\.zip/i);
+    const zipMatch = entry.filename.match(/stage_?(\d+)\.zip/i);
     if (zipMatch) stageNums.add(parseInt(zipMatch[1], 10));
 
-    const dirMatch = entry.filename.match(/^stage(\d+)[/\\]/i);
+    const dirMatch = entry.filename.match(/^stage_?(\d+)[/\\]/i);
     if (dirMatch) stageNums.add(parseInt(dirMatch[1], 10));
   }
 

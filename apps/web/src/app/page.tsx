@@ -46,6 +46,7 @@ function HomePageContent() {
   ).trim().toUpperCase();
 
   const isLoginRequired = searchParams.get('loginRequired') === 'true';
+  const needsGeminiKey = searchParams.get('needGeminiKey') === '1';
 
   // Active user session state
   const [currentUser, setCurrentUser] = useState<ContestantSession | null>(null);
@@ -84,6 +85,12 @@ function HomePageContent() {
     } catch {}
     setSessionChecked(true);
   }, [incomingToken]);
+
+  useEffect(() => {
+    if (needsGeminiKey) {
+      setError('Add your Google Gemini API key below before entering the arena.');
+    }
+  }, [needsGeminiKey]);
 
   // STEP 1: Handle Google OAuth Sign-In via Firebase
   const handleGoogleSignIn = async () => {
