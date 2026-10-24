@@ -144,7 +144,6 @@ export function GeminiTutorDrawer({
     ]);
 
     try {
-      const modelsToTry = ['gemini-2.5-flash', 'gemini-1.5-flash'];
       let responseText: string | null = null;
       let lastErrorMessage = '';
 
@@ -157,9 +156,59 @@ Your role is to guide contestants through the challenge directives in their AI_T
 - Format all code with clear Markdown fences (\`\`\`python ... \`\`\`).
 - Guide contestants conceptually to understand the problem so they can extract the solution password flag themselves.`;
 
-      for (const model of modelsToTry) {
+      // 1. Dynamically query Google's ModelService.ListModels to detect active models for this key
+      let candidateModels: Array<{ model: string; apiVersion: string }> = [];
+
+      try {
+        const listRes = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey)}`
+        );
+        if (listRes.ok) {
+          const listData = await listRes.json();
+          const available = (listData?.models || [])
+            .filter((m: any) => m.supportedGenerationMethods?.includes('generateContent'))
+            .map((m: any) => ({
+              model: m.name.replace(/^models\//, ''),
+              apiVersion: 'v1beta',
+            }));
+
+          // Prioritize: gemini-2.0-flash > gemini-1.5-flash > gemini-1.5-pro > others
+          const priority = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro'];
+          available.sort((a: any, b: any) => {
+            const aIdx = priority.findIndex((p) => a.model.includes(p));
+            const bIdx = priority.findIndex((p) => b.model.includes(p));
+            if (aIdx !== -1 && bIdx !== -1) return aIdx - bIdx;
+            if (aIdx !== -1) return -1;
+            if (bIdx !== -1) return 1;
+            return 0;
+          });
+
+          if (available.length > 0) {
+            candidateModels = available;
+          }
+        }
+      } catch (listErr) {
+        console.warn('[Gemini ListModels check failed, using fallback models]:', listErr);
+      }
+
+      // 2. Fallback candidate list if ListModels is unavailable
+      if (candidateModels.length === 0) {
+        candidateModels = [
+          { model: 'gemini-2.0-flash', apiVersion: 'v1beta' },
+          { model: 'gemini-2.0-flash', apiVersion: 'v1' },
+          { model: 'gemini-1.5-flash-latest', apiVersion: 'v1beta' },
+          { model: 'gemini-1.5-flash', apiVersion: 'v1' },
+          { model: 'gemini-2.0-flash-exp', apiVersion: 'v1beta' },
+          { model: 'gemini-1.5-pro-latest', apiVersion: 'v1beta' },
+          { model: 'gemini-1.5-pro', apiVersion: 'v1beta' },
+          { model: 'gemini-1.5-pro', apiVersion: 'v1' },
+        ];
+      }
+
+      // 3. Attempt generation with candidate models
+      for (const { model, apiVersion } of candidateModels) {
         try {
-          const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
+          const endpoint = `https://generativelanguage.googleapis.com/${apiVersion}/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
           const payload = {
             contents: [
               {
