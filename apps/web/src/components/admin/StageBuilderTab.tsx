@@ -61,6 +61,7 @@ type TabMode = 'bulk' | 'list' | 'create' | 'edit';
 type BulkDistributionMode = 'pool' | 'unique';
 
 const UPLOAD_CONCURRENCY = 4;
+const MANUAL_POOL_OVERRIDE_STORAGE_KEY = 'stageBuilder:manualPoolOverrides';
 
 function makeUniquePoolKey(fileName: string): string {
   const base = fileName
@@ -123,6 +124,8 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
   const [loadingPoolCatalog, setLoadingPoolCatalog] = useState(false);
   /** teamKey → poolKey in storage (manual or random assignment) */
   const [teamPoolByKey, setTeamPoolByKey] = useState<Record<string, string>>({});
+  /** Manual picks always win over random (persisted in browser) */
+  const [manualPoolOverrides, setManualPoolOverrides] = useState<Record<string, string>>({});
   const [showManualPoolAssign, setShowManualPoolAssign] = useState(false);
   const [availableTeams, setAvailableTeams] = useState<TeamRosterItem[]>([]);
   const [loadingTokens, setLoadingTokens] = useState(false);
@@ -362,11 +365,46 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
     }
   };
 
-  const buildRandomPoolAssignment = (): Record<string, string> => {
+  const poolKeyIsValid = (poolKey: string) => poolCatalog.some((p) => p.poolKey === poolKey);
+
+  const pickRandomPoolKey = () => {
+    const pick = poolCatalog[Math.floor(Math.random() * poolCatalog.length)];
+    return pick?.poolKey;
+  };
+
+  /** Random for every team; manual overrides stay fixed. */
+  const buildRandomPoolAssignmentPreservingManual = (): Record<string, string> => {
     const next: Record<string, string> = {};
     for (const team of availableTeams) {
-      const pick = poolCatalog[Math.floor(Math.random() * poolCatalog.length)];
-      if (pick) next[team.teamKey] = pick.poolKey;
+      const manual = manualPoolOverrides[team.teamKey];
+      if (manual && poolKeyIsValid(manual)) {
+        next[team.teamKey] = manual;
+        continue;
+      }
+      const randomKey = pickRandomPoolKey();
+      if (randomKey) next[team.teamKey] = randomKey;
+    }
+    return next;
+  };
+
+  /**
+   * Deploy-ready map: manual override → keep preview in teamPoolByKey → random fill gaps.
+   */
+  const finalizePoolMapping = (source: Record<string, string> = {}): Record<string, string> => {
+    const next: Record<string, string> = {};
+    for (const team of availableTeams) {
+      const manual = manualPoolOverrides[team.teamKey];
+      if (manual && poolKeyIsValid(manual)) {
+        next[team.teamKey] = manual;
+        continue;
+      }
+      const preview = source[team.teamKey];
+      if (preview && poolKeyIsValid(preview)) {
+        next[team.teamKey] = preview;
+        continue;
+      }
+      const randomKey = pickRandomPoolKey();
+      if (randomKey) next[team.teamKey] = randomKey;
     }
     return next;
   };
@@ -380,11 +418,15 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
       setStatusMessage({ type: 'error', text: 'Upload ZIPs to the pool first (stored in Supabase).' });
       return;
     }
-    const next = buildRandomPoolAssignment();
+    const next = buildRandomPoolAssignmentPreservingManual();
     setTeamPoolByKey(next);
+    const manualCount = Object.keys(manualPoolOverrides).filter((k) => poolKeyIsValid(manualPoolOverrides[k])).length;
     setStatusMessage({
       type: 'success',
-      text: `Random mapping: ${availableTeams.length} teams → ${poolCatalog.length} pool ZIP(s). Adjust manually if needed, then Assign.`,
+      text:
+        manualCount > 0
+          ? `Random mapping for ${availableTeams.length - manualCount} team(s); ${manualCount} manual override(s) kept. Click Save or Assign all to commit.`
+          : `Random mapping: ${availableTeams.length} teams → ${poolCatalog.length} pool ZIP(s). Adjust manually if needed, then Assign.`,
     });
   };
 
@@ -445,7 +487,6 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
   };
 
   const handleDeployPoolAssignments = async (assignmentOverride?: Record<string, string>) => {
-    const mapping = assignmentOverride ?? teamPoolByKey;
     if (poolCatalog.length === 0) {
       setStatusMessage({ type: 'error', text: 'Pool is empty. Upload ZIPs first.' });
       return;
@@ -455,12 +496,15 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
       return;
     }
 
+    const mapping = assignmentOverride ?? finalizePoolMapping(teamPoolByKey);
+    setTeamPoolByKey(mapping);
+
     const poolByKey = new Map(poolCatalog.map((p) => [p.poolKey, p]));
     const unassigned = availableTeams.filter((t) => !mapping[t.teamKey]);
     if (unassigned.length > 0) {
       setStatusMessage({
         type: 'error',
-        text: `${unassigned.length} team(s) not mapped to a pool ZIP. Random assign or set manually.`,
+        text: `${unassigned.length} team(s) could not be mapped — check that the pool has at least one ZIP.`,
       });
       return;
     }
@@ -524,7 +568,7 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
       setStatusMessage({ type: 'error', text: 'Need pool ZIPs and registered teams before Assign.' });
       return;
     }
-    const mapping = buildRandomPoolAssignment();
+    const mapping = buildRandomPoolAssignmentPreservingManual();
     setTeamPoolByKey(mapping);
     await handleDeployPoolAssignments(mapping);
   };
@@ -825,6 +869,29 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
       fetchPoolCatalog();
     }
   }, [adminSecret]);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(MANUAL_POOL_OVERRIDE_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as Record<string, string>;
+        if (parsed && typeof parsed === 'object') {
+          setManualPoolOverrides(parsed);
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  const persistManualPoolOverrides = (next: Record<string, string>) => {
+    setManualPoolOverrides(next);
+    try {
+      localStorage.setItem(MANUAL_POOL_OVERRIDE_STORAGE_KEY, JSON.stringify(next));
+    } catch {
+      /* ignore */
+    }
+  };
 
   // Load existing stage into stage form
   const handleSelectStageToEdit = (stage: Stage) => {
@@ -1428,6 +1495,10 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
 
               {poolCatalog.length > 0 && availableTeams.length > 0 && (
                 <>
+                  <p className="text-[11px] text-slate-400 leading-relaxed">
+                    Every team gets a random pool ZIP. Manual picks below override random and persist in this browser until
+                    you clear them.
+                  </p>
                   <div className="flex flex-wrap gap-2 pt-2 border-t border-app-border">
                     <button
                       type="button"
@@ -1469,9 +1540,18 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
                           key={team.teamKey}
                           className="flex flex-col sm:flex-row sm:items-center gap-2 px-3 py-2 text-xs bg-app-bg/30"
                         >
-                          <span className="font-semibold text-app-text min-w-[140px] truncate">{team.teamName}</span>
+                          <span className="font-semibold text-app-text min-w-[140px] truncate">
+                            {team.teamName}
+                            {manualPoolOverrides[team.teamKey] && poolKeyIsValid(manualPoolOverrides[team.teamKey]) ? (
+                              <span className="ml-1 text-[10px] text-amber-400 font-normal">(manual)</span>
+                            ) : null}
+                          </span>
                           <select
-                            value={teamPoolByKey[team.teamKey] || ''}
+                            value={
+                              manualPoolOverrides[team.teamKey] && poolKeyIsValid(manualPoolOverrides[team.teamKey])
+                                ? manualPoolOverrides[team.teamKey]
+                                : teamPoolByKey[team.teamKey] || ''
+                            }
                             onChange={(e) => {
                               const pk = e.target.value;
                               setTeamPoolByKey((prev) => {
@@ -1480,6 +1560,10 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
                                 else delete next[team.teamKey];
                                 return next;
                               });
+                              const nextManual = { ...manualPoolOverrides };
+                              if (pk) nextManual[team.teamKey] = pk;
+                              else delete nextManual[team.teamKey];
+                              persistManualPoolOverrides(nextManual);
                             }}
                             className="flex-1 px-2 py-1.5 rounded-lg border border-app-border bg-slate-900 text-xs"
                           >
