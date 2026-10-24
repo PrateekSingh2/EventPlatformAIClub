@@ -11,6 +11,43 @@ import { chunkArray, mapWithConcurrency } from '@/lib/async-pool';
 const PRESIGN_CONCURRENCY = 15;
 const TOKEN_UPSERT_CHUNK = 200;
 
+type TokenArchiveUpsertRow = {
+  access_token: string;
+  team_name?: string | null;
+  storage_path: string;
+  stage_count: number;
+  uploaded_at: string;
+};
+
+async function upsertTokenArchiveChunks(
+  supabaseAdmin: ReturnType<typeof getSupabaseAdmin>,
+  tokenRows: TokenArchiveUpsertRow[]
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  for (const chunk of chunkArray(tokenRows, TOKEN_UPSERT_CHUNK)) {
+    let { error: upsertErr } = await supabaseAdmin
+      .from('token_archives')
+      .upsert(chunk, { onConflict: 'access_token' });
+
+    if (upsertErr?.message?.includes('team_name')) {
+      const slim = chunk.map(({ access_token, storage_path, stage_count, uploaded_at }) => ({
+        access_token,
+        storage_path,
+        stage_count,
+        uploaded_at,
+      }));
+      const retry = await supabaseAdmin
+        .from('token_archives')
+        .upsert(slim, { onConflict: 'access_token' });
+      upsertErr = retry.error;
+    }
+
+    if (upsertErr) {
+      return { ok: false, error: upsertErr.message };
+    }
+  }
+  return { ok: true };
+}
+
 /**
  * POST /api/admin/stages/bulk-upload
  *
@@ -162,15 +199,7 @@ export async function POST(req: NextRequest) {
       const errors: Array<{ target: string; error: string }> = [];
       const uploadedAt = new Date().toISOString();
 
-      type TokenRow = {
-        access_token: string;
-        team_name: string | null;
-        storage_path: string;
-        stage_count: number;
-        uploaded_at: string;
-      };
-
-      const tokenRows: TokenRow[] = [];
+      const tokenRows: TokenArchiveUpsertRow[] = [];
       const passwordMeta: Array<{ teamName: string; primaryToken: string; passwords?: string[] }> = [];
 
       for (const arch of archives) {
@@ -201,14 +230,9 @@ export async function POST(req: NextRequest) {
         committed.push(teamName || targetTokens[0]);
       }
 
-      for (const chunk of chunkArray(tokenRows, TOKEN_UPSERT_CHUNK)) {
-        const { error: upsertErr } = await supabaseAdmin
-          .from('token_archives')
-          .upsert(chunk, { onConflict: 'access_token' });
-        if (upsertErr) {
-          errors.push({ target: 'batch-upsert', error: upsertErr.message });
-          break;
-        }
+      const upsertResult = await upsertTokenArchiveChunks(supabaseAdmin, tokenRows);
+      if (!upsertResult.ok) {
+        errors.push({ target: 'batch-upsert', error: upsertResult.error });
       }
 
       for (const meta of passwordMeta) {
@@ -302,13 +326,40 @@ export async function GET(req: NextRequest) {
 export async function DELETE(req: NextRequest) {
   try {
     const body = await req.json();
-    const { adminSecret, accessToken, teamName, storagePath } = body;
+    const { adminSecret, accessToken, teamName, storagePath, purgeAll } = body;
     const secret = adminSecret || req.headers.get('x-admin-secret');
     if (!verifyAdminSecret(secret)) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
     const supabaseAdmin = getSupabaseAdmin();
+
+    if (purgeAll === true) {
+      try {
+        await supabaseAdmin.from('stage_passwords').delete().gte('stage_number', 0);
+      } catch {
+        /* optional table / FK */
+      }
+
+      const { count: beforeCount } = await supabaseAdmin
+        .from('token_archives')
+        .select('*', { count: 'exact', head: true });
+
+      const { error: purgeErr } = await supabaseAdmin
+        .from('token_archives')
+        .delete()
+        .gte('uploaded_at', '1970-01-01T00:00:00Z');
+
+      if (purgeErr) {
+        return NextResponse.json({ error: purgeErr.message || 'Failed to purge archives' }, { status: 500 });
+      }
+
+      return NextResponse.json({
+        success: true,
+        purged: true,
+        deletedCount: beforeCount ?? 0,
+      });
+    }
 
     if (storagePath) {
       const { error } = await supabaseAdmin

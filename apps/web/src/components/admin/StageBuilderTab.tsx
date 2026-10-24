@@ -591,7 +591,7 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
 
       await mapWithConcurrency(bulkZipFiles, UPLOAD_CONCURRENCY, async (file, i) => {
         const poolKey = poolKeys[i];
-        const target = targetByPoolKey.get(poolKey);
+        const target = targetByPoolKey.get(poolKey) ?? poolTargets[i];
         if (!target) throw new Error(`Missing pool upload target for ${file.name}`);
         setBulkUploadProgress(`Uploading pool ZIP ${i + 1}/${bulkZipFiles.length}: ${file.name}`);
         await uploadZipToStorageTarget(file, target);
@@ -653,6 +653,32 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
   };
 
   // Delete an existing token archive
+  const handlePurgeAllArchives = async () => {
+    if (
+      !window.confirm(
+        'Remove ALL token archive bindings from the database? This does not delete files in storage, but participants will lose archive assignments until you redeploy a pool.'
+      )
+    ) {
+      return;
+    }
+    try {
+      const res = await fetch('/api/admin/stages/bulk-upload', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ adminSecret, purgeAll: true }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Purge failed');
+      await fetchCommittedArchives();
+      setStatusMessage({
+        type: 'success',
+        text: 'All deployed archive records cleared from the database. You can upload a fresh pool now.',
+      });
+    } catch (err: any) {
+      setStatusMessage({ type: 'error', text: err.message || 'Purge failed' });
+    }
+  };
+
   const handleDeleteArchive = async (tokenToDelete: string) => {
     if (!window.confirm(`Are you sure you want to delete the stage archive for token "${tokenToDelete}"?`)) return;
     try {
@@ -1636,14 +1662,25 @@ export function StageBuilderTab({ adminSecret }: StageBuilderTabProps) {
                 <Database className="w-4 h-4 text-app-text" />
                 Active Deployed Token Archives in Database ({bulkCommittedArchives.length})
               </h4>
-              <button
-                type="button"
-                onClick={fetchCommittedArchives}
-                className="text-xs text-app-text hover:underline cursor-pointer flex items-center gap-1"
-              >
-                <RefreshCw className="w-3 h-3" />
-                <span>Refresh</span>
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={fetchCommittedArchives}
+                  className="text-xs text-app-text hover:underline cursor-pointer flex items-center gap-1"
+                >
+                  <RefreshCw className="w-3 h-3" />
+                  <span>Refresh</span>
+                </button>
+                {bulkCommittedArchives.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={handlePurgeAllArchives}
+                    className="text-xs text-rose-400 hover:text-rose-300 font-semibold px-2 py-1 rounded-lg border border-rose-500/30 hover:bg-rose-500/10"
+                  >
+                    Clear all from DB
+                  </button>
+                )}
+              </div>
             </div>
 
             {loadingCommittedArchives ? (
