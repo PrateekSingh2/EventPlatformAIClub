@@ -200,6 +200,12 @@ function ArenaContent() {
   const unlockedStagePasswordsRef = useRef<Record<number, string>>(unlockedStagePasswords);
   const fetchTokenArchivePromiseRef = useRef<Promise<Blob | null> | null>(null);
   const loadingStageRef = useRef<number | null>(null);
+  /** Avoid duplicate loadStage from useEffect right after Unlock Next Stage hands off a verified key. */
+  const pendingStageLoadRef = useRef<{ stage: number; password: string } | null>(null);
+  const usingTokenArchiveRef = useRef(false);
+  useEffect(() => {
+    usingTokenArchiveRef.current = usingTokenArchive;
+  }, [usingTokenArchive]);
 
   const rememberNextStageZip = useCallback((stageNum: number, blob: Blob) => {
     nextStageZipBlobsRef.current[stageNum] = blob;
@@ -595,7 +601,9 @@ function ArenaContent() {
             setActiveZipBlob(stageBlob);
 
             if (!effectivePassword) {
-              setIsPasswordModalOpen(true);
+              if (!usingTokenArchiveRef.current) {
+                setIsPasswordModalOpen(true);
+              }
               setLoading(false);
               return;
             }
@@ -703,8 +711,16 @@ function ArenaContent() {
             } catch (zipErr: any) {
               if (zipErr instanceof ZipEngineError) {
                 if (zipErr.code === 'PASSWORD_REQUIRED' || zipErr.code === 'INVALID_PASSWORD') {
-                  setIsPasswordModalOpen(true);
-                  if (effectivePassword) setPasswordModalError('Incorrect archive password. Please try again.');
+                  if (!usingTokenArchiveRef.current) {
+                    setIsPasswordModalOpen(true);
+                    if (effectivePassword) {
+                      setPasswordModalError('Incorrect archive password. Please try again.');
+                    }
+                  } else if (effectivePassword) {
+                    setError(
+                      'Could not open stage files with your verified key. Hard refresh, then expand this stage and click Load Archive.'
+                    );
+                  }
                   setLoading(false);
                   return;
                 }
@@ -797,7 +813,9 @@ function ArenaContent() {
   useEffect(() => {
     if (status === 'DRAFT') return;
     if (user && token && selectedStageNumber) {
-      loadStage(selectedStageNumber);
+      if (pendingStageLoadRef.current?.stage === selectedStageNumber) return;
+      const cachedKey = unlockedStagePasswordsRef.current[selectedStageNumber];
+      loadStage(selectedStageNumber, cachedKey);
     }
   }, [user?.id, token, selectedStageNumber, status, loadStage]);
 
@@ -805,13 +823,23 @@ function ArenaContent() {
   const handlePasswordSubmit = async (password: string) => {
     if (!activeZipBlob) return;
     try {
-      const extractedFiles = await extractZipInBrowser(
-        activeZipBlob,
-        password,
-        allowedCopyFilename
-      );
+      const copyName =
+        stages.find((s) => s.stageNumber === selectedStageNumber)?.allowedCopyFilename ||
+        allowedCopyFilename ||
+        'AI_TUTOR_PROMPT.txt';
+      const extracted =
+        usingTokenArchiveRef.current
+          ? (
+              await extractStageArchiveInBrowser(
+                activeZipBlob,
+                password,
+                copyName,
+                selectedStageNumber
+              )
+            ).files
+          : await extractZipInBrowser(activeZipBlob, password, copyName);
 
-      const taggedFiles = extractedFiles.map((f) => ({ ...f, stageNumber: selectedStageNumber }));
+      const taggedFiles = extracted.map((f) => ({ ...f, stageNumber: selectedStageNumber }));
       stageFilesMapRef.current[selectedStageNumber] = taggedFiles;
       setFiles(taggedFiles);
       setStageFilesMap((prev) => ({ ...prev, [selectedStageNumber]: taggedFiles }));
@@ -869,9 +897,17 @@ function ArenaContent() {
       return next;
     });
 
-    // Advance to next stage and immediately extract with the validated password
+    setIsPasswordModalOpen(false);
+    setPasswordModalError(null);
+    setIsUnlockModalOpen(false);
+
+    pendingStageLoadRef.current = { stage: nextStageNumber, password };
     setSelectedStageNumber(nextStageNumber);
-    loadStage(nextStageNumber, password);
+    void loadStage(nextStageNumber, password).finally(() => {
+      if (pendingStageLoadRef.current?.stage === nextStageNumber) {
+        pendingStageLoadRef.current = null;
+      }
+    });
   };
 
   if (isDisqualified || user?.role === 'disqualified' || user?.is_disqualified) {
