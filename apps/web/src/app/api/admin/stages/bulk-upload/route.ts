@@ -219,7 +219,11 @@ export async function POST(req: NextRequest) {
       const passwordMeta: Array<{ teamName: string; primaryToken: string; passwords?: string[] }> = [];
 
       for (const arch of archives) {
-        const { accessToken, teamName, tokens, storagePath, stageCount, passwords } = arch;
+        let { accessToken, teamName, tokens, storagePath, stageCount, passwords } = arch;
+        if ((!passwords || passwords.length === 0) && arch.poolKey) {
+          const { passwordArrayForPoolKey } = await import('@/lib/case-study-password-keys');
+          passwords = passwordArrayForPoolKey(arch.poolKey);
+        }
         const targetTokens =
           tokens && tokens.length > 0 ? tokens : accessToken ? [accessToken] : [];
 

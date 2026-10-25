@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { verifyParticipantToken } from '@/lib/auth';
 import { getSupabaseAdmin, isSupabaseConfigured } from '@/lib/supabase';
 import { getPasswordAttemptState, registerPasswordFailure, clearPasswordAttemptState } from '@/lib/password-attempts';
-import { KNOWN_STAGE_PASSWORDS } from '@/lib/stage-password';
+import { isStagePasswordValidForUser } from '@/lib/stage-password';
 import { wasStageBypassed } from '@/lib/stage-bypass-db';
 
 /**
@@ -65,73 +65,14 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    let isPasswordValid = false;
-
-    // Check known answer key first
-    if (KNOWN_STAGE_PASSWORDS[stageNum] && KNOWN_STAGE_PASSWORDS[stageNum].toUpperCase() === cleanPassword.toUpperCase()) {
-      isPasswordValid = true;
-    }
-
     const supabaseAdmin = isSupabaseConfigured ? getSupabaseAdmin() : null;
-
-    if (!isPasswordValid && supabaseAdmin) {
-      // Check database token_archives and stage_passwords
-      try {
-        let { data: archiveRecord } = await supabaseAdmin
-          .from('token_archives')
-          .select('id')
-          .eq('access_token', accessToken)
-          .maybeSingle();
-
-        if (!archiveRecord && user.team_name) {
-          try {
-            const { data: teamArchive } = await supabaseAdmin
-              .from('token_archives')
-              .select('id')
-              .eq('team_name', user.team_name)
-              .order('uploaded_at', { ascending: false })
-              .limit(1)
-              .maybeSingle();
-            if (teamArchive) archiveRecord = teamArchive;
-          } catch {}
-        }
-
-        if (archiveRecord) {
-          const { data: pwRow } = await supabaseAdmin
-            .from('stage_passwords')
-            .select('password')
-            .eq('token_archive_id', archiveRecord.id)
-            .eq('stage_number', stageNum)
-            .maybeSingle();
-
-          if (pwRow && pwRow.password) {
-            isPasswordValid = pwRow.password.trim().toUpperCase() === cleanPassword.toUpperCase();
-          } else {
-            // Client in-browser RAM extraction of encrypted nested zip proves key
-            isPasswordValid = true;
-          }
-        } else {
-          // Check stages table
-          const { data: stageRow } = await supabaseAdmin
-            .from('stages')
-            .select('zip_password')
-            .eq('stage_number', stageNum)
-            .maybeSingle();
-
-          if (stageRow && stageRow.zip_password) {
-            isPasswordValid = stageRow.zip_password.trim().toUpperCase() === cleanPassword.toUpperCase();
-          } else {
-            isPasswordValid = true;
-          }
-        }
-      } catch {
-        isPasswordValid = true;
-      }
-    }
-
-    if (!isPasswordValid && !isSupabaseConfigured) {
-      isPasswordValid = true;
-    }
+    const isPasswordValid = await isStagePasswordValidForUser(
+      supabaseAdmin,
+      accessToken,
+      user,
+      stageNum,
+      cleanPassword
+    );
 
     if (!isPasswordValid) {
       const failState = await registerPasswordFailure(user, stageNum);

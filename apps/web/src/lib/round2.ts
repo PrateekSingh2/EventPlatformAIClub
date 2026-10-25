@@ -1,4 +1,5 @@
 import type { FinalTeamRecord } from '@/lib/final-teams';
+import { passwordArrayForPoolKey } from '@/lib/case-study-password-keys';
 
 export function filterFinalTeamsByKeys(
   teams: FinalTeamRecord[],
@@ -92,6 +93,7 @@ export function teamsToPoolCommitArchives(
       storagePath: item.storagePath,
       stageCount,
       poolKey: item.poolKey,
+      passwords: passwordArrayForPoolKey(item.poolKey),
     };
   });
 }

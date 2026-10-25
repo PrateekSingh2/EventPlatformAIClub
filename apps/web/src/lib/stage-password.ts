@@ -1,6 +1,10 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import {
+  getStagePasswordForStoragePath,
+  passwordMatchesCaseStudyStage,
+} from '@/lib/case-study-password-keys';
 
-/** Nested case-study unlock passwords (fallback when DB row missing). */
+/** @deprecated Use per-pool PASSWORD_KEY.json via storage_path — kept for legacy tests only */
 export const KNOWN_STAGE_PASSWORDS: Record<number, string> = {
   2: 'SEV2-PAYMENT-1431',
   3: '143401-143210',
@@ -17,46 +21,63 @@ export const KNOWN_STAGE_PASSWORDS: Record<number, string> = {
 
 type UserLike = { id: string; team_name?: string | null };
 
+async function loadTokenArchive(
+  supabaseAdmin: SupabaseClient,
+  accessToken: string,
+  user: UserLike
+): Promise<{ id: string; storage_path: string } | null> {
+  let { data: archiveRecord } = await supabaseAdmin
+    .from('token_archives')
+    .select('id, storage_path')
+    .eq('access_token', accessToken.trim().toUpperCase())
+    .maybeSingle();
+
+  if (!archiveRecord && user.team_name) {
+    const { data: teamArchive } = await supabaseAdmin
+      .from('token_archives')
+      .select('id, storage_path')
+      .eq('team_name', user.team_name)
+      .order('uploaded_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (teamArchive) archiveRecord = teamArchive;
+  }
+
+  if (!archiveRecord?.storage_path) return null;
+  return { id: archiveRecord.id, storage_path: archiveRecord.storage_path };
+}
+
 export async function resolveStagePasswordForUser(
   supabaseAdmin: SupabaseClient | null,
   accessToken: string,
   user: UserLike,
   stageNum: number
 ): Promise<string | null> {
-  if (KNOWN_STAGE_PASSWORDS[stageNum]) {
-    return KNOWN_STAGE_PASSWORDS[stageNum];
+  if (supabaseAdmin) {
+    try {
+      const archive = await loadTokenArchive(supabaseAdmin, accessToken, user);
+      if (archive?.storage_path) {
+        const fromPool = getStagePasswordForStoragePath(archive.storage_path, stageNum);
+        if (fromPool) return fromPool;
+
+        const { data: pwRow } = await supabaseAdmin
+          .from('stage_passwords')
+          .select('password')
+          .eq('token_archive_id', archive.id)
+          .eq('stage_number', stageNum)
+          .maybeSingle();
+        if (pwRow?.password) return String(pwRow.password).trim();
+      }
+    } catch {
+      /* fall through */
+    }
   }
 
-  if (!supabaseAdmin) return null;
+  if (!supabaseAdmin) {
+    return KNOWN_STAGE_PASSWORDS[stageNum] ?? null;
+  }
 
   try {
-    let { data: archiveRecord } = await supabaseAdmin
-      .from('token_archives')
-      .select('id')
-      .eq('access_token', accessToken)
-      .maybeSingle();
-
-    if (!archiveRecord && user.team_name) {
-      const { data: teamArchive } = await supabaseAdmin
-        .from('token_archives')
-        .select('id')
-        .eq('team_name', user.team_name)
-        .order('uploaded_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      if (teamArchive) archiveRecord = teamArchive;
-    }
-
-    if (archiveRecord) {
-      const { data: pwRow } = await supabaseAdmin
-        .from('stage_passwords')
-        .select('password')
-        .eq('token_archive_id', archiveRecord.id)
-        .eq('stage_number', stageNum)
-        .maybeSingle();
-      if (pwRow?.password) return String(pwRow.password).trim();
-    }
-
     const { data: stageRow } = await supabaseAdmin
       .from('stages')
       .select('zip_password')
@@ -68,4 +89,60 @@ export async function resolveStagePasswordForUser(
   }
 
   return null;
+}
+
+export async function isStagePasswordValidForUser(
+  supabaseAdmin: SupabaseClient | null,
+  accessToken: string,
+  user: UserLike,
+  stageNum: number,
+  password: string
+): Promise<boolean> {
+  const clean = password.trim();
+  if (!clean) return false;
+
+  if (supabaseAdmin) {
+    try {
+      const archive = await loadTokenArchive(supabaseAdmin, accessToken, user);
+      if (archive?.storage_path) {
+        if (passwordMatchesCaseStudyStage(archive.storage_path, stageNum, clean)) {
+          return true;
+        }
+        const { data: pwRow } = await supabaseAdmin
+          .from('stage_passwords')
+          .select('password')
+          .eq('token_archive_id', archive.id)
+          .eq('stage_number', stageNum)
+          .maybeSingle();
+        if (pwRow?.password) {
+          return pwRow.password.trim().toUpperCase() === clean.toUpperCase();
+        }
+        // Nested ZIP unlock in browser already validated the key
+        return true;
+      }
+    } catch {
+      /* continue */
+    }
+  }
+
+  if (KNOWN_STAGE_PASSWORDS[stageNum]?.toUpperCase() === clean.toUpperCase()) {
+    return true;
+  }
+
+  if (!supabaseAdmin) return true;
+
+  try {
+    const { data: stageRow } = await supabaseAdmin
+      .from('stages')
+      .select('zip_password')
+      .eq('stage_number', stageNum)
+      .maybeSingle();
+    if (stageRow?.zip_password) {
+      return stageRow.zip_password.trim().toUpperCase() === clean.toUpperCase();
+    }
+  } catch {
+    return true;
+  }
+
+  return true;
 }
