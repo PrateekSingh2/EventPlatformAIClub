@@ -110,18 +110,10 @@ function mergedNameFromStoredHalls(
     return null;
 }
 
-/** All labels for Round 1 dropdowns: merged name, each source, and each " X " segment. */
+/** Round 1 dropdown: one entry per final squad — full merged name only (no source / segment aliases). */
 export function buildFinalTeamDropdownLabels(teams: FinalTeamRecord[]): string[] {
     const seen = new Set<string>();
     const out: string[] = [];
-    const add = (raw: string) => {
-        const t = cleanPlatformLabel(raw);
-        if (!t) return;
-        const k = t.toLowerCase();
-        if (seen.has(k)) return;
-        seen.add(k);
-        out.push(t);
-    };
 
     const sorted = [...teams].sort((a, b) =>
         displayTeamNameFromRecord(a).localeCompare(displayTeamNameFromRecord(b), undefined, {
@@ -130,12 +122,27 @@ export function buildFinalTeamDropdownLabels(teams: FinalTeamRecord[]): string[]
     );
 
     for (const team of sorted) {
-        add(displayTeamNameFromRecord(team));
-        for (const src of team.source_team_names) add(src);
-        for (const part of displayTeamNameFromRecord(team).split(/\s+X\s+/i)) add(part);
+        const label = displayTeamNameFromRecord(team);
+        const k = label.trim().toLowerCase();
+        if (!k || seen.has(k)) continue;
+        seen.add(k);
+        out.push(label);
     }
 
     return out.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+}
+
+/** True when `name` is an alias (solo source or segment) that maps to a different merged canonical name. */
+export function isRound1TeamNameAlias(
+    name: string,
+    aliasMap: Map<string, string> | Record<string, string>
+): boolean {
+    const key = name.trim().toLowerCase();
+    if (!key) return false;
+    const canon =
+        aliasMap instanceof Map ? aliasMap.get(key) : (aliasMap as Record<string, string>)[key];
+    if (!canon) return false;
+    return canon.trim().toLowerCase() !== key;
 }
 
 /** Map any alias (source / segment / merged) → canonical merged team_name for leaderboard grouping. */

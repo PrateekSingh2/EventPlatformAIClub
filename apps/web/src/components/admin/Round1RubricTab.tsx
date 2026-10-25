@@ -257,6 +257,64 @@ export function Round1RubricTab({ adminSecret }: Round1RubricTabProps) {
     );
   }, [finalTeamNames, evaluatedTeamKeys, canonicalTeamName]);
 
+  const mergedTeamNameSet = useMemo(
+    () => new Set(finalTeamNames.map((n) => n.trim().toLowerCase())),
+    [finalTeamNames]
+  );
+
+  const teamNameDiscrepancies = useMemo(() => {
+    if (finalTeamNames.length === 0 || Object.keys(teamAliasToCanonical).length === 0) {
+      return [];
+    }
+    const seen = new Set<string>();
+    const rows: {
+      id: string;
+      storedTeamName: string;
+      canonicalTeamName: string;
+      judgeName: string;
+      totalScore: number;
+      reason: 'alias' | 'not_on_roster';
+    }[] = [];
+
+    for (const ev of evaluations) {
+      const stored = (ev.team_name || '').trim();
+      if (!stored) continue;
+      const canon = canonicalTeamName(stored);
+      const storedKey = stored.toLowerCase();
+      const canonKey = canon.toLowerCase();
+      if (seen.has(ev.id)) continue;
+
+      if (storedKey !== canonKey) {
+        seen.add(ev.id);
+        rows.push({
+          id: ev.id,
+          storedTeamName: stored,
+          canonicalTeamName: canon,
+          judgeName: ev.judge_name || '',
+          totalScore: Number(ev.total_score) || 0,
+          reason: 'alias',
+        });
+        continue;
+      }
+
+      if (!mergedTeamNameSet.has(canonKey)) {
+        seen.add(ev.id);
+        rows.push({
+          id: ev.id,
+          storedTeamName: stored,
+          canonicalTeamName: canon,
+          judgeName: ev.judge_name || '',
+          totalScore: Number(ev.total_score) || 0,
+          reason: 'not_on_roster',
+        });
+      }
+    }
+
+    return rows.sort((a, b) =>
+      a.canonicalTeamName.localeCompare(b.canonicalTeamName, undefined, { sensitivity: 'base' })
+    );
+  }, [evaluations, finalTeamNames, teamAliasToCanonical, canonicalTeamName, mergedTeamNameSet]);
+
   useEffect(() => {
     if (!teamName.trim()) return;
     if (evaluatedTeamKeys.has(teamName.trim().toLowerCase())) {
@@ -792,6 +850,61 @@ export function Round1RubricTab({ adminSecret }: Round1RubricTabProps) {
         </div>
       </div>
 
+      {teamNameDiscrepancies.length > 0 && (
+        <div className="p-3.5 sm:p-4 rounded-xl bg-rose-500/10 border border-rose-500/25 text-xs space-y-3">
+          <div className="flex items-start gap-2">
+            <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+            <div className="space-y-1 min-w-0">
+              <p className="font-semibold text-rose-200">
+                Team name mismatch ({teamNameDiscrepancies.length})
+              </p>
+              <p className="text-rose-200/80 text-[11px] leading-relaxed">
+                These judgments were saved under a solo or old team label, but the locked final roster
+                uses the merged name. Delete the row and re-evaluate using the merged team from the
+                dropdown.
+              </p>
+            </div>
+          </div>
+          <ul className="space-y-2 max-h-56 overflow-y-auto pr-1">
+            {teamNameDiscrepancies.map((row) => (
+              <li
+                key={row.id}
+                className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-2.5 rounded-lg bg-app-surface/80 border border-rose-500/20"
+              >
+                <div className="min-w-0 space-y-0.5">
+                  <p className="text-app-text font-medium truncate">
+                    Saved as: <span className="text-rose-200">{row.storedTeamName}</span>
+                  </p>
+                  <p className="text-app-subtext truncate">
+                    Final merged team:{' '}
+                    <span className="text-emerald-300/90">{row.canonicalTeamName}</span>
+                    {row.judgeName ? (
+                      <span className="text-app-subtext/80">
+                        {' '}
+                        · Judge {row.judgeName} · {row.totalScore}/100
+                      </span>
+                    ) : null}
+                  </p>
+                  {row.reason === 'not_on_roster' && (
+                    <p className="text-[10px] text-amber-300/90">
+                      Name not on current final merged roster — confirm merge sync, then re-review.
+                    </p>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleDeleteEvaluation(row.id, row.storedTeamName)}
+                  className="shrink-0 inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-rose-500/30 text-rose-200 hover:bg-rose-500/15 text-[11px] font-semibold transition-colors cursor-pointer"
+                >
+                  <Trash2 className="w-3 h-3" />
+                  Delete &amp; re-review
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {/* Supabase Notice (If table is not yet in Supabase schema) */}
       {!tableExists && (
         <div className="p-3.5 sm:p-4 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-200 space-y-2">
@@ -1075,10 +1188,9 @@ export function Round1RubricTab({ adminSecret }: Round1RubricTabProps) {
                           ))}
                         </select>
                         <p className="text-[10px] text-app-subtext">
-                          {teamsAvailableForEvaluation.length} team
-                          {teamsAvailableForEvaluation.length === 1 ? '' : 's'} pending
+                          Merged final teams only · {teamsAvailableForEvaluation.length} pending
                           {evaluatedTeamKeys.size > 0
-                            ? ` · ${evaluatedTeamKeys.size} already evaluated`
+                            ? ` · ${evaluatedTeamKeys.size} evaluated (canonical names)`
                             : ''}
                         </p>
                       </>

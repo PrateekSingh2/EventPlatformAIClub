@@ -8,11 +8,7 @@ import {
   canonicalizeRound1TeamName,
   displayTeamNameFromRecord,
 } from '@/lib/final-teams';
-import {
-  isFinalTeamsTableReady,
-  loadFinalTeams,
-  loadFinalTeamsConfig,
-} from '@/lib/final-teams-db';
+import { isFinalTeamsTableReady, loadFinalTeams } from '@/lib/final-teams-db';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
@@ -53,14 +49,13 @@ function normalizeRound1TeamKey(teamName: string): string {
   return teamName.trim().toLowerCase();
 }
 
-async function loadRound1AliasMapIfLocked(): Promise<Map<string, string>> {
+async function loadRound1AliasMap(): Promise<Map<string, string>> {
   if (!(await isFinalTeamsTableReady())) return new Map();
-  const config = await loadFinalTeamsConfig();
-  if (!config.locked) return new Map();
   const teams = (await loadFinalTeams()).map((t) => ({
     ...t,
     team_name: displayTeamNameFromRecord(t),
   }));
+  if (teams.length === 0) return new Map();
   return buildFinalTeamAliasMap(teams);
 }
 
@@ -101,17 +96,7 @@ export async function GET(req: NextRequest) {
 
     const { evaluations, tableExists } = await loadStoredEvaluations();
 
-    let aliasMap = new Map<string, string>();
-    if (await isFinalTeamsTableReady()) {
-      const config = await loadFinalTeamsConfig();
-      if (config.locked) {
-        const teams = (await loadFinalTeams()).map((t) => ({
-          ...t,
-          team_name: displayTeamNameFromRecord(t),
-        }));
-        aliasMap = buildFinalTeamAliasMap(teams);
-      }
-    }
+    const aliasMap = await loadRound1AliasMap();
 
     const canonicalEvaluations =
       aliasMap.size > 0
@@ -196,7 +181,7 @@ export async function POST(req: NextRequest) {
     }
 
     const { evaluations: existingEvaluations } = await loadStoredEvaluations();
-    const aliasMap = await loadRound1AliasMapIfLocked();
+    const aliasMap = await loadRound1AliasMap();
     const resolvedTeamName = aliasMap.size
       ? canonicalizeRound1TeamName(team_name, aliasMap)
       : team_name.trim();
