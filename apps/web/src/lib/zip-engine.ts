@@ -371,17 +371,35 @@ export async function extractStageZipFromOuter(
   throw new ZipEngineError('EXTRACTION_FAILED', `Stage ${stageNum} nested archive not found in outer ZIP.`);
 }
 
-/** True when `password` decrypts `STAGE_NN.zip` inside the team archive (unlock check only). */
+/** True when `password` decrypts stage N (flat outer STAGE_NN or nested chain inside prior stages). */
 export async function verifyStageUnlockPassword(
   outerTokenArchive: Blob,
   stageNumber: number,
-  password: string
+  password: string,
+  options?: { stagePasswords?: Record<number, string> }
 ): Promise<boolean> {
   const clean = password.trim();
   if (!clean || stageNumber < 2) return false;
+
   try {
     await extractStageZipFromOuter(outerTokenArchive, stageNumber, clean);
     return true;
+  } catch {
+    /* fall through — case-study packs nest STAGE_03 inside decrypted STAGE_02, etc. */
+  }
+
+  const mergedPasswords: Record<number, string> = {
+    ...(options?.stagePasswords ?? {}),
+    [stageNumber]: clean,
+  };
+
+  try {
+    const stageBlob = await resolveNextStageZipBlob(outerTokenArchive, stageNumber, {
+      stagePasswords: mergedPasswords,
+    });
+    if (!stageBlob) return false;
+    const result = await extractStageArchiveInBrowser(stageBlob, clean, '', stageNumber);
+    return result.files.length > 0 || result.hasNextZip;
   } catch {
     return false;
   }

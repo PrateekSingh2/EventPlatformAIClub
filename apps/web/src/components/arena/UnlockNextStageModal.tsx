@@ -141,6 +141,11 @@ export function UnlockNextStageModal({
       return;
     }
 
+    const passwordContext: Record<number, string> = {
+      ...(stagePasswords ?? {}),
+      [nextStageNumber]: cleanPassword,
+    };
+
     setValidating(true);
     setErrorMessage(null);
     setSuccessMessage(null);
@@ -226,7 +231,8 @@ export function UnlockNextStageModal({
           offlineValid = await verifyStageUnlockPassword(
             tokenArchiveBlob,
             nextStageNumber,
-            cleanPassword
+            cleanPassword,
+            { stagePasswords: passwordContext }
           );
           if (!offlineValid) {
             applyFailureCooldown(undefined, 'Invalid stage key. Decryption failed.');
@@ -301,7 +307,8 @@ export function UnlockNextStageModal({
         const unlockOk = await verifyStageUnlockPassword(
           tokenArchiveBlob,
           nextStageNumber,
-          cleanPassword
+          cleanPassword,
+          { stagePasswords: passwordContext }
         );
         if (!unlockOk) {
           // Password wrong — register failure with server
