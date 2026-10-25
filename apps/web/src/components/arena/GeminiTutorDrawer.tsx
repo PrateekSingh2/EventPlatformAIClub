@@ -117,25 +117,16 @@ export function GeminiTutorDrawer({
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const activeModelRef = useRef<{ model: string; apiVersion: string } | null>(null);
   const lastCallRef = useRef<{ userPrompt: string; systemInstruction?: string } | null>(null);
 
-  const CANDIDATE_MODELS = [
-    { model: 'gemini-flash-latest', apiVersion: 'v1beta' },
-    { model: 'gemini-3.8-flash', apiVersion: 'v1beta' },
-    { model: 'gemini-2.5-flash-lite', apiVersion: 'v1beta' },
-    { model: 'gemini-flash-lite-latest', apiVersion: 'v1beta' },
-  ];
-
-  // Helper sleep function for backoff
-  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-  // Load API key from persistent storage on mount
+  // Load API key from persistent storage on mount (optional BYOK; server GEMINI_API_KEY preferred)
   useEffect(() => {
     try {
+      const fromEnv = (process.env.NEXT_PUBLIC_GEMINI_API_KEY || '').trim();
       const stored =
         localStorage.getItem('contest_gemini_api_key') ||
         sessionStorage.getItem('contest_gemini_api_key') ||
+        fromEnv ||
         '';
       if (stored) {
         setApiKey(stored);
@@ -170,22 +161,25 @@ export function GeminiTutorDrawer({
     setError(null);
   };
 
-  // Call Gemini REST API directly from client browser
+  // Route through platform API (server key or BYOK) with stable model fallbacks
   const executeGeminiCall = async (userPrompt: string, systemInstruction?: string) => {
-    const cleanKey = apiKey.trim();
-    if (!cleanKey) {
-      setIsEditingKey(true);
-      setError('Please enter your Google Gemini API key from Google AI Studio to proceed.');
-      return;
-    }
-
     lastCallRef.current = { userPrompt, systemInstruction };
     setLoading(true);
     setError(null);
 
+    const accessToken =
+      typeof window !== 'undefined'
+        ? (localStorage.getItem('participant_token') || '').trim().toUpperCase()
+        : '';
+    if (!accessToken) {
+      setLoading(false);
+      setError('Arena token missing. Sign in again from the home page and re-enter your team code.');
+      return;
+    }
+
+    const cleanKey = apiKey.trim();
     const currentTime = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
 
-    // Append user message to thread if not already present as the last message
     setMessages((prev) => {
       const lastMsg = prev[prev.length - 1];
       if (lastMsg && lastMsg.sender === 'user' && lastMsg.text === userPrompt) {
@@ -214,171 +208,60 @@ CORE DIRECTIVES:
 4. SYNTAX-HIGHLIGHTED CODE: Always wrap code inside standard markdown fences (\`\`\`python ... \`\`\`) with brief, helpful inline comments.
 5. GUIDED SOLVING: Guide contestants methodologically on how to implement the solution and extract the stage key themselves without just giving away secrets without understanding.`;
 
-    // Order models: prioritize cached working model, then fallback candidates
-    const modelsToTry = activeModelRef.current
-      ? [
-          activeModelRef.current,
-          ...CANDIDATE_MODELS.filter((m) => m.model !== activeModelRef.current?.model),
-        ]
-      : CANDIDATE_MODELS;
-
-    let responseText: string | null = null;
-    let fatalError: string | null = null;
-
-    for (let i = 0; i < modelsToTry.length; i++) {
-      const { model, apiVersion } = modelsToTry[i];
-      const endpoint = `https://generativelanguage.googleapis.com/${apiVersion}/models/${model}:generateContent?key=${encodeURIComponent(cleanKey)}`;
-
-      const payload = {
-        contents: [
-          {
-            role: 'user',
-            parts: [
-              {
-                text: `${systemPrompt}\n\nUser Directive / Question:\n${userPrompt}`,
-              },
-            ],
-          },
-        ],
-        generationConfig: {
-          temperature: 0.6,
-          maxOutputTokens: 2048,
-        },
-      };
-
-      let attempt = 0;
-      let shouldTryNextModel = false;
-
-      while (attempt < 2) {
-        attempt++;
-        try {
-          const res = await fetch(endpoint, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'x-goog-api-key': cleanKey,
-            },
-            body: JSON.stringify(payload),
-          });
-
-          // Handle 429: Rate limit / Quota burst / 0-quota model routing
-          if (res.status === 429) {
-            const errData = await res.json().catch(() => null);
-            const errText = (errData?.error?.message || '').toLowerCase();
-
-            // If error is specific to a 0-quota model (like gemini-2.5-pro-tts with limit: 0), try next working model immediately!
-            if (errText.includes('limit: 0') || errText.includes('tts') || errText.includes('pro-tts')) {
-              shouldTryNextModel = true;
-              break;
-            }
-
-            if (attempt === 1) {
-              await sleep(2000);
-              continue;
-            } else {
-              // Try next fallback model before failing
-              shouldTryNextModel = true;
-              break;
-            }
-          }
-
-          const data = await res.json().catch(() => null);
-
-          if (!res.ok) {
-            const serverMsg = (data?.error?.message || `HTTP ${res.status}`).trim();
-
-            // Check for invalid API Key
-            if (
-              res.status === 400 &&
-              (serverMsg.includes('API_KEY_INVALID') ||
-                serverMsg.toLowerCase().includes('api key not valid') ||
-                serverMsg.toLowerCase().includes('key not valid'))
-            ) {
-              fatalError =
-                'Invalid Google Gemini API Key. Please verify your key at https://aistudio.google.com/app/apikey.';
-              break;
-            }
-
-            // Check for Google Cloud project billing required error
-            if (
-              serverMsg.toLowerCase().includes('billing enabled') ||
-              serverMsg.toLowerCase().includes('quota exceeded for quota metric')
-            ) {
-              fatalError =
-                'Your Google Cloud project requires billing or has a 0-quota limit. For a 100% free key with no billing required, generate one at https://aistudio.google.com/app/apikey.';
-              break;
-            }
-
-            // Model not found on this endpoint (404) -> advance to next fallback candidate
-            if (res.status === 404 || serverMsg.includes('not found') || serverMsg.includes('no longer available')) {
-              shouldTryNextModel = true;
-              break;
-            }
-
-            fatalError = serverMsg;
-            break;
-          }
-
-          const parts = data?.candidates?.[0]?.content?.parts || [];
-          const answerParts = parts.filter((p: any) => !p.thought);
-          const rawText = (answerParts.length > 0 ? answerParts : parts)
-            .map((p: any) => p.text)
-            .filter(Boolean)
-            .join('\n')
-            .trim();
-
-          if (rawText) {
-            responseText = rawText;
-            activeModelRef.current = { model, apiVersion };
-            break;
-          } else {
-            const finishReason = data?.candidates?.[0]?.finishReason;
-            if (finishReason && finishReason !== 'STOP') {
-              responseText = `[Response generation paused with reason: ${finishReason}. Please refine your prompt.]`;
-              activeModelRef.current = { model, apiVersion };
-              break;
-            }
-            shouldTryNextModel = true;
-            break;
-          }
-        } catch (fetchErr: any) {
-          if (attempt === 1) {
-            await sleep(1500);
-            continue;
-          }
-          fatalError = fetchErr?.message || 'Network connection to Google Gemini API failed.';
-          break;
-        }
-      }
-
-      if (responseText || fatalError) {
-        break;
-      }
-
-      if (shouldTryNextModel && i < modelsToTry.length - 1) {
-        await sleep(800);
-      }
-    }
-
     try {
-      if (responseText) {
-        const geminiMsgId = Math.random().toString(36).substring(7);
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: geminiMsgId,
-            sender: 'gemini',
-            text: responseText!,
-            timestamp: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
-          },
-        ]);
-        setError(null);
-      } else {
+      const res = await fetch('/api/gemini/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          accessToken,
+          userPrompt,
+          systemInstruction: systemPrompt,
+          stageNumber,
+          ...(cleanKey ? { clientApiKey: cleanKey } : {}),
+        }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        if (data.useClientKey && !cleanKey) {
+          setIsEditingKey(true);
+          setError(
+            data.error ||
+              'Add a free API key from Google AI Studio (aistudio.google.com/app/apikey), or ask the organizer to set GEMINI_API_KEY on the server.'
+          );
+          return;
+        }
         setError(
-          fatalError ||
-            'Could not generate response from Gemini. Please verify your Google AI Studio API key at https://aistudio.google.com/app/apikey.'
+          typeof data.error === 'string'
+            ? data.error
+            : 'Gemini tutor unavailable. Use a Google AI Studio key — not a restricted GCP project key.'
         );
+        return;
       }
+
+      const responseText = typeof data.text === 'string' ? data.text.trim() : '';
+      if (!responseText) {
+        setError('Empty response from Gemini. Try again with a shorter question.');
+        return;
+      }
+
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: Math.random().toString(36).substring(7),
+          sender: 'gemini',
+          text: responseText,
+          timestamp: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+        },
+      ]);
+      setError(null);
+    } catch (fetchErr: unknown) {
+      setError(
+        fetchErr instanceof Error
+          ? fetchErr.message
+          : 'Network error while contacting the Gemini tutor.'
+      );
     } finally {
       setLoading(false);
     }

@@ -2,12 +2,10 @@
 
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { enqueueTelemetryPing, flushOfflineTelemetryQueue } from '@/lib/offline-telemetry-queue';
-import {
-  ShieldAlert,
-  Maximize2,
-  Tv2,
-  AppWindow,
-} from 'lucide-react';
+import { ShieldAlert, Maximize2, AppWindow } from 'lucide-react';
+
+/** Arena lock for extended displays — disabled (false positives on many laptops / dev setups). */
+const MULTI_MONITOR_ARENA_LOCK = false;
 
 interface AntiCheatWrapperProps {
   children: React.ReactNode;
@@ -203,58 +201,26 @@ export function AntiCheatWrapper({
     return { isViolating: false, reason: '' };
   }, []);
 
-  // Continuous monitoring: Screen Details API and window boundary tracking.
+  // Multi-display boundary lock disabled — see MULTI_MONITOR_ARENA_LOCK.
   useEffect(() => {
+    if (!MULTI_MONITOR_ARENA_LOCK) return;
     const runCheck = () => {
       const result = inspectDisplayAndWindowBounds();
       if (result.isViolating) {
         setIsMultiMonitorViolation(true);
         setMultiMonitorViolationReason(result.reason);
-
-        // Immediately trigger blurred arena lock and dispatch telemetry beacon once per violation
         if (!hasReportedMultiMonitorRef.current) {
           sendTelemetryPing('multi_monitor_detected');
           hasReportedMultiMonitorRef.current = true;
         }
       }
     };
-
-    // Run initial inspection
     runCheck();
-
-    // Responsive heartbeat check every 250ms
     const intervalId = setInterval(runCheck, 250);
-
-    // Event listeners
     window.addEventListener('resize', runCheck);
-
-    if (window.screen && (window.screen as any).addEventListener) {
-      (window.screen as any).addEventListener('change', runCheck);
-    }
-
-    let permissionStatus: { removeEventListener: (type: string, listener: () => void) => void } | null =
-      null;
-
-    // Window Management API permission change listener if supported
-    if (typeof navigator !== 'undefined' && (navigator as any).permissions?.query) {
-      (navigator as any).permissions
-        .query({ name: 'window-management' as any })
-        .then((status: any) => {
-          permissionStatus = status;
-          status.addEventListener('change', runCheck);
-        })
-        .catch(() => {});
-    }
-
     return () => {
       clearInterval(intervalId);
       window.removeEventListener('resize', runCheck);
-      if (window.screen && (window.screen as any).removeEventListener) {
-        (window.screen as any).removeEventListener('change', runCheck);
-      }
-      if (permissionStatus) {
-        permissionStatus.removeEventListener('change', runCheck);
-      }
     };
   }, [inspectDisplayAndWindowBounds, sendTelemetryPing]);
 
@@ -375,12 +341,6 @@ export function AntiCheatWrapper({
       // 1. Block F12
       if (e.key === 'F12') {
         e.preventDefault();
-        setIsMultiMonitorViolation(true);
-        setMultiMonitorViolationReason('DevTools shortcut attempt detected (F12).');
-        if (!hasReportedMultiMonitorRef.current) {
-          sendTelemetryPing('multi_monitor_detected');
-          hasReportedMultiMonitorRef.current = true;
-        }
         return false;
       }
 
@@ -392,12 +352,6 @@ export function AntiCheatWrapper({
           (e.shiftKey && ['i', 'I', 'j', 'J', 'c', 'C', 'k', 'K'].includes(e.key)))
       ) {
         e.preventDefault();
-        setIsMultiMonitorViolation(true);
-        setMultiMonitorViolationReason('DevTools shortcut attempt detected.');
-        if (!hasReportedMultiMonitorRef.current) {
-          sendTelemetryPing('multi_monitor_detected');
-          hasReportedMultiMonitorRef.current = true;
-        }
         return false;
       }
 
@@ -479,7 +433,7 @@ export function AntiCheatWrapper({
 
   // Combined lock state: active if either multi-monitor violation, window switch violation, or fullscreen exit
   const isBlurredArenaLocked =
-    isMultiMonitorViolation ||
+    (MULTI_MONITOR_ARENA_LOCK && isMultiMonitorViolation) ||
     isWindowSwitchViolation ||
     (!isFullscreen && !fullscreenWarningDismissed);
 
@@ -504,53 +458,8 @@ export function AntiCheatWrapper({
         </div>
       )}
 
-      {/* 1. Multi-Monitor & Detached Window Blurred Arena Lock Modal */}
-      {isMultiMonitorViolation && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-black/80 backdrop-blur-xl animate-in fade-in duration-200">
-          <div className="relative max-w-md w-full p-6 text-center bg-app-surface border border-rose-500/40 rounded-3xl shadow-2xl space-y-4 animate-in zoom-in-95 duration-150">
-            <div className="w-14 h-14 mx-auto rounded-2xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400 ">
-              <Tv2 className="w-7 h-7" />
-            </div>
-
-            <div className="space-y-1.5">
-              <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold tracking-wider uppercase bg-rose-950/80 border border-rose-500/50 text-rose-300">
-                <ShieldAlert className="w-3 h-3 text-rose-400" />
-                Anti-Cheat Lock: Multi-Display Violation
-              </div>
-              <h2 className="text-lg font-bold text-white tracking-tight">
-                Multi-Monitor / Detached Window Detected
-              </h2>
-              <p className="text-xs text-app-subtext leading-relaxed">
-                The Contest Arena must be run on a single primary display. Dragging windows across multiple monitors, utilizing extended displays, or opening detached DevTools windows is strictly prohibited.
-              </p>
-              {multiMonitorViolationReason && (
-                <div className="p-2.5 rounded-xl bg-rose-950/40 border border-rose-800/60 text-[11px] font-mono text-rose-300 text-left">
-                  <strong>Trigger:</strong> {multiMonitorViolationReason}
-                </div>
-              )}
-            </div>
-
-            <div className="p-2.5 rounded-xl bg-app-muted/60 border border-app-border text-[10px] font-mono text-slate-400 text-left space-y-1">
-              <div>&bull; Event telemetry logged as <span className="text-amber-400 font-bold">multi_monitor_detected</span>.</div>
-              <div>&bull; Position this window fully inside your primary monitor.</div>
-              <div>&bull; Close any detached inspection or developer windows.</div>
-            </div>
-
-            <div className="pt-2">
-              <button
-                onClick={handleResolveMultiMonitor}
-                className="w-full flex items-center justify-center gap-2 px-4 py-2.5 text-xs font-semibold rounded-xl bg-rose-600 hover:bg-rose-500 text-white transition-colors cursor-pointer "
-              >
-                <Maximize2 className="w-4 h-4" />
-                Re-align to Single Display Arena
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 2. Window Switching / Alt+Tab / Focus Loss Blurred Arena Lock Modal */}
-      {!isMultiMonitorViolation && isWindowSwitchViolation && (
+      {/* Window Switching / Alt+Tab / Focus Loss Blurred Arena Lock Modal */}
+      {isWindowSwitchViolation && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-black/80 backdrop-blur-xl animate-in fade-in duration-200">
           <div className="relative max-w-md w-full p-6 text-center bg-app-surface border border-violet-500/40 rounded-3xl shadow-2xl space-y-4 animate-in zoom-in-95 duration-150">
             <div className="w-14 h-14 mx-auto rounded-2xl bg-app-surface-raised border border-app-border flex items-center justify-center text-violet-400 ">
@@ -595,7 +504,7 @@ export function AntiCheatWrapper({
       )}
 
       {/* 3. Fullscreen Exit Blurred Arena Lock Modal */}
-      {!isMultiMonitorViolation && !isWindowSwitchViolation && !isFullscreen && !fullscreenWarningDismissed && (
+      {!isWindowSwitchViolation && !isFullscreen && !fullscreenWarningDismissed && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-black/80 backdrop-blur-xl animate-in fade-in duration-200">
           <div className="relative max-w-sm w-full p-6 text-center bg-app-surface border border-app-border rounded-3xl shadow-2xl space-y-4 animate-in zoom-in-95 duration-150">
             <div className="w-12 h-12 mx-auto rounded-2xl bg-app-muted border border-app-border flex items-center justify-center text-amber-500 shadow-xs">
