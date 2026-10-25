@@ -1,12 +1,15 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { getSupabaseAdmin } from '@/lib/supabase';
 import { sortLeaderboardUsers } from '@/lib/leaderboard-sort';
-import { overlayUsersIfFinalTeamsLocked } from '@/lib/final-teams-db';
+import { loadFinalTeams, overlayUsersIfFinalTeamsLocked } from '@/lib/final-teams-db';
+import { loadRound2Selection } from '@/lib/round2-db';
+import { filterUsersToRound2Teams } from '@/lib/round2-watcher';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
+    const scope = req.nextUrl.searchParams.get('scope');
     const supabaseAdmin = getSupabaseAdmin();
 
     const { data: users, error } = await supabaseAdmin
@@ -24,9 +27,17 @@ export async function GET() {
     const rosterAligned = await overlayUsersIfFinalTeamsLocked(baseUsers);
     let sortedUsers = sortLeaderboardUsers(rosterAligned as typeof baseUsers);
 
+    if (scope === 'round2') {
+      const [finalTeams, selection] = await Promise.all([loadFinalTeams(), loadRound2Selection()]);
+      sortedUsers = sortLeaderboardUsers(
+        filterUsersToRound2Teams(sortedUsers as typeof baseUsers, finalTeams, selection.selected_team_keys)
+      );
+    }
+
     return NextResponse.json(
       {
         success: true,
+        scope: scope === 'round2' ? 'round2' : 'all',
         users: sortedUsers,
       },
       {

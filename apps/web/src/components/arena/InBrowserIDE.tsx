@@ -96,6 +96,8 @@ interface InBrowserIDEProps {
   isLastStage?: boolean;
   onOpenCompleteModal?: () => void;
   onOpenUnlockModal: () => void;
+  onOpenBypassModal?: () => void;
+  bypassStageNumber?: number;
   onOpenLeaderboard: () => void;
   onLogout?: () => void;
   unreadBroadcastCount?: number;
@@ -131,6 +133,8 @@ export function InBrowserIDE({
   isLastStage = false,
   onOpenCompleteModal,
   onOpenUnlockModal,
+  onOpenBypassModal,
+  bypassStageNumber,
   onOpenLeaderboard,
   onLogout,
   unreadBroadcastCount = 0,
@@ -1120,18 +1124,32 @@ export function InBrowserIDE({
               </span>
             </button>
           ) : (
-            <button
-              onClick={onOpenUnlockModal}
-              className="flex items-center space-x-1 sm:space-x-1.5 px-2.5 sm:px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-xs active:scale-[0.98] transition-colors cursor-pointer whitespace-nowrap min-h-[36px]"
-              title={`Unlock Stage ${selectedStageNumber + 1}`}
-            >
-              <Lock className="w-3.5 h-3.5 shrink-0" />
-              <span className="hidden sm:inline">Unlock Stage {selectedStageNumber + 1}</span>
-              <span className="sm:hidden">Stage {selectedStageNumber + 1}</span>
-              <span className="text-[10px] font-mono font-semibold bg-emerald-700/60 px-1.5 py-0.5 rounded ml-0.5 sm:ml-1 hidden xs:inline-block">
-                +{selectedStage?.points || 100} PTS
-              </span>
-            </button>
+            <>
+              <button
+                onClick={onOpenUnlockModal}
+                className="flex items-center space-x-1 sm:space-x-1.5 px-2.5 sm:px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-xs active:scale-[0.98] transition-colors cursor-pointer whitespace-nowrap min-h-[36px]"
+                title={`Unlock Stage ${selectedStageNumber + 1}`}
+              >
+                <Lock className="w-3.5 h-3.5 shrink-0" />
+                <span className="hidden sm:inline">Unlock Stage {selectedStageNumber + 1}</span>
+                <span className="sm:hidden">Stage {selectedStageNumber + 1}</span>
+                <span className="text-[10px] font-mono font-semibold bg-emerald-700/60 px-1.5 py-0.5 rounded ml-0.5 sm:ml-1 hidden xs:inline-block">
+                  +{selectedStage?.points || 100} PTS
+                </span>
+              </button>
+              {onOpenBypassModal && bypassStageNumber && bypassStageNumber > currentStageNumber && (
+                <button
+                  type="button"
+                  onClick={onOpenBypassModal}
+                  className="flex items-center space-x-1 px-2 sm:px-2.5 py-1.5 rounded-xl border border-amber-500/50 bg-amber-950/50 hover:bg-amber-900/60 text-amber-200 font-medium text-[11px] sm:text-xs whitespace-nowrap min-h-[36px]"
+                  title="Skip password hunt (3 warnings, zero points for this stage)"
+                >
+                  <KeyRound className="w-3.5 h-3.5 shrink-0" />
+                  <span className="hidden md:inline">Bypass stage {bypassStageNumber}</span>
+                  <span className="md:hidden">Bypass</span>
+                </button>
+              )}
+            </>
           )}
 
           {/* Ask Gemini Quick Access Pill */}

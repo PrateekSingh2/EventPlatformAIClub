@@ -13,6 +13,7 @@ import {
 import { AntiCheatWrapper } from '@/components/arena/AntiCheatWrapper';
 import { InBrowserIDE } from '@/components/arena/InBrowserIDE';
 import { UnlockNextStageModal } from '@/components/arena/UnlockNextStageModal';
+import { BypassStageModal } from '@/components/arena/BypassStageModal';
 import { ZipPasswordModal } from '@/components/arena/ZipPasswordModal';
 import { DraftArenaLock } from '@/components/arena/DraftArenaLock';
 import { DisqualifiedScreen } from '@/components/arena/DisqualifiedScreen';
@@ -192,6 +193,7 @@ function ArenaContent() {
 
   // Unlock Next Stage Modal State
   const [isUnlockModalOpen, setIsUnlockModalOpen] = useState(false);
+  const [isBypassModalOpen, setIsBypassModalOpen] = useState(false);
 
   // Password Modal State
   const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
@@ -932,6 +934,8 @@ function ArenaContent() {
   }
 
   const selectedStage = stages.find((s) => s.stageNumber === selectedStageNumber);
+  const progressStage = Math.max(user?.current_stage ?? 1, selectedStageNumber);
+  const nextUnlockStageNumber = progressStage + 1;
 
   return (
     <>
@@ -998,6 +1002,8 @@ function ArenaContent() {
             }
           }}
           onOpenUnlockModal={() => setIsUnlockModalOpen(true)}
+          onOpenBypassModal={() => setIsBypassModalOpen(true)}
+          bypassStageNumber={nextUnlockStageNumber}
           onOpenLeaderboard={() => setIsLeaderboardOpen(true)}
           onLogout={async () => {
             if (token) { try { await clearTokenArchive(token); } catch {} }
@@ -1009,10 +1015,20 @@ function ArenaContent() {
         />
 
         {/* Unlock Next Stage Archive Password Modal */}
+        <BypassStageModal
+          isOpen={isBypassModalOpen}
+          stageNumber={nextUnlockStageNumber}
+          accessToken={token}
+          onClose={() => setIsBypassModalOpen(false)}
+          onPasswordRevealed={(stageNum, pw) => {
+            setUnlockedStagePasswords((prev) => ({ ...prev, [stageNum]: pw }));
+          }}
+        />
+
         <UnlockNextStageModal
           isOpen={isUnlockModalOpen}
-          currentStageNumber={Math.max(user?.current_stage ?? 1, selectedStageNumber)}
-          nextStageNumber={Math.max(user?.current_stage ?? 1, selectedStageNumber) + 1}
+          currentStageNumber={progressStage}
+          nextStageNumber={nextUnlockStageNumber}
           nextStageTitle={`Stage ${Math.max(user?.current_stage ?? 1, selectedStageNumber) + 1}`}
           points={
             stages.find(

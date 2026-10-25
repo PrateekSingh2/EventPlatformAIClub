@@ -2,21 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { verifyParticipantToken } from '@/lib/auth';
 import { getSupabaseAdmin, isSupabaseConfigured } from '@/lib/supabase';
 import { getPasswordAttemptState, registerPasswordFailure, clearPasswordAttemptState } from '@/lib/password-attempts';
-
-// Known answer key mapping for nested case study stages
-const KNOWN_STAGE_PASSWORDS: Record<number, string> = {
-  2: 'SEV2-PAYMENT-1431',
-  3: '143401-143210',
-  4: 'V2PAY-504-31',
-  5: 'P7-O1840927-C2',
-  6: 'HOT-7-M-CHAIPLANET-92',
-  7: 'POLL-2-105-228',
-  8: 'DUP-31-89920',
-  9: 'A1F9C3E-20261010-2',
-  10: 'CFG-CMP-LCK-LAG-RBL-DUP',
-  11: 'A2-A3-A6-A9',
-  12: 'H4-CONFIRMED',
-};
+import { KNOWN_STAGE_PASSWORDS } from '@/lib/stage-password';
+import { wasStageBypassed } from '@/lib/stage-bypass-db';
 
 /**
  * POST /api/stage/verify-stage-password
@@ -156,8 +143,10 @@ export async function POST(req: NextRequest) {
 
     await clearPasswordAttemptState(user, stageNum);
 
-    // 3. Award points
-    const pointsToAward = 100;
+    const bypassed = await wasStageBypassed(user.id, stageNum);
+
+    // 3. Award points (zero if participant used bypass-this-stage)
+    const pointsToAward = bypassed ? 0 : 100;
     const prevStage = user.current_stage || 1;
     const newStage = Math.max(prevStage, stageNum);
 
@@ -209,6 +198,9 @@ export async function POST(req: NextRequest) {
             completed_timestamp: completedTimestamp || Date.now(),
             duration_seconds: durationSeconds || 0,
             score_awarded: pointsToAward,
+            ...(bypassed
+              ? { flag_reason: 'stage_bypassed', flagged_too_fast: false }
+              : {}),
           },
           { onConflict: 'user_id,stage_number', ignoreDuplicates: false }
         );
@@ -219,6 +211,7 @@ export async function POST(req: NextRequest) {
       success: true,
       scoreAwarded: pointsToAward,
       nextStage: newStage,
+      bypassed,
     });
   } catch (error: any) {
     console.error('[API /stage/verify-stage-password error]:', error);

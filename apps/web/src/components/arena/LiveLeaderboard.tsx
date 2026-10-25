@@ -45,7 +45,7 @@ export function LiveLeaderboard({
 }: LiveLeaderboardProps) {
   const [users, setUsers] = useState<User[]>([]);
   const [search, setSearch] = useState('');
-  const [activeTab, setActiveTab] = useState<'all' | 'top5' | 'my-stage'>('all');
+  const [activeTab, setActiveTab] = useState<'all' | 'round2' | 'top5' | 'my-stage'>('all');
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [showRulesInfo, setShowRulesInfo] = useState(false);
   const [expandedUser, setExpandedUser] = useState<string | null>(null);
@@ -55,21 +55,23 @@ export function LiveLeaderboard({
   const isConcluded = contestStatus === 'CONCLUDED';
 
   // Combined fetch of leaderboard applying deterministic multi-tier tie-breaking
-  const fetchLeaderboard = useCallback(async (preferNetwork = true) => {
-    const cached = readClientCache<{ users: User[] }>('arena_leaderboard', 25_000);
+  const fetchLeaderboard = useCallback(async (preferNetwork = true, scope: 'all' | 'round2' = 'all') => {
+    const cacheKey = scope === 'round2' ? 'arena_leaderboard_r2' : 'arena_leaderboard';
+    const cached = readClientCache<{ users: User[] }>(cacheKey, 25_000);
     if (cached?.users?.length) {
       setUsers(sortLeaderboardUsers(cached.users));
       if (!preferNetwork) return;
     }
 
     try {
-      const res = await fetch('/api/leaderboard', { cache: 'default' });
+      const url = scope === 'round2' ? '/api/leaderboard?scope=round2' : '/api/leaderboard';
+      const res = await fetch(url, { cache: 'default' });
       if (res.ok) {
         const json = await res.json();
         if (json.success && Array.isArray(json.users)) {
           const sorted = sortLeaderboardUsers(json.users as User[]);
           setUsers(sorted);
-          writeClientCache('arena_leaderboard', { users: sorted });
+          writeClientCache(cacheKey, { users: sorted });
           return;
         }
       }
@@ -84,10 +86,11 @@ export function LiveLeaderboard({
   useEffect(() => {
     if (!isOpen) return;
 
-    fetchLeaderboard();
+    const scope = activeTab === 'round2' ? 'round2' : 'all';
+    fetchLeaderboard(true, scope);
 
     const interval = setInterval(() => {
-      fetchLeaderboard(true);
+      fetchLeaderboard(true, activeTab === 'round2' ? 'round2' : 'all');
     }, 30_000);
 
     let debounceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -103,7 +106,7 @@ export function LiveLeaderboard({
             if (debounceTimer) clearTimeout(debounceTimer);
             debounceTimer = setTimeout(() => {
               startTransition(() => {
-                fetchLeaderboard(true);
+                fetchLeaderboard(true, activeTab === 'round2' ? 'round2' : 'all');
               });
             }, 5000);
           }
@@ -118,11 +121,11 @@ export function LiveLeaderboard({
         supabase.removeChannel(channel);
       }
     };
-  }, [isOpen, fetchLeaderboard, contestStatus]);
+  }, [isOpen, fetchLeaderboard, contestStatus, activeTab]);
 
   const handleManualRefresh = async () => {
     setIsRefreshing(true);
-    await fetchLeaderboard();
+    await fetchLeaderboard(true, activeTab === 'round2' ? 'round2' : 'all');
     setTimeout(() => setIsRefreshing(false), 500);
   };
 
@@ -154,6 +157,7 @@ export function LiveLeaderboard({
     return users
       .filter((u) => {
         if (activeTab === 'top5') return true;
+        if (activeTab === 'round2') return true;
         if (activeTab === 'my-stage') return u.current_stage === currentUserStage;
         return true;
       })
@@ -305,9 +309,10 @@ export function LiveLeaderboard({
 
           {/* Interactive Filter Tabs with Animated Layout Pill */}
           <div className="p-2.5 border-b border-app-border">
-            <div className="grid grid-cols-3 gap-1 bg-app-bg p-1 rounded-xl border border-app-border shadow-inner text-[11px] relative">
+            <div className="grid grid-cols-4 gap-1 bg-app-bg p-1 rounded-xl border border-app-border shadow-inner text-[11px] relative">
               {[
                 { id: 'all' as const, label: 'All Rank' },
+                { id: 'round2' as const, label: 'Round 2' },
                 { id: 'top5' as const, label: 'Top 5' },
                 { id: 'my-stage' as const, label: `Stage ${currentUserStage}` },
               ].map((tab) => {

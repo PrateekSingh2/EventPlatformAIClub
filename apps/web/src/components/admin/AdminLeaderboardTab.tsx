@@ -23,6 +23,7 @@ export function AdminLeaderboardTab({ adminSecret }: AdminLeaderboardTabProps) {
   const [refreshing, setRefreshing] = useState(false);
   const [search, setSearch] = useState('');
   const [lastUpdated, setLastUpdated] = useState<string>('');
+  const [scope, setScope] = useState<'all' | 'round2'>('all');
 
   const fetchBoard = useCallback(
     async (force = false) => {
@@ -35,7 +36,8 @@ export function AdminLeaderboardTab({ adminSecret }: AdminLeaderboardTabProps) {
       }
 
       try {
-        const res = await fetch('/api/leaderboard', { cache: 'no-store' });
+        const url = scope === 'round2' ? '/api/leaderboard?scope=round2' : '/api/leaderboard';
+        const res = await fetch(url, { cache: 'no-store' });
         const data = await res.json();
         if (data.success && Array.isArray(data.users)) {
           const sorted = sortLeaderboardUsers(data.users as User[]);
@@ -50,12 +52,12 @@ export function AdminLeaderboardTab({ adminSecret }: AdminLeaderboardTabProps) {
         setRefreshing(false);
       }
     },
-    []
+    [scope]
   );
 
   useEffect(() => {
-    fetchBoard();
-    const interval = setInterval(() => fetchBoard(), 20_000);
+    fetchBoard(true);
+    const interval = setInterval(() => fetchBoard(true), 20_000);
     return () => clearInterval(interval);
   }, [fetchBoard]);
 
@@ -84,18 +86,36 @@ export function AdminLeaderboardTab({ adminSecret }: AdminLeaderboardTabProps) {
             {lastUpdated ? ` · updated ${lastUpdated}` : ''}
           </p>
         </div>
-        <button
-          type="button"
-          disabled={refreshing}
-          onClick={() => {
-            setRefreshing(true);
-            fetchBoard(true);
-          }}
-          className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-xl border border-app-border hover:bg-app-hover disabled:opacity-50"
-        >
-          <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} />
-          Refresh
-        </button>
+        <div className="flex items-center gap-2">
+          <div className="inline-flex rounded-xl border border-app-border overflow-hidden text-xs">
+            <button
+              type="button"
+              onClick={() => setScope('all')}
+              className={`px-3 py-2 font-medium ${scope === 'all' ? 'bg-app-text text-app-bg' : 'bg-app-surface'}`}
+            >
+              All
+            </button>
+            <button
+              type="button"
+              onClick={() => setScope('round2')}
+              className={`px-3 py-2 font-medium ${scope === 'round2' ? 'bg-app-text text-app-bg' : 'bg-app-surface'}`}
+            >
+              Round 2
+            </button>
+          </div>
+          <button
+            type="button"
+            disabled={refreshing}
+            onClick={() => {
+              setRefreshing(true);
+              fetchBoard(true);
+            }}
+            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-xl border border-app-border hover:bg-app-hover disabled:opacity-50"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} />
+            Refresh
+          </button>
+        </div>
       </div>
 
       <div className="relative max-w-md">

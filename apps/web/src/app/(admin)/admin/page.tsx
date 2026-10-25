@@ -14,6 +14,7 @@ import { FinalTeamsTab } from '@/components/admin/FinalTeamsTab';
 import { AdminLeaderboardTab } from '@/components/admin/AdminLeaderboardTab';
 import { Round1RubricTab } from '@/components/admin/Round1RubricTab';
 import { Round2SelectionTab } from '@/components/admin/Round2SelectionTab';
+import { Round2LiveTab } from '@/components/admin/Round2LiveTab';
 import {
   Layers,
   Users,
@@ -50,6 +51,7 @@ type AdminTab =
   | 'brevo'
   | 'round1'
   | 'round2'
+  | 'round2live'
   | 'formdata'
   | 'teammerger'
   | 'finalteams'
@@ -84,6 +86,13 @@ const ADMIN_NAV_ITEMS: NavItem[] = [
     subtitle: 'Pick teams · email · ingest · pool',
     shortLabel: 'Round 2',
     icon: Target,
+  },
+  {
+    id: 'round2live',
+    title: 'Round 2 Live',
+    subtitle: 'Watcher · top 5 · bypass flags',
+    shortLabel: 'R2 Live',
+    icon: Activity,
   },
   {
     id: 'lifecycle',
@@ -574,6 +583,7 @@ export default function AdminPage() {
             {activeTab === 'teammerger' && <TeamMergerTab adminSecret={adminSecret} />}
             {activeTab === 'finalteams' && <FinalTeamsTab adminSecret={adminSecret} />}
             {activeTab === 'round2' && <Round2SelectionTab adminSecret={adminSecret} />}
+            {activeTab === 'round2live' && <Round2LiveTab adminSecret={adminSecret} />}
             {activeTab === 'leaderboard' && <AdminLeaderboardTab adminSecret={adminSecret} />}
           </main>
         </div>
