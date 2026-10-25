@@ -4,6 +4,7 @@ import { sortLeaderboardUsers } from '@/lib/leaderboard-sort';
 import { loadFinalTeams, overlayUsersIfFinalTeamsLocked } from '@/lib/final-teams-db';
 import { loadRound2Selection } from '@/lib/round2-db';
 import { filterUsersToRound2Teams } from '@/lib/round2-watcher';
+import { draftRosterToFinalTeams } from '@/lib/round2-draft';
 
 export const dynamic = 'force-dynamic';
 
@@ -29,8 +30,12 @@ export async function GET(req: NextRequest) {
 
     if (scope === 'round2') {
       const [finalTeams, selection] = await Promise.all([loadFinalTeams(), loadRound2Selection()]);
+      const rosterTeams =
+        selection.draft_roster?.teams?.length
+          ? draftRosterToFinalTeams(selection.draft_roster, true)
+          : finalTeams;
       sortedUsers = sortLeaderboardUsers(
-        filterUsersToRound2Teams(sortedUsers as typeof baseUsers, finalTeams, selection.selected_team_keys)
+        filterUsersToRound2Teams(sortedUsers as typeof baseUsers, rosterTeams, selection.selected_team_keys)
       );
     }
 

@@ -3,6 +3,7 @@ import { verifyAdminSecret } from '@/lib/auth';
 import { getSupabaseAdmin } from '@/lib/supabase';
 import { loadFinalTeams, overlayUsersIfFinalTeamsLocked } from '@/lib/final-teams-db';
 import { loadRound2Selection } from '@/lib/round2-db';
+import { draftRosterToFinalTeams } from '@/lib/round2-draft';
 import { loadAllStageBypasses } from '@/lib/stage-bypass-db';
 import {
   buildRound2TeamLiveRows,
@@ -43,10 +44,15 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: usersErr.message }, { status: 500 });
   }
 
+  const effectiveFinalTeams =
+    selection.draft_roster?.teams?.length
+      ? draftRosterToFinalTeams(selection.draft_roster, true)
+      : finalTeams;
+
   const participants = (await overlayUsersIfFinalTeamsLocked(usersRaw || [])) as User[];
   const round2Users = filterUsersToRound2Teams(
     participants,
-    finalTeams,
+    effectiveFinalTeams,
     selection.selected_team_keys
   );
   const userIds = round2Users.map((u) => u.id);
@@ -61,7 +67,7 @@ export async function GET(req: NextRequest) {
   }
 
   const teamRows = buildRound2TeamLiveRows({
-    finalTeams,
+    finalTeams: effectiveFinalTeams,
     selectedTeamKeys: selection.selected_team_keys,
     poolAssignments: selection.pool_assignments,
     participants: round2Users,

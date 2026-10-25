@@ -15,12 +15,31 @@ import {
   isRound2TableReady,
   loadRound2Selection,
   saveRound2Selection,
+  type Round2SelectionState,
 } from '@/lib/round2-db';
+import {
+  applyTokensToDraft,
+  buildDraftFromPixelAnomalyPdf,
+  buildRosterPickList,
+  draftRosterToFinalTeams,
+  validateDraftForTokenGeneration,
+  type Round2DraftRoster,
+} from '@/lib/round2-draft';
 
 export const dynamic = 'force-dynamic';
 
 function unauthorized() {
   return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+}
+
+function resolveSelectedFinalTeams(
+  allTeams: Awaited<ReturnType<typeof loadFinalTeams>>,
+  selection: Round2SelectionState
+) {
+  if (selection.draft_roster?.teams?.length) {
+    return draftRosterToFinalTeams(selection.draft_roster, true);
+  }
+  return filterFinalTeamsByKeys(allTeams, selection.selected_team_keys);
 }
 
 export async function GET(req: NextRequest) {
@@ -43,7 +62,7 @@ export async function GET(req: NextRequest) {
 
   const exportKind = req.nextUrl.searchParams.get('export');
   if (exportKind === 'email-csv') {
-    const selected = filterFinalTeamsByKeys(allTeams, selection.selected_team_keys);
+    const selected = resolveSelectedFinalTeams(allTeams, selection);
     const csv = buildFinalTeamsEmailPasteCsv(selected);
     return new NextResponse(csv, {
       headers: {
@@ -62,12 +81,23 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  const draftActive = Boolean(selection.draft_roster?.teams?.length);
+  const previewTeams = draftActive
+    ? draftRosterToFinalTeams(selection.draft_roster!, false)
+    : allTeams;
+  const rosterPickList = buildRosterPickList(allTeams);
+
   return NextResponse.json({
     ready: true,
     round2TableReady: await isRound2TableReady(),
     locked: config.locked,
     locked_at: config.locked_at,
-    teams: allTeams,
+    draftMode: draftActive,
+    workflowPhase: selection.workflow_phase,
+    draftRoster: selection.draft_roster,
+    rosterPickList,
+    teams: previewTeams,
+    allTeamsCount: allTeams.length,
     selection: {
       selected_team_keys: selection.selected_team_keys,
       pool_assignments: selection.pool_assignments,
@@ -75,7 +105,9 @@ export async function GET(req: NextRequest) {
       source: selection.source,
     },
     poolItems,
-    selectedCount: selection.selected_team_keys.length,
+    selectedCount: draftActive
+      ? selection.draft_roster!.teams.filter((t) => t.selected).length
+      : selection.selected_team_keys.length,
   });
 }
 
@@ -111,9 +143,35 @@ export async function PUT(req: NextRequest) {
     if (pool_assignments[key]) prunedPool[key] = pool_assignments[key];
   }
 
+  let draft_roster = existing.draft_roster;
+  let workflow_phase = existing.workflow_phase;
+  if (body.draft_roster !== undefined) {
+    draft_roster = body.draft_roster as Round2DraftRoster | null;
+  }
+  if (body.workflow_phase === 'edit' || body.workflow_phase === 'tokens_ready' || body.workflow_phase === 'ops') {
+    workflow_phase = body.workflow_phase;
+  }
+
+  if (draft_roster?.teams?.length) {
+    const keysFromDraft = draft_roster.teams.filter((t) => t.selected).map((t) => t.team_key);
+    const saved = await saveRound2Selection({
+      selected_team_keys: keysFromDraft,
+      pool_assignments: prunedPool,
+      draft_roster,
+      workflow_phase,
+    });
+    return NextResponse.json({
+      success: true,
+      selection: saved,
+      selectedCount: keysFromDraft.length,
+    });
+  }
+
   const saved = await saveRound2Selection({
     selected_team_keys: filtered,
     pool_assignments: prunedPool,
+    draft_roster,
+    workflow_phase,
   });
 
   return NextResponse.json({ success: true, selection: saved, selectedCount: filtered.length });
@@ -133,7 +191,58 @@ export async function POST(req: NextRequest) {
 
   const allTeams = await loadFinalTeams();
   const selection = await loadRound2Selection();
-  const selectedTeams = filterFinalTeamsByKeys(allTeams, selection.selected_team_keys);
+  const selectedTeams = resolveSelectedFinalTeams(allTeams, selection);
+
+  if (action === 'seed-pdf-shortlist') {
+    const draft = buildDraftFromPixelAnomalyPdf(allTeams);
+    const keys = draft.teams.filter((t) => t.selected).map((t) => t.team_key);
+    const saved = await saveRound2Selection({
+      selected_team_keys: keys,
+      pool_assignments: {},
+      draft_roster: draft,
+      workflow_phase: 'edit',
+    });
+    return NextResponse.json({
+      success: true,
+      draftRoster: saved.draft_roster,
+      workflowPhase: saved.workflow_phase,
+      teamCount: draft.teams.length,
+    });
+  }
+
+  if (action === 'generate-tokens') {
+    const draft = selection.draft_roster;
+    if (!draft?.teams?.length) {
+      return NextResponse.json({ error: 'Load the PDF shortlist draft first' }, { status: 400 });
+    }
+    const check = validateDraftForTokenGeneration(draft);
+    if (!check.ok) {
+      return NextResponse.json({ error: check.errors.join(' '), errors: check.errors }, { status: 400 });
+    }
+    const withTokens = applyTokensToDraft(draft);
+    const keys = withTokens.teams.filter((t) => t.selected).map((t) => t.team_key);
+    const saved = await saveRound2Selection({
+      selected_team_keys: keys,
+      pool_assignments: selection.pool_assignments,
+      draft_roster: withTokens,
+      workflow_phase: 'tokens_ready',
+    });
+    return NextResponse.json({
+      success: true,
+      draftRoster: saved.draft_roster,
+      workflowPhase: saved.workflow_phase,
+      tokenCount: keys.length,
+    });
+  }
+
+  if (selection.workflow_phase === 'edit' && selection.draft_roster?.teams?.length) {
+    if (['ingest-contest', 'assign-pool'].includes(action)) {
+      return NextResponse.json(
+        { error: 'Generate tokens for all 15 teams before ingest or pool commit.' },
+        { status: 409 }
+      );
+    }
+  }
 
   if (selectedTeams.length === 0 && action !== 'random-pool') {
     return NextResponse.json({ error: 'Select at least one team for Round 2' }, { status: 400 });
@@ -261,5 +370,7 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  return NextResponse.json({ error: 'Unknown action. Use random-pool, assign-pool, or ingest-contest.' }, { status: 400 });
+  return NextResponse.json({
+    error: 'Unknown action. Use seed-pdf-shortlist, generate-tokens, random-pool, assign-pool, or ingest-contest.',
+  }, { status: 400 });
 }
