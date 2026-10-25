@@ -39,7 +39,16 @@ export type MergeGroup = {
 };
 
 export function formatMergedTeamName(teamNames: string[]): string {
-  const unique = Array.from(new Set(teamNames.map((n) => n.trim()).filter(Boolean)));
+  const seen = new Set<string>();
+  const unique: string[] = [];
+  for (const raw of teamNames) {
+    const trimmed = raw.trim();
+    if (!trimmed) continue;
+    const key = trimmed.toLocaleLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(trimmed);
+  }
   if (unique.length === 0) return '';
   const sorted = unique.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
   if (sorted.length === 1) return sorted[0];
@@ -162,7 +171,7 @@ export function computeAutoMergeGroups(submissions: TeamSubmission[]): MergeGrou
     )
   );
 
-  return pairTwoMemberSquads(built, byId);
+  return consolidateIdenticalMergeGroups(pairTwoMemberSquads(built, byId), byId);
 }
 
 /** Pair remaining 2-member teams two-by-two when auto merge is on. */
@@ -240,6 +249,54 @@ export function buildMergeGroup(
   };
 }
 
+/** Stable roster signature (emails / enrollment numbers) for duplicate squad detection. */
+export function memberRosterFingerprint(members: TeamMemberPayload[]): string {
+  const keys = members
+    .map((m) => memberIdentityKey(m))
+    .filter((k): k is string => Boolean(k))
+    .sort();
+  return keys.join('|');
+}
+
+/**
+ * One squad when canonical team label + member roster match
+ * (duplicate form rows or "Dual bytes X dual bytes" with the same people).
+ */
+export function consolidateIdenticalMergeGroups(
+  groups: MergeGroup[],
+  byId: Map<string, TeamSubmission>
+): MergeGroup[] {
+  type Bucket = { submissionIds: Set<string>; reasons: Set<string> };
+  const buckets = new Map<string, Bucket>();
+  const passthrough: MergeGroup[] = [];
+
+  for (const g of groups) {
+    const fp = memberRosterFingerprint(g.members);
+    if (!fp) {
+      passthrough.push(g);
+      continue;
+    }
+    const label = formatMergedTeamName(g.teamNames).toLocaleLowerCase();
+    const key = `${label}::${fp}`;
+    const bucket = buckets.get(key) ?? { submissionIds: new Set<string>(), reasons: new Set<string>() };
+    for (const id of g.submissionIds) bucket.submissionIds.add(id);
+    bucket.reasons.add(g.matchReason);
+    buckets.set(key, bucket);
+  }
+
+  const merged: MergeGroup[] = [];
+  for (const bucket of buckets.values()) {
+    const ids = Array.from(bucket.submissionIds);
+    const reason =
+      ids.length > 1
+        ? 'Same team name & roster (deduplicated)'
+        : Array.from(bucket.reasons)[0] ?? 'Single team (not merged)';
+    merged.push(buildMergeGroup(ids, byId, reason));
+  }
+
+  return [...merged, ...passthrough];
+}
+
 export function buildManualMergeGroups(
   submissions: TeamSubmission[],
   groupMap: Map<string, string>
@@ -254,12 +311,13 @@ export function buildManualMergeGroups(
     buckets.set(leader, list);
   }
 
-  return Array.from(buckets.entries()).map(([leader, ids]) => {
+  const built = Array.from(buckets.entries()).map(([leader, ids]) => {
     const uniqueIds = Array.from(new Set(ids));
     const reason =
       uniqueIds.length > 1 ? 'Manual merge' : 'Single team (not merged)';
     return buildMergeGroup(uniqueIds, byId, reason);
   });
+  return consolidateIdenticalMergeGroups(built, byId);
 }
 
 function assignBinToMap(map: Map<string, string>, submissionIds: string[]) {
