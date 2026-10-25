@@ -107,8 +107,11 @@ export async function GET(req: NextRequest) {
         : evaluations;
 
     const leaderboard = buildLeaderboard(canonicalEvaluations);
-    const { leaderboard: normalized_leaderboard, judgeMeta: judge_normalization } =
-      buildJudgeNormalizedLeaderboard(canonicalEvaluations);
+    const {
+      leaderboard: normalized_leaderboard,
+      judgeMeta: judge_normalization,
+      criterionMeta: criterion_normalization,
+    } = buildJudgeNormalizedLeaderboard(canonicalEvaluations);
 
     // Compute metrics
     const totalEvaluations = evaluations.length;
@@ -124,6 +127,7 @@ export async function GET(req: NextRequest) {
       leaderboard,
       normalized_leaderboard,
       judge_normalization,
+      criterion_normalization,
       stats: {
         totalEvaluations,
         uniqueTeamsCount,

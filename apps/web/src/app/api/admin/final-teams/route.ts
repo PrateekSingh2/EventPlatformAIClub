@@ -25,6 +25,7 @@ import { syncUsersFromFinalTeams } from '@/lib/sync-users-from-final-teams';
 import type { TeamSubmission } from '@/lib/team-merger';
 import type { StoredSeminarHallRow } from '@/lib/seminar-halls';
 import { pruneDuplicateTeamsOnPlatform } from '@/lib/prune-duplicate-teams-db';
+import { applyPhotoSeminarMerges } from '@/lib/photo-seminar-merges';
 
 export const dynamic = 'force-dynamic';
 
@@ -247,6 +248,25 @@ export async function POST(req: NextRequest) {
             teamCount: saved.length,
             prune: result,
         });
+    }
+
+    if (action === 'apply-photo-merges') {
+        const supabase = getSupabaseAdmin();
+        try {
+            const result = await applyPhotoSeminarMerges(supabase);
+            const saved = await loadFinalTeams();
+            const nextConfig = await loadFinalTeamsConfig();
+            return NextResponse.json({
+                success: true,
+                config: nextConfig,
+                teams: saved,
+                teamCount: saved.length,
+                photoMerges: result,
+            });
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : 'Failed to apply photo merges';
+            return NextResponse.json({ error: message }, { status: 400 });
+        }
     }
 
     if (action !== 'sync-from-merger') {

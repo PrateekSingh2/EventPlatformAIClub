@@ -5,7 +5,7 @@ import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 import { Round1RubricEvaluation, Round1LeaderboardEntry } from '@/lib/types';
 import {
   buildJudgeNormalizedLeaderboard,
-  type Round1JudgeNormalizationMeta,
+  type Round1CriterionNormalizationMeta,
 } from '@/lib/round1-leaderboard';
 import {
   Trophy,
@@ -603,7 +603,7 @@ export function Round1RubricTab({ adminSecret }: Round1RubricTabProps) {
     }
   };
 
-  const { leaderboard: normalizedLeaderboard, judgeMeta: judgeNormalization } = useMemo(
+  const { leaderboard: normalizedLeaderboard, criterionMeta: criterionNormalization } = useMemo(
     () => buildJudgeNormalizedLeaderboard(evaluations),
     [evaluations]
   );
@@ -686,7 +686,11 @@ export function Round1RubricTab({ adminSecret }: Round1RubricTabProps) {
                 </span>
                 {mode === 'normalized' && (
                   <span className="text-[10px] text-app-subtext">
-                    Raw: <strong className="text-app-text">{team.total_score}</strong>/100
+                    Raw:{' '}
+                    <strong className="text-app-text">
+                      {team.raw_total_score ?? team.total_score}
+                    </strong>
+                    /100
                   </span>
                 )}
                 {team.evaluations_count > 1 && (
@@ -705,7 +709,7 @@ export function Round1RubricTab({ adminSecret }: Round1RubricTabProps) {
                 <span className="text-xs text-app-subtext font-normal font-sans"> / 100</span>
               </div>
               {mode === 'normalized' && (
-                <div className="text-[10px] text-violet-400/90 mt-0.5">within judge cohort</div>
+                <div className="text-[10px] text-violet-400/90 mt-0.5">criteria-wise scaled</div>
               )}
               <div className="w-20 sm:w-24 h-1 rounded-full bg-app-muted overflow-hidden mt-1">
                 <div
@@ -768,21 +772,33 @@ export function Round1RubricTab({ adminSecret }: Round1RubricTabProps) {
     );
   };
 
-  const renderJudgeNormalizationLegend = (meta: Round1JudgeNormalizationMeta[]) => {
+  const renderCriterionNormalizationLegend = (meta: Round1CriterionNormalizationMeta[]) => {
     if (meta.length === 0) return null;
+    const byJudge = new Map<string, Round1CriterionNormalizationMeta[]>();
+    for (const row of meta) {
+      const list = byJudge.get(row.judge_name) || [];
+      list.push(row);
+      byJudge.set(row.judge_name, list);
+    }
     return (
-      <div className="flex flex-wrap gap-2 p-3 rounded-xl bg-violet-500/5 border border-violet-500/20 text-[11px] text-app-subtext">
-        {meta.map((j) => (
-          <span
-            key={j.judge_name}
-            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-app-surface border border-app-border"
-          >
-            <strong className="text-app-text">{j.judge_name}</strong>
-            <span>
-              min {j.min_raw} · max {j.max_raw} · {j.team_count} team
-              {j.team_count === 1 ? '' : 's'}
-            </span>
-          </span>
+      <div className="space-y-2 p-3 rounded-xl bg-violet-500/5 border border-violet-500/20 text-[11px] text-app-subtext">
+        {Array.from(byJudge.entries()).map(([judge, rows]) => (
+          <div key={judge} className="space-y-1">
+            <div className="font-semibold text-app-text">{judge}</div>
+            <div className="flex flex-wrap gap-1.5">
+              {rows.map((c) => (
+                <span
+                  key={`${judge}-${c.criterion_key}`}
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-app-surface border border-app-border"
+                >
+                  <span className="text-app-text">{c.criterion_label}</span>
+                  <span>
+                    {c.min_raw}–{c.max_raw} → 0–{c.max_marks}
+                  </span>
+                </span>
+              ))}
+            </div>
+          </div>
         ))}
       </div>
     );
@@ -1068,19 +1084,21 @@ export function Round1RubricTab({ adminSecret }: Round1RubricTabProps) {
                 )}
               </section>
 
-              {/* Section 2: Per-judge min–max normalization */}
+              {/* Section 2: Per-criterion min–max normalization */}
               <section className="space-y-3">
                 <div className="space-y-1">
                   <h2 className="text-sm font-semibold text-app-text flex items-center gap-2">
                     <Sliders className="w-4 h-4 text-violet-500" />
-                    Judge-normalized standings
+                    Criteria-normalized standings
                   </h2>
                   <p className="text-[11px] text-app-subtext">
-                    Each judge is scaled 0–100 using only that judge&apos;s min and max raw scores
-                    (separate cohorts — Judge A and Judge B do not share the same scale).
+                    Har judge ke liye har rubric criterion alag scale hota hai (us judge ki min–max
+                    range se us criterion ke max marks tak). Total par ek shot mein scale nahi — jo
+                    judge har line par kam marks de, un sab lines ko criteria-wise adjust karke phir
+                    total banaya jata hai.
                   </p>
                 </div>
-                {renderJudgeNormalizationLegend(judgeNormalization)}
+                {renderCriterionNormalizationLegend(criterionNormalization)}
                 <div className="bg-app-surface border border-violet-500/25 rounded-2xl overflow-hidden divide-y divide-app-border shadow-xs">
                   {renderLeaderboardRows(visibleNormalizedTeams, 'normalized')}
                 </div>
