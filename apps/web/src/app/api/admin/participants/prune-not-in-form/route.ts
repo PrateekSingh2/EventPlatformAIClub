@@ -4,6 +4,21 @@ import { getSupabaseAdmin } from '@/lib/supabase';
 
 export const dynamic = 'force-dynamic';
 
+type ParticipantRow = {
+  id: string;
+  email: string | null;
+  name: string | null;
+  access_token: string | null;
+  team_name: string | null;
+  role: string | null;
+};
+
+type TokenArchiveRow = {
+  id: string;
+  access_token: string | null;
+  storage_path: string | null;
+};
+
 function collectFormEmails(submissions: { members?: unknown }[]): Set<string> {
   const emails = new Set<string>();
   for (const sub of submissions) {
@@ -51,7 +66,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: userErr.message }, { status: 503 });
   }
 
-  const orphanUsers = (users ?? []).filter((u) => {
+  const participantRows = (users ?? []) as ParticipantRow[];
+  const orphanUsers = participantRows.filter((u) => {
     const email = String(u.email || '')
       .trim()
       .toLowerCase();
@@ -59,7 +75,7 @@ export async function POST(req: NextRequest) {
   });
 
   const allowedTokens = new Set(
-    (users ?? [])
+    participantRows
       .filter((u) => formEmails.has(String(u.email || '').trim().toLowerCase()))
       .map((u) => String(u.access_token || '').trim().toUpperCase())
       .filter((t) => t && !t.startsWith('PENDING'))
@@ -73,7 +89,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: archErr.message }, { status: 503 });
   }
 
-  const orphanArchives = (archives ?? []).filter((a) => {
+  const archiveRows = (archives ?? []) as TokenArchiveRow[];
+  const orphanArchives = archiveRows.filter((a) => {
     const token = String(a.access_token || '').trim().toUpperCase();
     return !allowedTokens.has(token);
   });

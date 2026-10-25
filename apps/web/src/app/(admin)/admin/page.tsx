@@ -69,6 +69,13 @@ const ADMIN_NAV_ITEMS: NavItem[] = [
     icon: Award,
   },
   {
+    id: 'finalteams',
+    title: 'Final Teams',
+    subtitle: 'Official roster · lock & export',
+    shortLabel: 'Final',
+    icon: BadgeCheck,
+  },
+  {
     id: 'lifecycle',
     title: 'Tournament Operations',
     subtitle: 'State & Announcements',
@@ -116,13 +123,6 @@ const ADMIN_NAV_ITEMS: NavItem[] = [
     subtitle: 'Detect & merge duplicate teams',
     shortLabel: 'Merger',
     icon: GitMerge,
-  },
-  {
-    id: 'finalteams',
-    title: 'Final Teams',
-    subtitle: 'Official roster · lock & export',
-    shortLabel: 'Final',
-    icon: BadgeCheck,
   },
   {
     id: 'leaderboard',

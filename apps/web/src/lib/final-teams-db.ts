@@ -53,7 +53,7 @@ export async function loadFinalTeams(): Promise<FinalTeamRecord[]> {
     .order('team_name', { ascending: true });
 
   if (error || !data) return [];
-  return data.map((row) => rowToRecord(row as Record<string, unknown>));
+  return data.map((row: Record<string, unknown>) => rowToRecord(row));
 }
 
 export async function replaceFinalTeams(teams: FinalTeamRecord[]): Promise<void> {
