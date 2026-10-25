@@ -2,8 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { verifyParticipantToken } from '@/lib/auth';
 import { getSupabaseAdmin, isSupabaseConfigured } from '@/lib/supabase';
 import { recordStageBypass } from '@/lib/stage-bypass-db';
+import { clearPasswordAttemptState } from '@/lib/password-attempts';
 import { resolveStagePasswordForUser } from '@/lib/stage-password';
 import { isUsableStagePassword } from '@/lib/stage-password-utils';
+import { applyStageUnlockProgress } from '@/lib/stage-unlock-progress';
 
 const WARNINGS: Record<number, { step: number; message: string; final?: boolean }> = {
   1: {
@@ -24,7 +26,7 @@ const WARNINGS: Record<number, { step: number; message: string; final?: boolean 
 /**
  * POST /api/stage/bypass
  * Body: { accessToken, stageNumber, step: 1|2|3 }
- * Step 3 records bypass and returns the stage password.
+ * Step 3 records bypass, advances progress (0 pts), returns decryption key for client ZIP only.
  */
 export async function POST(req: NextRequest) {
   try {
@@ -80,14 +82,30 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    await clearPasswordAttemptState(user, stageNum);
+
+    let scoreAwarded = 0;
+    let nextStage = Math.max(user.current_stage || 1, stageNum);
+    if (supabaseAdmin) {
+      const progress = await applyStageUnlockProgress(supabaseAdmin, user, stageNum, {
+        pointsToAward: 0,
+        bypassed: true,
+        durationSeconds: 30,
+      });
+      scoreAwarded = progress.pointsToAward;
+      nextStage = progress.newStage;
+    }
+
     return NextResponse.json({
       ok: true,
       step: 3,
-      message: warn.message,
+      message: 'Stage unlocked.',
       bypassed: true,
+      autoUnlock: true,
       stageNumber: stageNum,
-      password,
-      pointsNotice: 'No points will be awarded when you unlock this stage after bypass.',
+      nextStage,
+      scoreAwarded,
+      decryptionKey: password,
     });
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : 'Bypass failed';

@@ -1020,8 +1020,9 @@ function ArenaContent() {
           stageNumber={nextUnlockStageNumber}
           accessToken={token}
           onClose={() => setIsBypassModalOpen(false)}
-          onPasswordRevealed={(stageNum, pw) => {
-            setUnlockedStagePasswords((prev) => ({ ...prev, [stageNum]: pw }));
+          onBypassComplete={(stageNum, decryptionKey, pointsAwarded) => {
+            handleUnlockSuccess(stageNum, decryptionKey, pointsAwarded, '');
+            setIsBypassModalOpen(false);
           }}
         />
 
