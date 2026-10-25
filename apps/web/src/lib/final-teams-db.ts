@@ -13,18 +13,43 @@ export async function loadFinalTeamsConfig(): Promise<FinalTeamsConfig> {
   const supabase = getSupabaseAdmin();
   const { data, error } = await supabase
     .from('final_teams_config')
-    .select('locked, locked_at, updated_at')
+    .select('locked, locked_at, updated_at, merge_auto, merge_manual_map')
     .eq('id', 1)
     .maybeSingle();
 
   if (error || !data) {
     return { locked: false, locked_at: null, updated_at: null };
   }
+  const mergeManual =
+    data.merge_manual_map && typeof data.merge_manual_map === 'object'
+      ? (data.merge_manual_map as Record<string, string>)
+      : null;
   return {
     locked: Boolean(data.locked),
     locked_at: data.locked_at ?? null,
     updated_at: data.updated_at ?? null,
+    merge_auto: Boolean(data.merge_auto),
+    merge_manual_map: mergeManual,
   };
+}
+
+export async function saveFinalTeamsMergeSnapshot(
+  mergeAuto: boolean,
+  mergeManualMap: Record<string, string>
+): Promise<void> {
+  const supabase = getSupabaseAdmin();
+  const { error } = await supabase.from('final_teams_config').upsert(
+    {
+      id: 1,
+      merge_auto: mergeAuto,
+      merge_manual_map: mergeManualMap,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: 'id' }
+  );
+  if (error && !error.message.includes('merge_manual_map') && !error.message.includes('merge_auto')) {
+    throw new Error(error.message);
+  }
 }
 
 function rowToRecord(row: Record<string, unknown>): FinalTeamRecord {

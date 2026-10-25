@@ -3,6 +3,16 @@ import { verifyAdminSecret } from '@/lib/auth';
 import { getSupabaseAdmin, isSupabaseConfigured } from '@/lib/supabase';
 import { Round1RubricEvaluation } from '@/lib/types';
 import { buildLeaderboard, buildJudgeNormalizedLeaderboard } from '@/lib/round1-leaderboard';
+import {
+  buildFinalTeamAliasMap,
+  canonicalizeRound1TeamName,
+  displayTeamNameFromRecord,
+} from '@/lib/final-teams';
+import {
+  isFinalTeamsTableReady,
+  loadFinalTeams,
+  loadFinalTeamsConfig,
+} from '@/lib/final-teams-db';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
@@ -43,6 +53,17 @@ function normalizeRound1TeamKey(teamName: string): string {
   return teamName.trim().toLowerCase();
 }
 
+async function loadRound1AliasMapIfLocked(): Promise<Map<string, string>> {
+  if (!(await isFinalTeamsTableReady())) return new Map();
+  const config = await loadFinalTeamsConfig();
+  if (!config.locked) return new Map();
+  const teams = (await loadFinalTeams()).map((t) => ({
+    ...t,
+    team_name: displayTeamNameFromRecord(t),
+  }));
+  return buildFinalTeamAliasMap(teams);
+}
+
 async function loadStoredEvaluations(): Promise<{ evaluations: Round1RubricEvaluation[]; tableExists: boolean }> {
   let evaluations: Round1RubricEvaluation[] = [];
   let tableExists = true;
@@ -80,9 +101,29 @@ export async function GET(req: NextRequest) {
 
     const { evaluations, tableExists } = await loadStoredEvaluations();
 
-    const leaderboard = buildLeaderboard(evaluations);
+    let aliasMap = new Map<string, string>();
+    if (await isFinalTeamsTableReady()) {
+      const config = await loadFinalTeamsConfig();
+      if (config.locked) {
+        const teams = (await loadFinalTeams()).map((t) => ({
+          ...t,
+          team_name: displayTeamNameFromRecord(t),
+        }));
+        aliasMap = buildFinalTeamAliasMap(teams);
+      }
+    }
+
+    const canonicalEvaluations =
+      aliasMap.size > 0
+        ? evaluations.map((ev) => ({
+            ...ev,
+            team_name: canonicalizeRound1TeamName(ev.team_name, aliasMap),
+          }))
+        : evaluations;
+
+    const leaderboard = buildLeaderboard(canonicalEvaluations);
     const { leaderboard: normalized_leaderboard, judgeMeta: judge_normalization } =
-      buildJudgeNormalizedLeaderboard(evaluations);
+      buildJudgeNormalizedLeaderboard(canonicalEvaluations);
 
     // Compute metrics
     const totalEvaluations = evaluations.length;
@@ -155,8 +196,19 @@ export async function POST(req: NextRequest) {
     }
 
     const { evaluations: existingEvaluations } = await loadStoredEvaluations();
-    const teamKey = normalizeRound1TeamKey(team_name);
-    if (existingEvaluations.some((e) => normalizeRound1TeamKey(e.team_name) === teamKey)) {
+    const aliasMap = await loadRound1AliasMapIfLocked();
+    const resolvedTeamName = aliasMap.size
+      ? canonicalizeRound1TeamName(team_name, aliasMap)
+      : team_name.trim();
+    const teamKey = normalizeRound1TeamKey(resolvedTeamName);
+    if (
+      existingEvaluations.some((e) => {
+        const existingName = aliasMap.size
+          ? canonicalizeRound1TeamName(e.team_name, aliasMap)
+          : e.team_name;
+        return normalizeRound1TeamKey(existingName) === teamKey;
+      })
+    ) {
       return NextResponse.json(
         { error: 'This team already has a Round 1 evaluation. Delete the existing entry to re-evaluate.' },
         { status: 409 }
@@ -200,7 +252,7 @@ export async function POST(req: NextRequest) {
 
     const newEvaluation: Round1RubricEvaluation = {
       id: crypto.randomUUID(),
-      team_name: team_name.trim(),
+      team_name: resolvedTeamName,
       judge_name: judge_name.trim(),
       theme: theme.trim(),
       score_prompt_clarity: s1,

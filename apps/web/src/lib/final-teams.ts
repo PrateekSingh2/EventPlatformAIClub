@@ -1,15 +1,18 @@
 import { generateAccessToken } from '@/lib/auth';
 import type { TeamMemberPayload } from '@/lib/team-registration-form';
 import {
+    buildManualGroupMapFromStoredSquads,
     buildManualMergeGroups,
     computeAutoMergeGroups,
     filterMergerEligibleSubmissions,
+    formatMergedTeamName,
     manualGroupMapFromJson,
+    manualGroupMapToJson,
     teamSizeLabelFromMemberCount,
     type MergeGroup,
     type TeamSubmission,
 } from '@/lib/team-merger';
-import { storedHallMap, type StoredSeminarHallRow } from '@/lib/seminar-halls';
+import { buildAssignmentKey, storedHallMap, type StoredSeminarHallRow } from '@/lib/seminar-halls';
 import {
     cleanPlatformLabel,
     rosterMemberKey,
@@ -35,6 +38,8 @@ export type FinalTeamsConfig = {
     locked: boolean;
     locked_at: string | null;
     updated_at: string | null;
+    merge_auto?: boolean;
+    merge_manual_map?: Record<string, string> | null;
 };
 
 export function teamKeyFromSubmissionIds(ids: string[]): string {
@@ -65,21 +70,113 @@ export function mergeGroupToFinalTeam(
 export function computeMergeGroupsForFinalRoster(
     submissions: TeamSubmission[],
     autoMerge: boolean,
-    manualGroupMapJson: string | null
+    manualGroupMap: Map<string, string>
 ): MergeGroup[] {
-    const manualGroupMap = manualGroupMapFromJson(manualGroupMapJson);
-    if (autoMerge) {
+    if (autoMerge && manualGroupMap.size === 0) {
         const eligible = filterMergerEligibleSubmissions(submissions);
         return computeAutoMergeGroups(eligible);
     }
     return buildManualMergeGroups(submissions, manualGroupMap);
 }
 
-function platformTeamNameFromRecord(row: FinalTeamRecord): string {
+/** Canonical merged display name (A X B X C), not first source team only. */
+export function displayTeamNameFromRecord(row: FinalTeamRecord): string {
     const sources = row.source_team_names.map(cleanPlatformLabel).filter(Boolean);
-    if (sources.length >= 1) return sources[0];
+    const merged = formatMergedTeamName(sources.length ? sources : [row.team_name]);
+    if (merged) return merged;
     return cleanPlatformLabel(row.team_name);
 }
+
+function mergedNameFromStoredHalls(
+    submissionIds: string[],
+    sourceNames: string[],
+    halls: StoredSeminarHallRow[]
+): string | null {
+    const idKey = teamKeyFromSubmissionIds(submissionIds);
+    const nameKey = buildAssignmentKey(sourceNames.map(cleanPlatformLabel));
+    for (const row of halls) {
+        const rowIdKey = teamKeyFromSubmissionIds(row.submission_ids ?? []);
+        const rowNameKey =
+            row.assignment_key || buildAssignmentKey((row.source_team_names ?? []).map(cleanPlatformLabel));
+        if (rowIdKey && rowIdKey === idKey) {
+            const n = (row.merged_team_name || '').trim();
+            if (n) return n;
+        }
+        if (rowNameKey && nameKey && rowNameKey === nameKey) {
+            const n = (row.merged_team_name || '').trim();
+            if (n) return n;
+        }
+    }
+    return null;
+}
+
+/** All labels for Round 1 dropdowns: merged name, each source, and each " X " segment. */
+export function buildFinalTeamDropdownLabels(teams: FinalTeamRecord[]): string[] {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    const add = (raw: string) => {
+        const t = cleanPlatformLabel(raw);
+        if (!t) return;
+        const k = t.toLowerCase();
+        if (seen.has(k)) return;
+        seen.add(k);
+        out.push(t);
+    };
+
+    const sorted = [...teams].sort((a, b) =>
+        displayTeamNameFromRecord(a).localeCompare(displayTeamNameFromRecord(b), undefined, {
+            sensitivity: 'base',
+        })
+    );
+
+    for (const team of sorted) {
+        add(displayTeamNameFromRecord(team));
+        for (const src of team.source_team_names) add(src);
+        for (const part of displayTeamNameFromRecord(team).split(/\s+X\s+/i)) add(part);
+    }
+
+    return out.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+}
+
+/** Map any alias (source / segment / merged) → canonical merged team_name for leaderboard grouping. */
+export function buildFinalTeamAliasMap(teams: FinalTeamRecord[]): Map<string, string> {
+    const map = new Map<string, string>();
+    for (const team of teams) {
+        const canon = displayTeamNameFromRecord(team);
+        const register = (alias: string) => {
+            const k = alias.trim().toLowerCase();
+            if (k) map.set(k, canon);
+        };
+        register(canon);
+        register(team.team_name);
+        for (const src of team.source_team_names) register(src);
+        for (const part of canon.split(/\s+X\s+/i)) register(part);
+    }
+    return map;
+}
+
+export function canonicalizeRound1TeamName(name: string, aliasMap: Map<string, string>): string {
+    const key = name.trim().toLowerCase();
+    return aliasMap.get(key) ?? name.trim();
+}
+
+export function resolveMergeManualMapForSync(
+    clientMapJson: string | null,
+    storedHalls: StoredSeminarHallRow[],
+    configMap: Record<string, string> | null | undefined
+): Map<string, string> {
+    const fromClient = manualGroupMapFromJson(clientMapJson);
+    if (fromClient.size > 0) return fromClient;
+
+    if (configMap && typeof configMap === 'object') {
+        const fromConfig = manualGroupMapFromJson(JSON.stringify(configMap));
+        if (fromConfig.size > 0) return fromConfig;
+    }
+
+    return buildManualGroupMapFromStoredSquads(storedHalls);
+}
+
+export { manualGroupMapToJson };
 
 function mergeMemberPayloadRows(rows: FinalTeamRecord[]): FinalTeamMember[] {
     const byKey = new Map<string, FinalTeamMember>();
@@ -126,33 +223,36 @@ export function dedupeFinalTeams(teams: FinalTeamRecord[]): FinalTeamRecord[] {
             source_team_names: [...group[0].source_team_names],
             submission_ids: [...group[0].submission_ids],
         };
-        winner.team_name = platformTeamNameFromRecord(winner);
         if (group.length > 1) {
             winner.members = mergeMemberPayloadRows(group);
             const submissionIds = new Set(winner.submission_ids);
+            const sourceNames = new Set<string>(winner.source_team_names);
             for (const other of group.slice(1)) {
                 for (const id of other.submission_ids) submissionIds.add(id);
+                for (const n of other.source_team_names) sourceNames.add(n);
             }
             winner.submission_ids = [...submissionIds];
+            winner.source_team_names = [...sourceNames];
         }
+        winner.team_name = displayTeamNameFromRecord(winner);
         output.push(winner);
     }
 
     return output.map((row, index) => ({
         ...row,
         sort_order: index,
-        team_name: platformTeamNameFromRecord(row),
+        team_name: displayTeamNameFromRecord(row),
     }));
 }
 
 export function buildFinalTeamsFromMerger(
     submissions: TeamSubmission[],
     autoMerge: boolean,
-    manualGroupMapJson: string | null,
+    manualGroupMap: Map<string, string>,
     storedHalls: StoredSeminarHallRow[],
     existingByKey: Map<string, FinalTeamRecord>
 ): FinalTeamRecord[] {
-    const groups = computeMergeGroupsForFinalRoster(submissions, autoMerge, manualGroupMapJson);
+    const groups = computeMergeGroupsForFinalRoster(submissions, autoMerge, manualGroupMap);
     const hallByKey = storedHallMap(storedHalls);
 
     const built = groups
@@ -162,12 +262,11 @@ export function buildFinalTeamsFromMerger(
             const key = teamKeyFromSubmissionIds(group.submissionIds);
             const prev = existingByKey.get(key);
             const hall = hallByKey.get(key) ?? prev?.seminar_hall ?? null;
-            return mergeGroupToFinalTeam(
-                group,
-                hall,
-                prev?.access_token,
-                index
-            );
+            const storedName = mergedNameFromStoredHalls(group.submissionIds, group.teamNames, storedHalls);
+            const record = mergeGroupToFinalTeam(group, hall, prev?.access_token, index);
+            record.team_name = storedName || group.mergedTeamName || displayTeamNameFromRecord(record);
+            record.source_team_names = [...new Set(group.teamNames.map(cleanPlatformLabel).filter(Boolean))];
+            return record;
         });
     return dedupeFinalTeams(built);
 }

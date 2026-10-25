@@ -2,11 +2,15 @@ import { NextRequest, NextResponse } from 'next/server';
 import { verifyAdminSecret, generateAccessToken } from '@/lib/auth';
 import { getSupabaseAdmin } from '@/lib/supabase';
 import {
+    buildFinalTeamAliasMap,
+    buildFinalTeamDropdownLabels,
     buildFinalTeamsFromMerger,
     buildFinalTeamsEmailPasteCsv,
     buildFinalTeamsExportCsv,
     dedupeFinalTeams,
+    displayTeamNameFromRecord,
     finalTeamsToEmailRecipients,
+    resolveMergeManualMapForSync,
     type FinalTeamRecord,
 } from '@/lib/final-teams';
 import {
@@ -14,6 +18,7 @@ import {
     loadFinalTeams,
     loadFinalTeamsConfig,
     replaceFinalTeams,
+    saveFinalTeamsMergeSnapshot,
     setFinalTeamsLocked,
 } from '@/lib/final-teams-db';
 import { syncUsersFromFinalTeams } from '@/lib/sync-users-from-final-teams';
@@ -74,7 +79,10 @@ export async function GET(req: NextRequest) {
     }
 
     const config = await loadFinalTeamsConfig();
-    const teams = await loadFinalTeams();
+    const teams = (await loadFinalTeams()).map((t) => ({
+        ...t,
+        team_name: displayTeamNameFromRecord(t),
+    }));
 
     if (exportKind === 'teams-csv') {
         const csv = buildFinalTeamsExportCsv(teams);
@@ -97,10 +105,12 @@ export async function GET(req: NextRequest) {
     }
 
     if (namesOnly) {
+        const aliasMap = buildFinalTeamAliasMap(teams);
         return NextResponse.json({
             ready: true,
             locked: config.locked,
-            teamNames: teams.map((t) => t.team_name).sort((a, b) => a.localeCompare(b)),
+            teamNames: buildFinalTeamDropdownLabels(teams),
+            aliasToCanonical: Object.fromEntries(aliasMap.entries()),
         });
     }
 
@@ -244,10 +254,11 @@ export async function POST(req: NextRequest) {
     }
 
     const autoMerge = Boolean(record.autoMerge);
-    const manualGroupMap =
+    const manualGroupMapJson =
         typeof record.manualGroupMap === 'string' ? record.manualGroupMap : null;
 
     const supabase = getSupabaseAdmin();
+    const configBefore = await loadFinalTeamsConfig();
     const { data: submissions, error: subErr } = await supabase
         .from('team_registration_submissions')
         .select('id, team_name, members, squad_merge_opt_in, created_at')
@@ -268,6 +279,12 @@ export async function POST(req: NextRequest) {
     const existing = await loadFinalTeams();
     const existingByKey = new Map(existing.map((t) => [t.team_key, t]));
 
+    const manualGroupMap = resolveMergeManualMapForSync(
+        manualGroupMapJson,
+        storedHalls,
+        configBefore.merge_manual_map
+    );
+
     const built = buildFinalTeamsFromMerger(
         (submissions || []) as TeamSubmission[],
         autoMerge,
@@ -277,6 +294,10 @@ export async function POST(req: NextRequest) {
     );
 
     await replaceFinalTeams(built);
+    await saveFinalTeamsMergeSnapshot(
+        autoMerge,
+        Object.fromEntries(manualGroupMap.entries())
+    );
     const saved = await loadFinalTeams();
     const nextConfig = await loadFinalTeamsConfig();
 

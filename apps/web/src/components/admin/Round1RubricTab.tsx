@@ -203,6 +203,7 @@ export function Round1RubricTab({ adminSecret }: Round1RubricTabProps) {
   // Form Fields
   const [teamName, setTeamName] = useState('');
   const [finalTeamNames, setFinalTeamNames] = useState<string[]>([]);
+  const [teamAliasToCanonical, setTeamAliasToCanonical] = useState<Record<string, string>>({});
   const [judgeName, setJudgeName] = useState('');
   const [theme, setTheme] = useState('');
 
@@ -226,22 +227,35 @@ export function Round1RubricTab({ adminSecret }: Round1RubricTabProps) {
         if (Array.isArray(d.teamNames) && d.teamNames.length > 0) {
           setFinalTeamNames(d.teamNames);
         }
+        if (d.aliasToCanonical && typeof d.aliasToCanonical === 'object') {
+          setTeamAliasToCanonical(d.aliasToCanonical as Record<string, string>);
+        }
       })
       .catch(() => {});
   }, [adminSecret]);
 
+  const canonicalTeamName = useCallback(
+    (name: string) => {
+      const key = name.trim().toLowerCase();
+      return teamAliasToCanonical[key] ?? name.trim();
+    },
+    [teamAliasToCanonical]
+  );
+
   const evaluatedTeamKeys = useMemo(() => {
     const keys = new Set<string>();
     for (const ev of evaluations) {
-      const key = (ev.team_name || '').trim().toLowerCase();
-      if (key) keys.add(key);
+      const canon = canonicalTeamName(ev.team_name || '').toLowerCase();
+      if (canon) keys.add(canon);
     }
     return keys;
-  }, [evaluations]);
+  }, [evaluations, canonicalTeamName]);
 
   const teamsAvailableForEvaluation = useMemo(() => {
-    return finalTeamNames.filter((name) => !evaluatedTeamKeys.has(name.trim().toLowerCase()));
-  }, [finalTeamNames, evaluatedTeamKeys]);
+    return finalTeamNames.filter(
+      (name) => !evaluatedTeamKeys.has(canonicalTeamName(name).toLowerCase())
+    );
+  }, [finalTeamNames, evaluatedTeamKeys, canonicalTeamName]);
 
   useEffect(() => {
     if (!teamName.trim()) return;
@@ -461,7 +475,7 @@ export function Round1RubricTab({ adminSecret }: Round1RubricTabProps) {
 
     try {
       const payload = {
-        team_name: teamName.trim(),
+        team_name: canonicalTeamName(teamName),
         judge_name: judgeName.trim(),
         theme: theme.trim(),
         score_prompt_clarity: parseFloat(scores.score_prompt_clarity),
