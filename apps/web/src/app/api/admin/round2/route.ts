@@ -25,6 +25,7 @@ import {
   validateDraftForTokenGeneration,
   type Round2DraftRoster,
 } from '@/lib/round2-draft';
+import { syncStagePasswordsFromPoolKeys } from '@/lib/sync-stage-passwords';
 
 export const dynamic = 'force-dynamic';
 
@@ -349,10 +350,13 @@ export async function POST(req: NextRequest) {
       pool_assignments: assignments,
     });
 
+    const passwordSync = await syncStagePasswordsFromPoolKeys(getSupabaseAdmin());
+
     return NextResponse.json({
       success: true,
       committed: commitData.committed || [],
       teamCount: selectedTeams.length,
+      passwordSync,
     });
   }
 

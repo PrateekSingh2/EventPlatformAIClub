@@ -10,6 +10,7 @@ import {
   storageArchiveExists,
 } from '@/lib/storage';
 import { chunkArray, mapWithConcurrency } from '@/lib/async-pool';
+import { syncStagePasswordsFromPoolKeys } from '@/lib/sync-stage-passwords';
 
 const PRESIGN_CONCURRENCY = 15;
 const TOKEN_UPSERT_CHUNK = 200;
@@ -284,7 +285,21 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      return NextResponse.json({ success: errors.length === 0, committed, errors });
+      let passwordSync: Awaited<ReturnType<typeof syncStagePasswordsFromPoolKeys>> | undefined;
+      if (action === 'commit-pool') {
+        try {
+          passwordSync = await syncStagePasswordsFromPoolKeys(supabaseAdmin);
+        } catch (err: unknown) {
+          console.warn('[syncStagePasswordsFromPoolKeys]:', err);
+        }
+      }
+
+      return NextResponse.json({
+        success: errors.length === 0,
+        committed,
+        errors,
+        passwordSync,
+      });
     }
 
     return NextResponse.json({ error: 'Invalid action. Use presign or commit.' }, { status: 400 });

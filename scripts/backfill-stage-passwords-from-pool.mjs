@@ -32,7 +32,11 @@ const chak = JSON.parse(fs.readFileSync(path.join(ROOT, 'apps/web/data/chakravyu
 const allPacks = [...chak.packs, ...keys.packs];
 
 function poolKeyFromPath(storagePath) {
-  const m = String(storagePath).match(/case-study-pool\/([^/]+)\/archive\.zip/i);
+  const clean = String(storagePath)
+    .replace(/^\/+/, '')
+    .trim()
+    .replace(/^stages\//, '');
+  const m = clean.match(/(?:^|\/)case-study-pool\/([^/]+)\/archive\.zip/i);
   return m ? m[1] : null;
 }
 
