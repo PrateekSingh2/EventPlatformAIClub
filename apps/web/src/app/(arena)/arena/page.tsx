@@ -59,42 +59,20 @@ const ContestCompletionModal = dynamic(
 
 const STAGE_LIST_CACHE_KEY = 'arena_stage_list_v1';
 
-const DEFAULT_STAGES: StageManifest[] = [
-  {
-    stageNumber: 1,
-    title: 'Neural Anomaly Extraction & Data Decryption',
-    isPasswordProtected: false,
-    allowedCopyFilename: 'ai_prompt.txt',
-    points: 100,
-  },
-  {
-    stageNumber: 2,
-    title: 'Quantum Key Distribution Protocol',
-    isPasswordProtected: true,
-    allowedCopyFilename: 'ai_prompt_stage2.txt',
-    points: 150,
-  },
-  {
-    stageNumber: 3,
-    title: 'Master Architecture Unlocked',
-    isPasswordProtected: true,
-    allowedCopyFilename: 'ai_prompt_stage3.txt',
-    points: 200,
-  },
-];
+const DEFAULT_STAGE_COUNT = 3;
 
 function buildStagesFromArchiveCount(stageCount: number): StageManifest[] {
   const count = Math.max(1, stageCount);
   return Array.from({ length: count }, (_, i) => ({
     stageNumber: i + 1,
-    title: DEFAULT_STAGES[i]?.title || `Stage ${i + 1}`,
+    title: `Stage ${i + 1}`,
     isPasswordProtected: i > 0,
-    allowedCopyFilename:
-      DEFAULT_STAGES[i]?.allowedCopyFilename ||
-      (i === 0 ? 'ai_prompt.txt' : `ai_prompt_stage${i + 1}.txt`),
-    points: DEFAULT_STAGES[i]?.points || (i + 1) * 100,
+    allowedCopyFilename: 'AI_TUTOR_PROMPT.txt',
+    points: Math.min(100 + i * 25, 300),
   }));
 }
+
+const DEFAULT_STAGES: StageManifest[] = buildStagesFromArchiveCount(DEFAULT_STAGE_COUNT);
 
 function ArenaContent() {
   const searchParams = useSearchParams();
@@ -233,7 +211,17 @@ function ArenaContent() {
     setTokenArchiveBlob(blob);
     setTokenArchiveStageCount(stageCount);
     setUsingTokenArchive(true);
-    setStages(buildStagesFromArchiveCount(stageCount));
+    setStages((prev) => {
+      const built = buildStagesFromArchiveCount(stageCount);
+      if (prev.length !== built.length) return built;
+      return built.map((s) => {
+        const existing = prev.find((p) => p.stageNumber === s.stageNumber);
+        const keepTitle =
+          existing?.title &&
+          !/Neural Anomaly|Quantum Key|Master Architecture/i.test(existing.title);
+        return keepTitle ? { ...s, title: existing.title } : s;
+      });
+    });
   }, []);
 
   // 1. Mandatory Login Check & Token Ownership Cross-Verification
@@ -314,7 +302,15 @@ function ArenaContent() {
         // Stage manifest (session cache + network)
         try {
           const cacheKey = `${STAGE_LIST_CACHE_KEY}:${activeToken}`;
-          const cachedRaw = sessionStorage.getItem(cacheKey);
+          let cachedRaw = sessionStorage.getItem(cacheKey);
+          if (cachedRaw?.includes('Neural Anomaly')) {
+            try {
+              sessionStorage.removeItem(cacheKey);
+            } catch {
+              /* ignore */
+            }
+            cachedRaw = null;
+          }
           if (cachedRaw) {
             try {
               const cachedStages = JSON.parse(cachedRaw) as StageManifest[];
@@ -434,6 +430,43 @@ function ArenaContent() {
     fetchTokenArchivePromiseRef.current = fetchPromise;
     return fetchPromise;
   }, [applyTokenArchiveToSession]);
+
+  /** Stage 1 has no password — preload into SANDBOX tree while user is on a later stage. */
+  const prefetchStageOneIntoMap = useCallback(async () => {
+    const currentToken = tokenRef.current;
+    if (!currentToken || stageFilesMapRef.current[1]?.length) return;
+
+    try {
+      const tokenArchive = tokenArchiveBlobRef.current || (await fetchTokenArchive(currentToken));
+      if (!tokenArchive) return;
+
+      const stageBlob = await resolveStageOneBlob(tokenArchive);
+      const result = await extractStageArchiveInBrowser(stageBlob, undefined, '', 1);
+      const taggedFiles = result.files.map((f) => ({ ...f, stageNumber: 1 }));
+      packGuideFilesRef.current = taggedFiles.filter((f) =>
+        ['START_HERE.md', 'RULES_AND_SCORING.md', 'PASSWORD_FORMAT.md', 'INCIDENT_REPORT_TEMPLATE.md'].includes(
+          f.name
+        )
+      );
+      stageFilesMapRef.current[1] = taggedFiles;
+      setStageFilesMap((prev) => ({ ...prev, 1: taggedFiles }));
+      if (result.nextZipBlob) rememberNextStageZip(2, result.nextZipBlob);
+
+      const titleFromReadme = result.stageTitle?.trim();
+      if (titleFromReadme) {
+        setStages((prev) =>
+          prev.map((s) => (s.stageNumber === 1 ? { ...s, title: titleFromReadme } : s))
+        );
+      }
+    } catch {
+      /* optional prefetch */
+    }
+  }, [fetchTokenArchive, rememberNextStageZip]);
+
+  useEffect(() => {
+    if (!token || !tokenArchiveBlob) return;
+    void prefetchStageOneIntoMap();
+  }, [token, tokenArchiveBlob, prefetchStageOneIntoMap]);
 
   // 2. Fetch stage manifest and download ZIP to RAM
   const loadStage = useCallback(
