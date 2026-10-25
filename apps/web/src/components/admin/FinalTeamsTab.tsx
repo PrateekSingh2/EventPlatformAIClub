@@ -220,7 +220,7 @@ export function FinalTeamsTab({ adminSecret }: FinalTeamsTabProps) {
             return;
         }
         const label = nextLocked
-            ? 'Lock final roster? Email, Round 1, and leaderboard views will use this data (users table unchanged).'
+            ? 'Lock final roster? This saves canonical teams to the database, syncs every member into the users table (team name, size, shared token), and keeps admin views consistent.'
             : 'Unlock roster for editing?';
         if (!window.confirm(label)) return;
 
@@ -241,7 +241,9 @@ export function FinalTeamsTab({ adminSecret }: FinalTeamsTabProps) {
             setLockedAt(data.config?.locked_at ?? null);
             setMessage({
                 type: 'ok',
-                text: nextLocked ? 'Final roster locked — canonical everywhere.' : 'Roster unlocked for edits.',
+                text: nextLocked
+                    ? `Final roster locked — ${typeof data.usersSynced === 'number' ? `${data.usersSynced} user row(s) synced` : 'users synced'}; canonical on all admin pages.`
+                    : 'Roster unlocked for edits.',
             });
         } catch (e) {
             setMessage({ type: 'err', text: e instanceof Error ? e.message : 'Lock failed' });
@@ -295,9 +297,9 @@ export function FinalTeamsTab({ adminSecret }: FinalTeamsTabProps) {
                         Final Team Roster
                     </h2>
                     <p className="text-xs text-app-subtext mt-1 max-w-2xl">
-                        Official merged squads — one shared token per team. When locked, Email Studio, Round 1 team
-                        picker, and leaderboard display use this roster (existing participant rows in the database are
-                        not modified).
+                        Official merged squads — one shared token per team. Lock writes roster to Supabase, syncs member
+                        rows in users (team name, size, shared token), and keeps Email Studio, Round 1, leaderboard, and
+                        telemetry aligned.
                     </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">

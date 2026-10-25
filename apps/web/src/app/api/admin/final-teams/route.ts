@@ -16,6 +16,7 @@ import {
     replaceFinalTeams,
     setFinalTeamsLocked,
 } from '@/lib/final-teams-db';
+import { syncUsersFromFinalTeams } from '@/lib/sync-users-from-final-teams';
 import type { TeamSubmission } from '@/lib/team-merger';
 import type { StoredSeminarHallRow } from '@/lib/seminar-halls';
 import { pruneDuplicateTeamsOnPlatform } from '@/lib/prune-duplicate-teams-db';
@@ -180,8 +181,19 @@ export async function PATCH(req: NextRequest) {
     const action = record.action;
 
     if (action === 'lock') {
+        const teams = await loadFinalTeams();
+        if (teams.length === 0) {
+            return NextResponse.json({ error: 'Save at least one final team before locking.' }, { status: 400 });
+        }
+        const sync = await syncUsersFromFinalTeams(teams);
+        if (!sync.ok) {
+            return NextResponse.json(
+                { error: sync.error || 'Failed to sync users table from final roster' },
+                { status: 500 }
+            );
+        }
         const config = await setFinalTeamsLocked(true);
-        return NextResponse.json({ success: true, config });
+        return NextResponse.json({ success: true, config, usersSynced: sync.count });
     }
     if (action === 'unlock') {
         const config = await setFinalTeamsLocked(false);

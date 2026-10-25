@@ -8,6 +8,14 @@ const nextConfig: NextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
   outputFileTracingRoot: monorepoRoot,
+  // Vercel bundles were ~87MB/route because webpack cache packs were traced into lambdas.
+  outputFileTracingExcludes: {
+    '*': [
+      '**/.next/cache/**',
+      '**/node_modules/.cache/**',
+      '**/cache/webpack/**',
+    ],
+  },
   experimental: {
     serverActions: {
       bodySizeLimit: '10mb',

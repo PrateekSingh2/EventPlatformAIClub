@@ -1,5 +1,5 @@
 import { getSupabaseAdmin } from '@/lib/supabase';
-import type { FinalTeamRecord, FinalTeamsConfig } from '@/lib/final-teams';
+import { overlayUserRosterFromFinalTeams, type FinalTeamRecord, type FinalTeamsConfig } from '@/lib/final-teams';
 
 export async function isFinalTeamsTableReady(): Promise<boolean> {
   const supabase = getSupabaseAdmin();
@@ -82,6 +82,23 @@ export async function replaceFinalTeams(teams: FinalTeamRecord[]): Promise<void>
   await supabase
     .from('final_teams_config')
     .upsert({ id: 1, updated_at: new Date().toISOString() }, { onConflict: 'id' });
+}
+
+/** When final roster is locked, align participant rows with canonical team_name / token / size. */
+export async function overlayUsersIfFinalTeamsLocked<
+  T extends {
+    email?: string | null;
+    team_name?: string | null;
+    team_size?: string | null;
+    access_token?: string | null;
+  },
+>(users: T[]): Promise<T[]> {
+  if (!(await isFinalTeamsTableReady())) return users;
+  const config = await loadFinalTeamsConfig();
+  if (!config.locked) return users;
+  const teams = await loadFinalTeams();
+  if (teams.length === 0) return users;
+  return overlayUserRosterFromFinalTeams(users, teams);
 }
 
 export async function setFinalTeamsLocked(locked: boolean): Promise<FinalTeamsConfig> {

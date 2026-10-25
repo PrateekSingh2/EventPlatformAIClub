@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyAdminSecret } from '@/lib/auth';
 import { getSupabaseAdmin, isSupabaseConfigured } from '@/lib/supabase';
-import { Round1RubricEvaluation, Round1LeaderboardEntry } from '@/lib/types';
+import { Round1RubricEvaluation } from '@/lib/types';
+import { buildLeaderboard, buildJudgeNormalizedLeaderboard } from '@/lib/round1-leaderboard';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
@@ -36,54 +37,6 @@ function writeLocalEvaluations(evaluations: Round1RubricEvaluation[]) {
   } catch (e) {
     console.error('[Round1 API] Failed writing local evaluations cache', e);
   }
-}
-
-function buildLeaderboard(evaluations: Round1RubricEvaluation[]): Round1LeaderboardEntry[] {
-  // Group by team_name
-  const teamMap = new Map<string, Round1RubricEvaluation[]>();
-  for (const ev of evaluations) {
-    const teamKey = ev.team_name.trim().toLowerCase();
-    const existing = teamMap.get(teamKey) || [];
-    existing.push(ev);
-    teamMap.set(teamKey, existing);
-  }
-
-  const entries: Round1LeaderboardEntry[] = [];
-  for (const [, evList] of teamMap.entries()) {
-    // Sort evaluations by created_at desc (latest first)
-    evList.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-    const latest = evList[0];
-    
-    // Calculate best or latest score (highest total_score for leaderboard ranking)
-    const bestScore = Math.max(...evList.map((e) => Number(e.total_score) || 0));
-    const representative = evList.find((e) => Number(e.total_score) === bestScore) || latest;
-
-    entries.push({
-      rank: 0, // Assigned after sorting
-      team_name: representative.team_name,
-      theme: representative.theme,
-      total_score: bestScore,
-      judge_name: representative.judge_name,
-      evaluations_count: evList.length,
-      latest_evaluated_at: latest.created_at,
-      evaluations: evList,
-    });
-  }
-
-  // Sort: total_score DESC, then latest_evaluated_at ASC (earlier submission tie-break)
-  entries.sort((a, b) => {
-    if (b.total_score !== a.total_score) {
-      return b.total_score - a.total_score;
-    }
-    return new Date(a.latest_evaluated_at).getTime() - new Date(b.latest_evaluated_at).getTime();
-  });
-
-  // Assign ranks
-  entries.forEach((entry, idx) => {
-    entry.rank = idx + 1;
-  });
-
-  return entries;
 }
 
 function normalizeRound1TeamKey(teamName: string): string {
@@ -128,6 +81,8 @@ export async function GET(req: NextRequest) {
     const { evaluations, tableExists } = await loadStoredEvaluations();
 
     const leaderboard = buildLeaderboard(evaluations);
+    const { leaderboard: normalized_leaderboard, judgeMeta: judge_normalization } =
+      buildJudgeNormalizedLeaderboard(evaluations);
 
     // Compute metrics
     const totalEvaluations = evaluations.length;
@@ -141,6 +96,8 @@ export async function GET(req: NextRequest) {
       tableExists,
       evaluations,
       leaderboard,
+      normalized_leaderboard,
+      judge_normalization,
       stats: {
         totalEvaluations,
         uniqueTeamsCount,

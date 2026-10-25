@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyAdminSecret, generateAccessToken } from '@/lib/auth';
 import { getSupabaseAdmin } from '@/lib/supabase';
+import { overlayUsersIfFinalTeamsLocked } from '@/lib/final-teams-db';
 
 export const dynamic = 'force-dynamic';
 
@@ -37,8 +38,10 @@ export async function GET(req: NextRequest) {
             return NextResponse.json({ participants: [] });
         }
 
+        const participants = await overlayUsersIfFinalTeamsLocked(users || []);
+
         return NextResponse.json(
-            { participants: users || [] },
+            { participants },
             {
                 headers: {
                     'Cache-Control': includeTelemetry ? 'private, no-store' : 'private, max-age=30, stale-while-revalidate=60',

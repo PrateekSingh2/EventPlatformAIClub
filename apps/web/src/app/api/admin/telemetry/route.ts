@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyAdminSecret } from '@/lib/auth';
 import { getSupabaseAdmin, isSupabaseConfigured, supabase } from '@/lib/supabase';
+import { overlayUsersIfFinalTeamsLocked } from '@/lib/final-teams-db';
 import { readLocalTelemetry, resetLocalTelemetryForUser } from '@/lib/local-telemetry';
 import { removeLocalDisqualification } from '@/lib/disqualification';
 import { StageTelemetry, UserTelemetrySummary } from '@/lib/types';
@@ -174,6 +175,8 @@ export async function GET(req: NextRequest) {
     }
 
     if (usersError) throw usersError;
+
+    usersData = await overlayUsersIfFinalTeamsLocked(usersData || []);
 
     // 2. Fetch all telemetry records
     const { data: telemetryData, error: telemetryError } = await supabaseAdmin

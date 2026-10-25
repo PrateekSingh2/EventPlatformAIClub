@@ -351,4 +351,7 @@ export interface Round1LeaderboardEntry {
   evaluations_count: number;
   latest_evaluated_at: string;
   evaluations: Round1RubricEvaluation[];
+  /** Present on judge-normalized standings (raw total unchanged on total_score). */
+  normalized_score?: number;
+  raw_total_score?: number;
 }

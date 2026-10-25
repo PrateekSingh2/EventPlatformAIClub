@@ -1,8 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getSupabaseAdmin } from '@/lib/supabase';
 import { sortLeaderboardUsers } from '@/lib/leaderboard-sort';
-import { overlayUserRosterFromFinalTeams } from '@/lib/final-teams';
-import { isFinalTeamsTableReady, loadFinalTeams, loadFinalTeamsConfig } from '@/lib/final-teams-db';
+import { overlayUsersIfFinalTeamsLocked } from '@/lib/final-teams-db';
 
 export const dynamic = 'force-dynamic';
 
@@ -21,17 +20,9 @@ export async function GET() {
       return NextResponse.json({ success: false, users: [] }, { status: 500 });
     }
 
-    let sortedUsers = sortLeaderboardUsers(users || []);
-
-    if (await isFinalTeamsTableReady()) {
-      const config = await loadFinalTeamsConfig();
-      if (config.locked) {
-        const teams = await loadFinalTeams();
-        if (teams.length > 0) {
-          sortedUsers = sortLeaderboardUsers(overlayUserRosterFromFinalTeams(sortedUsers, teams));
-        }
-      }
-    }
+    const baseUsers = users ?? [];
+    const rosterAligned = await overlayUsersIfFinalTeamsLocked(baseUsers);
+    let sortedUsers = sortLeaderboardUsers(rosterAligned as typeof baseUsers);
 
     return NextResponse.json(
       {

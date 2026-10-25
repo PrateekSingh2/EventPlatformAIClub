@@ -4,6 +4,10 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 import { Round1RubricEvaluation, Round1LeaderboardEntry } from '@/lib/types';
 import {
+  buildJudgeNormalizedLeaderboard,
+  type Round1JudgeNormalizationMeta,
+} from '@/lib/round1-leaderboard';
+import {
   Trophy,
   Award,
   Plus,
@@ -181,6 +185,7 @@ export function Round1RubricTab({ adminSecret }: Round1RubricTabProps) {
 
   // DOM overflow protection: show 10 teams initially
   const [visibleCount, setVisibleCount] = useState<number>(10);
+  const [visibleCountNormalized, setVisibleCountNormalized] = useState<number>(10);
   const [searchTerm, setSearchTerm] = useState<string>('');
 
   // Modal form state
@@ -526,22 +531,190 @@ export function Round1RubricTab({ adminSecret }: Round1RubricTabProps) {
     }
   };
 
-  // Filter leaderboard
-  const filteredLeaderboard = useMemo(() => {
-    if (!searchTerm.trim()) return leaderboard;
-    const q = searchTerm.toLowerCase();
-    return leaderboard.filter(
-      (entry) =>
-        (entry.team_name?.toLowerCase() || '').includes(q) ||
-        (entry.theme?.toLowerCase() || '').includes(q) ||
-        (entry.judge_name?.toLowerCase() || '').includes(q)
-    );
-  }, [leaderboard, searchTerm]);
+  const { leaderboard: normalizedLeaderboard, judgeMeta: judgeNormalization } = useMemo(
+    () => buildJudgeNormalizedLeaderboard(evaluations),
+    [evaluations]
+  );
 
-  // Teams to render with DOM protection (initial 10)
+  const filterLeaderboardEntries = useCallback(
+    (entries: Round1LeaderboardEntry[]) => {
+      if (!searchTerm.trim()) return entries;
+      const q = searchTerm.toLowerCase();
+      return entries.filter(
+        (entry) =>
+          (entry.team_name?.toLowerCase() || '').includes(q) ||
+          (entry.theme?.toLowerCase() || '').includes(q) ||
+          (entry.judge_name?.toLowerCase() || '').includes(q)
+      );
+    },
+    [searchTerm]
+  );
+
+  const filteredLeaderboard = useMemo(
+    () => filterLeaderboardEntries(leaderboard),
+    [leaderboard, filterLeaderboardEntries]
+  );
+
+  const filteredNormalizedLeaderboard = useMemo(
+    () => filterLeaderboardEntries(normalizedLeaderboard),
+    [normalizedLeaderboard, filterLeaderboardEntries]
+  );
+
   const visibleTeams = useMemo(() => {
     return filteredLeaderboard.slice(0, visibleCount);
   }, [filteredLeaderboard, visibleCount]);
+
+  const visibleNormalizedTeams = useMemo(() => {
+    return filteredNormalizedLeaderboard.slice(0, visibleCountNormalized);
+  }, [filteredNormalizedLeaderboard, visibleCountNormalized]);
+
+  const renderLeaderboardRows = (
+    teams: Round1LeaderboardEntry[],
+    mode: 'raw' | 'normalized'
+  ) =>
+    teams.map((team) => {
+      const isTop1 = team.rank === 1;
+      const isTop2 = team.rank === 2;
+      const isTop3 = team.rank === 3;
+      const displayScore =
+        mode === 'normalized' ? (team.normalized_score ?? team.total_score) : team.total_score;
+
+      return (
+        <div
+          key={`${mode}-${team.team_name}`}
+          className="p-3.5 sm:p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-app-hover/50 transition-colors"
+        >
+          <div className="flex items-center space-x-3 min-w-0">
+            <div
+              className={`w-9 h-9 rounded-xl flex items-center justify-center font-bold text-xs shrink-0 border ${
+                isTop1
+                  ? 'bg-amber-500/15 border-amber-500/30 text-amber-300'
+                  : isTop2
+                    ? 'bg-slate-300/15 border-slate-300/30 text-slate-200'
+                    : isTop3
+                      ? 'bg-amber-700/15 border-amber-700/30 text-amber-500'
+                      : 'bg-app-muted border-app-border text-app-subtext'
+              }`}
+            >
+              {isTop1 ? '🥇' : isTop2 ? '🥈' : isTop3 ? '🥉' : `#${team.rank}`}
+            </div>
+
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center space-x-2 flex-wrap gap-y-1">
+                <span className="text-xs sm:text-sm font-bold text-app-text truncate">
+                  {team.team_name}
+                </span>
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-app-muted text-app-subtext border border-app-border">
+                  {team.theme}
+                </span>
+              </div>
+              <div className="text-[11px] text-app-subtext mt-0.5 flex items-center flex-wrap gap-x-2 gap-y-0.5">
+                <span>
+                  Judge: <strong className="text-app-text">{team.judge_name}</strong>
+                </span>
+                {mode === 'normalized' && (
+                  <span className="text-[10px] text-app-subtext">
+                    Raw: <strong className="text-app-text">{team.total_score}</strong>/100
+                  </span>
+                )}
+                {team.evaluations_count > 1 && (
+                  <span className="text-[10px] text-indigo-400">
+                    ({team.evaluations_count} evaluations)
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between sm:justify-end space-x-4 shrink-0 pl-12 sm:pl-0">
+            <div className="text-left sm:text-right">
+              <div className="text-sm sm:text-base font-bold text-app-text font-mono">
+                {displayScore}
+                <span className="text-xs text-app-subtext font-normal font-sans"> / 100</span>
+              </div>
+              {mode === 'normalized' && (
+                <div className="text-[10px] text-violet-400/90 mt-0.5">within judge cohort</div>
+              )}
+              <div className="w-20 sm:w-24 h-1 rounded-full bg-app-muted overflow-hidden mt-1">
+                <div
+                  className={`h-full rounded-full ${mode === 'normalized' ? 'bg-violet-500' : 'bg-app-text'}`}
+                  style={{ width: `${Math.min(100, displayScore)}%` }}
+                />
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setSelectedTeamBreakdown(team)}
+              className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg border border-app-border bg-app-surface hover:bg-app-hover text-xs font-medium text-app-text transition-colors cursor-pointer min-h-[36px]"
+              title="View rubric score breakdown"
+            >
+              <Eye className="w-3.5 h-3.5 text-app-subtext" />
+              <span>View</span>
+            </button>
+          </div>
+        </div>
+      );
+    });
+
+  const renderShowMoreFooter = (
+    filtered: Round1LeaderboardEntry[],
+    visible: Round1LeaderboardEntry[],
+    visibleLimit: number,
+    setVisibleLimit: React.Dispatch<React.SetStateAction<number>>
+  ) => {
+    if (filtered.length <= 10) return null;
+    return (
+      <div className="p-3 bg-app-surface border border-app-border rounded-xl flex flex-col sm:flex-row items-center justify-between gap-2.5 text-xs text-app-subtext">
+        <div className="text-[11px]">
+          Showing <strong className="text-app-text">{visible.length}</strong> of{' '}
+          <strong className="text-app-text">{filtered.length}</strong> teams
+        </div>
+        <div className="flex items-center space-x-2">
+          {visibleLimit < filtered.length && (
+            <button
+              type="button"
+              onClick={() => setVisibleLimit((prev) => prev + 10)}
+              className="flex items-center space-x-1 px-3 py-1.5 rounded-lg bg-app-hover border border-app-border text-app-text font-medium transition-colors cursor-pointer"
+            >
+              <ChevronDown className="w-3.5 h-3.5" />
+              <span>Show More (+10)</span>
+            </button>
+          )}
+          {visibleLimit > 10 && (
+            <button
+              type="button"
+              onClick={() => setVisibleLimit(10)}
+              className="flex items-center space-x-1 px-3 py-1.5 rounded-lg border border-app-border text-app-subtext hover:text-app-text transition-colors cursor-pointer"
+            >
+              <ChevronUp className="w-3.5 h-3.5" />
+              <span>Show Less</span>
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  const renderJudgeNormalizationLegend = (meta: Round1JudgeNormalizationMeta[]) => {
+    if (meta.length === 0) return null;
+    return (
+      <div className="flex flex-wrap gap-2 p-3 rounded-xl bg-violet-500/5 border border-violet-500/20 text-[11px] text-app-subtext">
+        {meta.map((j) => (
+          <span
+            key={j.judge_name}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-app-surface border border-app-border"
+          >
+            <strong className="text-app-text">{j.judge_name}</strong>
+            <span>
+              min {j.min_raw} · max {j.max_raw} · {j.team_count} team
+              {j.team_count === 1 ? '' : 's'}
+            </span>
+          </span>
+        ))}
+      </div>
+    );
+  };
 
   const handleCopySql = () => {
     navigator.clipboard.writeText(SQL_MIGRATION_SNIPPET);
@@ -745,126 +918,52 @@ export function Round1RubricTab({ adminSecret }: Round1RubricTabProps) {
               </p>
             </div>
           ) : (
-            <div className="space-y-2.5">
-              {/* Leaderboard Items Container */}
-              <div className="bg-app-surface border border-app-border rounded-2xl overflow-hidden divide-y divide-app-border shadow-xs">
-                {visibleTeams.map((team) => {
-                  const isTop1 = team.rank === 1;
-                  const isTop2 = team.rank === 2;
-                  const isTop3 = team.rank === 3;
-
-                  return (
-                    <div
-                      key={team.team_name}
-                      className="p-3.5 sm:p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-app-hover/50 transition-colors"
-                    >
-                      {/* Left: Rank & Team Info */}
-                      <div className="flex items-center space-x-3 min-w-0">
-                        {/* Rank Badge */}
-                        <div
-                          className={`w-9 h-9 rounded-xl flex items-center justify-center font-bold text-xs shrink-0 border ${
-                            isTop1
-                              ? 'bg-amber-500/15 border-amber-500/30 text-amber-300'
-                              : isTop2
-                              ? 'bg-slate-300/15 border-slate-300/30 text-slate-200'
-                              : isTop3
-                              ? 'bg-amber-700/15 border-amber-700/30 text-amber-500'
-                              : 'bg-app-muted border-app-border text-app-subtext'
-                          }`}
-                        >
-                          {isTop1 ? '🥇' : isTop2 ? '🥈' : isTop3 ? '🥉' : `#${team.rank}`}
-                        </div>
-
-                        {/* Team Details */}
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center space-x-2 flex-wrap gap-y-1">
-                            <span className="text-xs sm:text-sm font-bold text-app-text truncate">
-                              {team.team_name}
-                            </span>
-                            <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-app-muted text-app-subtext border border-app-border">
-                              {team.theme}
-                            </span>
-                          </div>
-                          <div className="text-[11px] text-app-subtext mt-0.5 flex items-center space-x-2">
-                            <span>
-                              Judge: <strong className="text-app-text">{team.judge_name}</strong>
-                            </span>
-                            {team.evaluations_count > 1 && (
-                              <span className="text-[10px] text-indigo-400">
-                                ({team.evaluations_count} evaluations)
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Right: Score & View Details Button */}
-                      <div className="flex items-center justify-between sm:justify-end space-x-4 shrink-0 pl-12 sm:pl-0">
-                        {/* Score Display */}
-                        <div className="text-left sm:text-right">
-                          <div className="text-sm sm:text-base font-bold text-app-text font-mono">
-                            {team.total_score}
-                            <span className="text-xs text-app-subtext font-normal font-sans">
-                              {' '}
-                              / 100
-                            </span>
-                          </div>
-
-                          {/* Minimal Score Bar */}
-                          <div className="w-20 sm:w-24 h-1 rounded-full bg-app-muted overflow-hidden mt-1">
-                            <div
-                              className="h-full rounded-full bg-app-text"
-                              style={{ width: `${Math.min(100, team.total_score)}%` }}
-                            />
-                          </div>
-                        </div>
-
-                        {/* View Breakdown Button */}
-                        <button
-                          onClick={() => setSelectedTeamBreakdown(team)}
-                          className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg border border-app-border bg-app-surface hover:bg-app-hover text-xs font-medium text-app-text transition-colors cursor-pointer min-h-[36px]"
-                          title="View rubric score breakdown"
-                        >
-                          <Eye className="w-3.5 h-3.5 text-app-subtext" />
-                          <span>View</span>
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-
-              {/* DOM Overflow Prevention: Show More / Show Less */}
-              {filteredLeaderboard.length > 10 && (
-                <div className="p-3 bg-app-surface border border-app-border rounded-xl flex flex-col sm:flex-row items-center justify-between gap-2.5 text-xs text-app-subtext">
-                  <div className="text-[11px]">
-                    Showing <strong className="text-app-text">{visibleTeams.length}</strong> of{' '}
-                    <strong className="text-app-text">{filteredLeaderboard.length}</strong> teams
-                  </div>
-
-                  <div className="flex items-center space-x-2">
-                    {visibleCount < filteredLeaderboard.length && (
-                      <button
-                        onClick={() => setVisibleCount((prev) => prev + 10)}
-                        className="flex items-center space-x-1 px-3 py-1.5 rounded-lg bg-app-hover border border-app-border text-app-text font-medium transition-colors cursor-pointer"
-                      >
-                        <ChevronDown className="w-3.5 h-3.5" />
-                        <span>Show More (+10)</span>
-                      </button>
-                    )}
-
-                    {visibleCount > 10 && (
-                      <button
-                        onClick={() => setVisibleCount(10)}
-                        className="flex items-center space-x-1 px-3 py-1.5 rounded-lg border border-app-border text-app-subtext hover:text-app-text transition-colors cursor-pointer"
-                      >
-                        <ChevronUp className="w-3.5 h-3.5" />
-                        <span>Show Less</span>
-                      </button>
-                    )}
-                  </div>
+            <div className="space-y-8">
+              {/* Section 1: Raw rubric totals */}
+              <section className="space-y-3">
+                <div className="space-y-1">
+                  <h2 className="text-sm font-semibold text-app-text flex items-center gap-2">
+                    <Trophy className="w-4 h-4 text-amber-500" />
+                    Raw scores
+                  </h2>
+                  <p className="text-[11px] text-app-subtext">
+                    Actual rubric totals (0–100) as entered by each judge.
+                  </p>
                 </div>
-              )}
+                <div className="bg-app-surface border border-app-border rounded-2xl overflow-hidden divide-y divide-app-border shadow-xs">
+                  {renderLeaderboardRows(visibleTeams, 'raw')}
+                </div>
+                {renderShowMoreFooter(
+                  filteredLeaderboard,
+                  visibleTeams,
+                  visibleCount,
+                  setVisibleCount
+                )}
+              </section>
+
+              {/* Section 2: Per-judge min–max normalization */}
+              <section className="space-y-3">
+                <div className="space-y-1">
+                  <h2 className="text-sm font-semibold text-app-text flex items-center gap-2">
+                    <Sliders className="w-4 h-4 text-violet-500" />
+                    Judge-normalized standings
+                  </h2>
+                  <p className="text-[11px] text-app-subtext">
+                    Each judge is scaled 0–100 using only that judge&apos;s min and max raw scores
+                    (separate cohorts — Judge A and Judge B do not share the same scale).
+                  </p>
+                </div>
+                {renderJudgeNormalizationLegend(judgeNormalization)}
+                <div className="bg-app-surface border border-violet-500/25 rounded-2xl overflow-hidden divide-y divide-app-border shadow-xs">
+                  {renderLeaderboardRows(visibleNormalizedTeams, 'normalized')}
+                </div>
+                {renderShowMoreFooter(
+                  filteredNormalizedLeaderboard,
+                  visibleNormalizedTeams,
+                  visibleCountNormalized,
+                  setVisibleCountNormalized
+                )}
+              </section>
             </div>
           )}
         </div>

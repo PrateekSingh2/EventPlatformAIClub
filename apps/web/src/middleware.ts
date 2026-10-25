@@ -3,24 +3,31 @@ import { NextRequest, NextResponse } from 'next/server';
 const PUBLIC_PAGE = '/form';
 const PUBLIC_API = '/api/public/team-registration';
 
-/** Naitik Vercel project (form-only public site). Olive / Prateek repo deploys skip this. */
+/** Prateek full platform (olive / PrateekSingh2 repo) — all routes, not form-only. */
+function isPrateekFullDeploy(): boolean {
+    const owner = (process.env.VERCEL_GIT_REPO_OWNER || '').toLowerCase();
+    if (owner === 'prateeksingh2') return true;
+
+    const appUrl = (process.env.NEXT_PUBLIC_APP_URL || '').toLowerCase();
+    // Prateek production uses event-platform-ai-club-* (hyphenated), not Naitik's event-platform-aiclub.*
+    return appUrl.includes('event-platform-ai-club');
+}
+
+/** Naitik Vercel project (form-only public site). Only explicit git link or APP_URL — not VERCEL_* auto URLs. */
 function isNaitikFormDeploy(): boolean {
+    if (isPrateekFullDeploy()) return false;
+
     const owner = (process.env.VERCEL_GIT_REPO_OWNER || '').toLowerCase();
     const slug = (process.env.VERCEL_GIT_REPO_SLUG || '').toLowerCase();
     if (owner === 'naitikk-j' && slug === 'event-platform-aiclub') return true;
 
-    const host = [
-        process.env.NEXT_PUBLIC_APP_URL || '',
-        process.env.VERCEL_URL || '',
-        process.env.VERCEL_PROJECT_PRODUCTION_URL || '',
-    ]
-        .join(' ')
-        .toLowerCase();
-
-    return host.includes('event-platform-aiclub.vercel.app');
+    const appUrl = (process.env.NEXT_PUBLIC_APP_URL || '').toLowerCase();
+    return appUrl.includes('event-platform-aiclub.vercel.app');
 }
 
 function isFormOnlyPublicSurface(): boolean {
+    if (isPrateekFullDeploy()) return false;
+
     // Naitik Vercel project: always form-only — never open /admin, /arena, or other APIs via env override.
     if (isNaitikFormDeploy()) {
         return true;
