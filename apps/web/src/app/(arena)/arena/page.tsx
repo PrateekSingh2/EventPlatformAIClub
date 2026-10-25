@@ -23,7 +23,11 @@ import { useContestLifecycle } from '@/hooks/useContestLifecycle';
 import { useAdminBroadcasts } from '@/hooks/useAdminBroadcasts';
 import { initializeProgressQueueListeners } from '@/lib/offline-progress-queue';
 import { saveStageArchive, getCachedStageArchive, saveTokenArchive, getCachedTokenArchive, clearTokenArchive } from '@/lib/stage-cache';
-import { resolveStageOneBlob, resolveNextStageZipBlob } from '@/lib/zip-engine';
+import {
+  resolveStageOneBlob,
+  resolveNextStageZipBlob,
+  extractPackGuideFilesFromOuter,
+} from '@/lib/zip-engine';
 import { supabase } from '@/lib/supabase';
 import {
   getContestantSession,
@@ -213,6 +217,7 @@ function ArenaContent() {
   }, [token]);
 
   const tokenArchiveBlobRef = useRef<Blob | null>(null);
+  const packGuideFilesRef = useRef<ParsedFile[]>([]);
   const stageFilesMapRef = useRef<Record<number, ParsedFile[]>>({});
   const unlockedStagePasswordsRef = useRef<Record<number, string>>(unlockedStagePasswords);
   const fetchTokenArchivePromiseRef = useRef<Promise<Blob | null> | null>(null);
@@ -477,6 +482,11 @@ function ArenaContent() {
 
             const result = await extractStageArchiveInBrowser(stageBlob, undefined, '', 1);
             const taggedFiles = result.files.map((f) => ({ ...f, stageNumber: 1 }));
+            packGuideFilesRef.current = taggedFiles.filter((f) =>
+              ['START_HERE.md', 'RULES_AND_SCORING.md', 'PASSWORD_FORMAT.md', 'INCIDENT_REPORT_TEMPLATE.md'].includes(
+                f.name
+              )
+            );
             stageFilesMapRef.current[1] = taggedFiles;
             setFiles(taggedFiles);
             setStageFilesMap((prev) => ({ ...prev, [1]: taggedFiles }));
@@ -566,7 +576,21 @@ function ArenaContent() {
                 stageCopyFile,
                 stageNum
               );
-              const taggedFiles = result.files.map((f) => ({ ...f, stageNumber: stageNum }));
+              let taggedFiles = result.files.map((f) => ({ ...f, stageNumber: stageNum }));
+              if (stageNum >= 2 && tokenArchive) {
+                try {
+                  if (!packGuideFilesRef.current.length) {
+                    packGuideFilesRef.current = await extractPackGuideFilesFromOuter(tokenArchive);
+                  }
+                  const have = new Set(taggedFiles.map((f) => f.name));
+                  const guides = packGuideFilesRef.current
+                    .filter((g) => !have.has(g.name))
+                    .map((g) => ({ ...g, stageNumber: stageNum }));
+                  taggedFiles = [...guides, ...taggedFiles];
+                } catch {
+                  /* pack guides optional */
+                }
+              }
               stageFilesMapRef.current[stageNum] = taggedFiles;
               setFiles(taggedFiles);
               setStageFilesMap((prev) => ({ ...prev, [stageNum]: taggedFiles }));

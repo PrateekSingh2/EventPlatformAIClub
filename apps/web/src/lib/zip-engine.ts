@@ -513,6 +513,59 @@ export async function resolveNextStageZipBlob(
   }
 }
 
+const PACK_GUIDE_FILENAMES = new Set([
+  'START_HERE.md',
+  'RULES_AND_SCORING.md',
+  'PASSWORD_FORMAT.md',
+  'INCIDENT_REPORT_TEMPLATE.md',
+]);
+
+/**
+ * Case-study outer ZIP keeps START_HERE / rules at pack root (sibling of STAGE_01/, STAGE_02.zip).
+ * Stage 2+ inner zips do not include those files — merge this list in the arena for stages >= 2.
+ */
+export async function extractPackGuideFilesFromOuter(outerZipBlob: Blob): Promise<ParsedFile[]> {
+  const blobReader = new BlobReader(outerZipBlob);
+  const zipReader = new ZipReader(blobReader);
+  const entries = await zipReader.getEntries();
+  const allPaths = entries.filter((e) => !e.directory).map((e) => e.filename);
+  const parsed: ParsedFile[] = [];
+
+  for (const entry of entries) {
+    if (entry.directory || /\.zip$/i.test(entry.filename)) continue;
+    const norm = entry.filename.replace(/\\/g, '/');
+    const parts = norm.split('/').filter(Boolean);
+    if (parts.length !== 2) continue;
+    const name = parts[1];
+    if (!PACK_GUIDE_FILENAMES.has(name)) continue;
+    if (!TEXT_EXTENSIONS.has(name.split('.').pop()?.toLowerCase() || '')) continue;
+
+    const { relativePath, folder, name: baseName } = cleanRelativePath(entry.filename, allPaths);
+    const textWriter = new TextWriter();
+    const content = await (entry as { getData: (w: TextWriter) => Promise<string> }).getData(textWriter);
+    parsed.push({
+      name: baseName,
+      path: entry.filename,
+      relativePath,
+      folder: folder || '_pack',
+      type: name.endsWith('.md') ? 'markdown' : 'text',
+      size: entry.uncompressedSize,
+      content,
+      isCopyAllowed: false,
+    });
+  }
+
+  await zipReader.close();
+
+  parsed.sort((a, b) => {
+    const rank = (n: string) =>
+      n === 'START_HERE.md' ? 0 : n === 'RULES_AND_SCORING.md' ? 1 : n === 'PASSWORD_FORMAT.md' ? 2 : 3;
+    return rank(a.name) - rank(b.name);
+  });
+
+  return parsed;
+}
+
 /** Pick a sensible default file tab after stage extraction. */
 export function pickDefaultStageFile(files: ParsedFile[]): ParsedFile | undefined {
   if (files.length === 0) return undefined;
