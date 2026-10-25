@@ -1,5 +1,7 @@
 import fs from 'fs';
 import path from 'path';
+import bundledMain from '../../data/PASSWORD_KEY.json';
+import bundledChak from '../../data/chakravyuh-password-key.json';
 
 export type CaseStudyPackKeys = {
   file?: string;
@@ -51,30 +53,38 @@ function resolveChakravyuhKeyPath(): string | null {
   return null;
 }
 
+function mergePasswordCatalog(
+  main: { packs?: CaseStudyPackKeys[] },
+  chak: { packs?: CaseStudyPackKeys[] }
+): CaseStudyPackKeys[] {
+  const packs = [...(main.packs || [])];
+  const seen = new Set(packs.map((p) => p.folder || p.file));
+  for (const p of chak.packs || []) {
+    const id = p.folder || p.file;
+    if (id && !seen.has(id)) {
+      packs.unshift(p);
+      seen.add(id);
+    }
+  }
+  return packs;
+}
+
 export function loadCaseStudyPasswordCatalog(): CaseStudyPackKeys[] {
   if (cachedCatalog) return cachedCatalog;
 
+  // Bundled at build time so Vercel/serverless always has keys (fs paths are unreliable).
+  let packs = mergePasswordCatalog(
+    bundledMain as { packs?: CaseStudyPackKeys[] },
+    bundledChak as { packs?: CaseStudyPackKeys[] }
+  );
+
   const mainPath = resolvePasswordKeyPath();
-  if (!mainPath) {
-    cachedCatalog = [];
-    return cachedCatalog;
-  }
-
-  const parsed = JSON.parse(fs.readFileSync(mainPath, 'utf8')) as {
-    packs?: CaseStudyPackKeys[];
-  };
-  const packs = [...(parsed.packs || [])];
-
-  const chakPath = resolveChakravyuhKeyPath();
-  if (chakPath) {
-    const chak = JSON.parse(fs.readFileSync(chakPath, 'utf8')) as { packs?: CaseStudyPackKeys[] };
-    const seen = new Set(packs.map((p) => p.folder || p.file));
-    for (const p of chak.packs || []) {
-      const id = p.folder || p.file;
-      if (id && !seen.has(id)) {
-        packs.unshift(p);
-        seen.add(id);
-      }
+  if (mainPath) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(mainPath, 'utf8')) as { packs?: CaseStudyPackKeys[] };
+      packs = mergePasswordCatalog(parsed, { packs });
+    } catch {
+      /* keep bundled */
     }
   }
 
@@ -83,8 +93,11 @@ export function loadCaseStudyPasswordCatalog(): CaseStudyPackKeys[] {
 }
 
 export function poolKeyFromStoragePath(storagePath: string): string | null {
-  const clean = storagePath.replace(/^\/+/, '').trim();
-  const m = clean.match(/case-study-pool\/([^/]+)\/archive\.zip$/i);
+  const clean = storagePath
+    .replace(/^\/+/, '')
+    .trim()
+    .replace(/^stages\//, '');
+  const m = clean.match(/(?:^|\/)case-study-pool\/([^/]+)\/archive\.zip$/i);
   return m ? m[1] : null;
 }
 

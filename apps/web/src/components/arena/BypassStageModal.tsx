@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { AlertTriangle, Copy, Eye, EyeOff, ShieldAlert, X } from 'lucide-react';
+import { isUsableStagePassword } from '@/lib/stage-password-utils';
 
 interface BypassStageModalProps {
   isOpen: boolean;
@@ -55,8 +56,12 @@ export function BypassStageModal({
       } else {
         setStep(3);
         setMessage(data.message || '');
-        const pw = String(data.password || '');
+        const pw = String(data.password || '').trim();
+        if (!isUsableStagePassword(pw)) {
+          throw new Error(data.error || 'Password not available for this stage.');
+        }
         setPassword(pw);
+        setShowPassword(true);
         onPasswordRevealed?.(stageNumber, pw);
       }
     } catch (e) {
@@ -143,7 +148,7 @@ export function BypassStageModal({
             </>
           )}
 
-          {step === 3 && password && (
+          {step === 3 && password && isUsableStagePassword(password) && (
             <>
               <p className="text-sm text-emerald-300/90">{message}</p>
               <p className="text-xs text-zinc-400">

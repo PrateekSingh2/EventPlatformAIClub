@@ -11,6 +11,7 @@ import { enqueueStageProgress } from '@/lib/offline-progress-queue';
 import { getCachedStageArchive, saveStageArchive } from '@/lib/stage-cache';
 import confetti from 'canvas-confetti';
 import { KeyRound, Eye, EyeOff, X, WifiOff, CloudLightning, Clock, ShieldAlert } from 'lucide-react';
+import { isUsableStagePassword } from '@/lib/stage-password-utils';
 
 interface UnlockNextStageModalProps {
   nextStageZipBlob?: Blob | null;
@@ -70,7 +71,8 @@ export function UnlockNextStageModal({
   // Clear password, errors, and check active cooldown whenever modal opens or stage transitions
   useEffect(() => {
     if (isOpen) {
-      setPassword('');
+      const hinted = stagePasswords?.[nextStageNumber];
+      setPassword(isUsableStagePassword(hinted) ? hinted.trim() : '');
       setErrorMessage(null);
       setSuccessMessage(null);
       setShowPassword(false);
@@ -107,7 +109,7 @@ export function UnlockNextStageModal({
       setErrorMessage(null);
       setSuccessMessage(null);
     }
-  }, [isOpen, nextStageNumber, accessToken]);
+  }, [isOpen, nextStageNumber, accessToken, stagePasswords]);
 
   // Smooth 1-second countdown timer when cooldown is active
   useEffect(() => {
@@ -658,7 +660,7 @@ export function UnlockNextStageModal({
                   setPassword(e.target.value);
                   setErrorMessage(null);
                 }}
-                placeholder="e.g. SEV2-PAYMENT-1431"
+                placeholder="Enter stage unlock password"
                 autoFocus
                 disabled={validating || cooldownSeconds > 0}
                 className="w-full bg-app-bg border border-app-border rounded-xl px-3 pr-9 py-2.5 text-xs text-app-text shadow-inner focus:border-app-accent focus:outline-none transition-colors placeholder:text-app-subtext/40 font-mono disabled:opacity-50 disabled:cursor-not-allowed"

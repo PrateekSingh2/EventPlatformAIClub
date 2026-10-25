@@ -3,6 +3,7 @@ import { verifyParticipantToken } from '@/lib/auth';
 import { getSupabaseAdmin, isSupabaseConfigured } from '@/lib/supabase';
 import { recordStageBypass } from '@/lib/stage-bypass-db';
 import { resolveStagePasswordForUser } from '@/lib/stage-password';
+import { isUsableStagePassword } from '@/lib/stage-password-utils';
 
 const WARNINGS: Record<number, { step: number; message: string; final?: boolean }> = {
   1: {
@@ -67,9 +68,17 @@ export async function POST(req: NextRequest) {
     });
 
     const supabaseAdmin = isSupabaseConfigured ? getSupabaseAdmin() : null;
-    const password =
-      (await resolveStagePasswordForUser(supabaseAdmin, accessToken, user, stageNum)) ||
-      'PASSWORD_NOT_CONFIGURED';
+    const password = await resolveStagePasswordForUser(supabaseAdmin, accessToken, user, stageNum);
+
+    if (!isUsableStagePassword(password)) {
+      return NextResponse.json(
+        {
+          error:
+            'Stage password could not be resolved for your team archive. Ask an organizer to verify pool assignment and passwords.',
+        },
+        { status: 503 }
+      );
+    }
 
     return NextResponse.json({
       ok: true,

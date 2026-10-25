@@ -3,6 +3,7 @@ import {
   getStagePasswordForStoragePath,
   passwordMatchesCaseStudyStage,
 } from '@/lib/case-study-password-keys';
+import { isUsableStagePassword } from '@/lib/stage-password-utils';
 
 /** @deprecated Use per-pool PASSWORD_KEY.json via storage_path — kept for legacy tests only */
 export const KNOWN_STAGE_PASSWORDS: Record<number, string> = {
@@ -33,14 +34,26 @@ async function loadTokenArchive(
     .maybeSingle();
 
   if (!archiveRecord && user.team_name) {
+    const teamName = user.team_name.trim();
     const { data: teamArchive } = await supabaseAdmin
       .from('token_archives')
       .select('id, storage_path')
-      .eq('team_name', user.team_name)
+      .eq('team_name', teamName)
       .order('uploaded_at', { ascending: false })
       .limit(1)
       .maybeSingle();
-    if (teamArchive) archiveRecord = teamArchive;
+    if (teamArchive) {
+      archiveRecord = teamArchive;
+    } else if (teamName) {
+      const { data: teamArchiveIlike } = await supabaseAdmin
+        .from('token_archives')
+        .select('id, storage_path')
+        .ilike('team_name', teamName)
+        .order('uploaded_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (teamArchiveIlike) archiveRecord = teamArchiveIlike;
+    }
   }
 
   if (!archiveRecord?.storage_path) return null;
@@ -57,16 +70,18 @@ export async function resolveStagePasswordForUser(
     try {
       const archive = await loadTokenArchive(supabaseAdmin, accessToken, user);
       if (archive?.storage_path) {
-        const fromPool = getStagePasswordForStoragePath(archive.storage_path, stageNum);
-        if (fromPool) return fromPool;
-
         const { data: pwRow } = await supabaseAdmin
           .from('stage_passwords')
           .select('password')
           .eq('token_archive_id', archive.id)
           .eq('stage_number', stageNum)
           .maybeSingle();
-        if (pwRow?.password) return String(pwRow.password).trim();
+        if (pwRow?.password && isUsableStagePassword(pwRow.password)) {
+          return String(pwRow.password).trim();
+        }
+
+        const fromPool = getStagePasswordForStoragePath(archive.storage_path, stageNum);
+        if (fromPool && isUsableStagePassword(fromPool)) return fromPool;
       }
     } catch {
       /* fall through */
@@ -83,7 +98,9 @@ export async function resolveStagePasswordForUser(
       .select('zip_password')
       .eq('stage_number', stageNum)
       .maybeSingle();
-    if (stageRow?.zip_password) return String(stageRow.zip_password).trim();
+    if (stageRow?.zip_password && isUsableStagePassword(stageRow.zip_password)) {
+      return String(stageRow.zip_password).trim();
+    }
   } catch {
     return null;
   }
