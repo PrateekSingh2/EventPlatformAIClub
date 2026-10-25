@@ -22,7 +22,14 @@ import { BroadcastAnnouncementModal } from '@/components/arena/BroadcastAnnounce
 import { useContestLifecycle } from '@/hooks/useContestLifecycle';
 import { useAdminBroadcasts } from '@/hooks/useAdminBroadcasts';
 import { initializeProgressQueueListeners } from '@/lib/offline-progress-queue';
-import { saveStageArchive, getCachedStageArchive, saveTokenArchive, getCachedTokenArchive, clearTokenArchive } from '@/lib/stage-cache';
+import {
+  saveStageArchive,
+  getCachedStageArchive,
+  saveTokenArchive,
+  getCachedTokenArchive,
+  clearTokenArchive,
+  clearParticipantStageCaches,
+} from '@/lib/stage-cache';
 import {
   resolveStageOneBlob,
   resolveNextStageZipBlob,
@@ -202,6 +209,7 @@ function ArenaContent() {
   const loadingStageRef = useRef<number | null>(null);
   /** Avoid duplicate loadStage from useEffect right after Unlock Next Stage hands off a verified key. */
   const pendingStageLoadRef = useRef<{ stage: number; password: string } | null>(null);
+  const lastArchiveKeyRef = useRef<string | null>(null);
   const usingTokenArchiveRef = useRef(false);
   useEffect(() => {
     usingTokenArchiveRef.current = usingTokenArchive;
@@ -210,6 +218,24 @@ function ArenaContent() {
   const rememberNextStageZip = useCallback((stageNum: number, blob: Blob) => {
     nextStageZipBlobsRef.current[stageNum] = blob;
     setNextStageZipBlobs((prev) => ({ ...prev, [stageNum]: blob }));
+  }, []);
+
+  const resetClientStageUnlockState = useCallback(() => {
+    unlockedStagePasswordsRef.current = {};
+    setUnlockedStagePasswords({});
+    try {
+      sessionStorage.removeItem('unlocked_stage_passwords');
+    } catch {
+      /* ignore */
+    }
+    stageFilesMapRef.current = {};
+    setStageFilesMap({});
+    nextStageZipBlobsRef.current = {};
+    setNextStageZipBlobs({});
+    packGuideFilesRef.current = [];
+    tokenArchiveBlobRef.current = null;
+    setTokenArchiveBlob(null);
+    loadingStageRef.current = null;
   }, []);
 
   const applyTokenArchiveToSession = useCallback((blob: Blob, stageCount: number) => {
@@ -413,19 +439,39 @@ function ArenaContent() {
         if (!meta?.isTokenArchive || !meta.downloadUrl) return null;
 
         const stageCount = Math.max(1, meta.stageCount || 1);
-        const archiveKey = meta.archiveKey;
+        const archiveKey = meta.archiveKey || null;
+
+        const archiveAssignmentChanged =
+          Boolean(archiveKey) &&
+          Boolean(lastArchiveKeyRef.current) &&
+          lastArchiveKeyRef.current !== archiveKey;
 
         const cached = await getCachedTokenArchive(currentToken);
-        if (cached && (!archiveKey || cached.archiveKey === archiveKey)) {
+        const cacheMatchesAssignment =
+          cached &&
+          (!archiveKey || !cached.archiveKey || cached.archiveKey === archiveKey);
+
+        if (archiveAssignmentChanged || (cached && archiveKey && cached.archiveKey && cached.archiveKey !== archiveKey)) {
+          await clearParticipantStageCaches(currentToken);
+          resetClientStageUnlockState();
+        }
+
+        if (cached && cacheMatchesAssignment) {
+          lastArchiveKeyRef.current = archiveKey || cached.archiveKey || null;
           applyTokenArchiveToSession(cached.blob, cached.stageCount || stageCount);
           return cached.blob;
+        }
+
+        if (cached && archiveKey && cached.archiveKey !== archiveKey) {
+          await clearParticipantStageCaches(currentToken);
         }
 
         const storageRes = await fetch(meta.downloadUrl);
         if (!storageRes.ok) throw new Error('Failed to download archive from storage');
 
         const blob = await storageRes.blob();
-        void saveTokenArchive(currentToken, blob, stageCount, archiveKey);
+        lastArchiveKeyRef.current = archiveKey;
+        void saveTokenArchive(currentToken, blob, stageCount, archiveKey ?? undefined);
         applyTokenArchiveToSession(blob, stageCount);
         return blob;
       } finally {
@@ -435,7 +481,7 @@ function ArenaContent() {
 
     fetchTokenArchivePromiseRef.current = fetchPromise;
     return fetchPromise;
-  }, [applyTokenArchiveToSession]);
+  }, [applyTokenArchiveToSession, resetClientStageUnlockState]);
 
   /** Stage 1 has no password — preload into SANDBOX tree while user is on a later stage. */
   const prefetchStageOneIntoMap = useCallback(async () => {
@@ -735,6 +781,10 @@ function ArenaContent() {
           setError(
             'Challenge ZIP is missing from storage. Ask the organizer to re-upload case studies in the pool and assign your team again.'
           );
+        } else if (/invalid password/i.test(msg) && usingTokenArchiveRef.current) {
+          setError(
+            'Your browser still has unlock keys or a ZIP from a previous case study. Log out, then sign in again — the app will download Mumbai Mint fresh.'
+          );
         } else {
           setError(msg);
         }
@@ -923,9 +973,13 @@ function ArenaContent() {
           totalStages={stages.length}
           onOpenLeaderboard={() => setIsLeaderboardOpen(true)}
           onLogout={async () => {
-            if (token) { try { await clearTokenArchive(token); } catch {} }
-            tokenArchiveBlobRef.current = null;
-            stageFilesMapRef.current = {};
+            if (token) {
+              try {
+                await clearParticipantStageCaches(token);
+              } catch {}
+            }
+            lastArchiveKeyRef.current = null;
+            resetClientStageUnlockState();
             await clearContestantSession();
             router.push('/');
           }}
@@ -1099,9 +1153,13 @@ function ArenaContent() {
           bypassStageNumber={nextUnlockStageNumber}
           onOpenLeaderboard={() => setIsLeaderboardOpen(true)}
           onLogout={async () => {
-            if (token) { try { await clearTokenArchive(token); } catch {} }
-            tokenArchiveBlobRef.current = null;
-            stageFilesMapRef.current = {};
+            if (token) {
+              try {
+                await clearParticipantStageCaches(token);
+              } catch {}
+            }
+            lastArchiveKeyRef.current = null;
+            resetClientStageUnlockState();
             await clearContestantSession();
             router.push('/');
           }}

@@ -183,3 +183,21 @@ export async function clearTokenArchive(accessToken: string): Promise<void> {
     db.close();
   } catch {}
 }
+
+/** Clears per-token outer archive and all cached inner stage ZIP blobs (pool reassignment). */
+export async function clearParticipantStageCaches(accessToken: string): Promise<void> {
+  if (typeof window === 'undefined') return;
+  try {
+    const db = await openContestCacheDb();
+    const tx = db.transaction([TOKEN_ARCHIVE_STORE, STORE_NAME], 'readwrite');
+    tx.objectStore(TOKEN_ARCHIVE_STORE).delete(accessToken);
+    tx.objectStore(STORE_NAME).clear();
+    await new Promise<void>((resolve, reject) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+    db.close();
+  } catch {
+    await clearTokenArchive(accessToken);
+  }
+}
