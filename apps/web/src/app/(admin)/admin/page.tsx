@@ -10,6 +10,7 @@ import { ContestLifecycleTab } from '@/components/admin/ContestLifecycleTab';
 import { BrevoStudioTab } from '@/components/admin/BrevoStudioTab';
 import { FormDataTab } from '@/components/admin/FormDataTab';
 import { TeamMergerTab } from '@/components/admin/TeamMergerTab';
+import { FinalTeamsTab } from '@/components/admin/FinalTeamsTab';
 import { AdminLeaderboardTab } from '@/components/admin/AdminLeaderboardTab';
 import { Round1RubricTab } from '@/components/admin/Round1RubricTab';
 import {
@@ -36,6 +37,7 @@ import {
   ClipboardList,
   Award,
   GitMerge,
+  BadgeCheck,
 } from 'lucide-react';
 
 type AdminTab =
@@ -47,6 +49,7 @@ type AdminTab =
   | 'round1'
   | 'formdata'
   | 'teammerger'
+  | 'finalteams'
   | 'leaderboard';
 
 interface NavItem {
@@ -113,6 +116,13 @@ const ADMIN_NAV_ITEMS: NavItem[] = [
     subtitle: 'Detect & merge duplicate teams',
     shortLabel: 'Merger',
     icon: GitMerge,
+  },
+  {
+    id: 'finalteams',
+    title: 'Final Teams',
+    subtitle: 'Official roster · lock & export',
+    shortLabel: 'Final',
+    icon: BadgeCheck,
   },
   {
     id: 'leaderboard',
@@ -552,6 +562,7 @@ export default function AdminPage() {
             {activeTab === 'brevo' && <BrevoStudioTab adminSecret={adminSecret} />}
             {activeTab === 'formdata' && <FormDataTab adminSecret={adminSecret} />}
             {activeTab === 'teammerger' && <TeamMergerTab adminSecret={adminSecret} />}
+            {activeTab === 'finalteams' && <FinalTeamsTab adminSecret={adminSecret} />}
             {activeTab === 'leaderboard' && <AdminLeaderboardTab adminSecret={adminSecret} />}
           </main>
         </div>

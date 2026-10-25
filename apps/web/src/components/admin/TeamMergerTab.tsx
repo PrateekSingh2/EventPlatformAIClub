@@ -20,6 +20,7 @@ import {
   applyManualUnmerge,
   buildManualMergeGroups,
   buildManualGroupMapAllSquadsOfFour,
+  buildManualGroupMapFromStoredSquads,
   buildMergerExportRows,
   computeAutoMergeGroups,
   filterMergerEligibleSubmissions,
@@ -32,10 +33,12 @@ import {
   type TeamSubmission,
 } from '@/lib/team-merger';
 import {
-  assignTeamsToSeminarHalls,
   buildSeminarHallExportRows,
   DEFAULT_SEMINAR_HALLS,
+  resolveHallAssignments,
+  storedHallMap,
   type SeminarHallTeam,
+  type StoredSeminarHallRow,
 } from '@/lib/seminar-halls';
 import { readClientCache, writeClientCache } from '@/lib/client-cache';
 
@@ -92,9 +95,12 @@ export function TeamMergerTab({ adminSecret }: TeamMergerTabProps) {
   const [previewGroup, setPreviewGroup] = useState<MergeGroup | null>(null);
   const [excludedOptOutCount, setExcludedOptOutCount] = useState(0);
   const [packMessage, setPackMessage] = useState<string | null>(null);
-  const [selectedHalls, setSelectedHalls] = useState<Set<string>>(new Set(['SH1', 'SH7']));
+  const [selectedHalls, setSelectedHalls] = useState<Set<string>>(new Set(['SH3', 'SH7']));
   const [customHall, setCustomHall] = useState('');
   const [hallMessage, setHallMessage] = useState<string | null>(null);
+  const [storedHallRows, setStoredHallRows] = useState<StoredSeminarHallRow[]>([]);
+  const [storedHallsLoaded, setStoredHallsLoaded] = useState(false);
+  const appliedStoredMergeRef = useRef(false);
   const fetchGeneration = useRef(0);
 
   const fetchSubmissions = useCallback(async () => {
@@ -147,6 +153,42 @@ export function TeamMergerTab({ adminSecret }: TeamMergerTabProps) {
     if (adminSecret) fetchSubmissions();
   }, [adminSecret, fetchSubmissions]);
 
+  const persistManualGroupMap = (next: Map<string, string>) => {
+    writeStoredManualGroups(next);
+    setManualGroupMap(next);
+  };
+
+  const fetchStoredHalls = useCallback(async () => {
+    if (!adminSecret) return;
+    try {
+      const res = await fetch('/api/admin/seminar-halls', {
+        headers: { 'x-admin-secret': adminSecret },
+      });
+      const data = await res.json();
+      if (res.ok && Array.isArray(data.assignments)) {
+        setStoredHallRows(data.assignments as StoredSeminarHallRow[]);
+      }
+    } catch {
+      /* optional table / offline */
+    } finally {
+      setStoredHallsLoaded(true);
+    }
+  }, [adminSecret]);
+
+  useEffect(() => {
+    fetchStoredHalls();
+  }, [fetchStoredHalls]);
+
+  useEffect(() => {
+    if (!storedHallsLoaded || storedHallRows.length === 0 || appliedStoredMergeRef.current) return;
+    const fromDb = buildManualGroupMapFromStoredSquads(storedHallRows);
+    if (fromDb.size === 0) return;
+    appliedStoredMergeRef.current = true;
+    writeStoredAutoMerge(false);
+    setAutoMerge(false);
+    persistManualGroupMap(fromDb);
+  }, [storedHallsLoaded, storedHallRows]);
+
   const submissionIdsKey = useMemo(
     () =>
       submissions
@@ -168,11 +210,6 @@ export function TeamMergerTab({ adminSecret }: TeamMergerTabProps) {
       return pruned;
     });
   }, [submissionIdsKey, submissions]);
-
-  const persistManualGroupMap = (next: Map<string, string>) => {
-    writeStoredManualGroups(next);
-    setManualGroupMap(next);
-  };
 
   const toggleAutoMerge = () => {
     setAutoMerge((prev) => {
@@ -207,10 +244,20 @@ export function TeamMergerTab({ adminSecret }: TeamMergerTabProps) {
     }));
   }, [groups]);
 
+  const teamNamesByKey = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const g of groups) {
+      map.set(g.submissionIds.slice().sort().join('|'), g.teamNames);
+    }
+    return map;
+  }, [groups]);
+
+  const storedHallByKey = useMemo(() => storedHallMap(storedHallRows), [storedHallRows]);
+
   const hallAssignments = useMemo(() => {
     const halls = Array.from(selectedHalls);
-    return assignTeamsToSeminarHalls(seminarTeams, halls);
-  }, [seminarTeams, selectedHalls]);
+    return resolveHallAssignments(seminarTeams, teamNamesByKey, storedHallByKey, halls);
+  }, [seminarTeams, teamNamesByKey, storedHallByKey, selectedHalls]);
 
   const toggleHall = (hall: string) => {
     setSelectedHalls((prev) => {
@@ -246,7 +293,8 @@ export function TeamMergerTab({ adminSecret }: TeamMergerTabProps) {
       new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' }),
       `seminar-hall-assignments-${dateStamp()}.csv`
     );
-    setHallMessage(`Exported ${rows.length} team row(s) across ${halls.length} hall(s).`);
+    const source = storedHallRows.length > 0 ? 'DB seating' : 'computed';
+    setHallMessage(`Exported ${rows.length} team row(s) (${source}, halls: ${halls.join(', ')}).`);
   };
 
   const toggleSelect = (id: string) => {
@@ -297,7 +345,7 @@ export function TeamMergerTab({ adminSecret }: TeamMergerTabProps) {
   };
 
   const exportRows = (mode: 'full' | 'merged') =>
-    buildMergerExportRows(submissions, groups, mode);
+    buildMergerExportRows(submissions, groups, mode, hallAssignments);
 
   const exportCsv = (mode: 'full' | 'merged') => {
     const rows = exportRows(mode);
@@ -573,9 +621,14 @@ export function TeamMergerTab({ adminSecret }: TeamMergerTabProps) {
         <div>
           <h3 className="text-sm font-bold text-app-text">Seminar hall assignment</h3>
           <p className="text-xs text-app-subtext mt-1">
-            Select halls, then divide <strong>merged teams</strong> evenly (round-robin). Export seating list for
-            event day.
+            Seating is loaded from the <strong>database</strong> when available (PDF baseline). Unassigned squads use
+            round-robin across selected halls. Merger CSV/Excel uses the same hall column.
           </p>
+          {storedHallRows.length > 0 && (
+            <p className="text-[11px] text-emerald-400/90 mt-1">
+              {storedHallRows.length} squad(s) stored in DB — merge layout synced from saved seating.
+            </p>
+          )}
         </div>
         <div className="flex flex-wrap gap-2">
           {DEFAULT_SEMINAR_HALLS.map((hall) => (

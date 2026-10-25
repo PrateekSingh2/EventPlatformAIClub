@@ -312,3 +312,45 @@ ALTER TABLE IF EXISTS token_archives ADD COLUMN IF NOT EXISTS team_name TEXT;
 CREATE INDEX IF NOT EXISTS idx_token_archives_team ON token_archives (team_name);
 
 NOTIFY pgrst, 'reload schema';
+
+-- 7. SEMINAR HALL SEATING (PDF baseline; see scripts/seed-seminar-halls-pdf.mjs)
+CREATE TABLE IF NOT EXISTS seminar_hall_assignments (
+    assignment_key TEXT PRIMARY KEY,
+    seminar_hall TEXT NOT NULL,
+    merged_team_name TEXT NOT NULL,
+    source_team_names JSONB NOT NULL DEFAULT '[]'::jsonb,
+    submission_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_seminar_hall_assignments_hall
+    ON seminar_hall_assignments (seminar_hall);
+
+-- 8. FINAL OFFICIAL TEAM ROSTER (canonical when locked)
+CREATE TABLE IF NOT EXISTS final_teams_config (
+    id INT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    locked BOOLEAN NOT NULL DEFAULT false,
+    locked_at TIMESTAMPTZ,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+INSERT INTO final_teams_config (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS final_teams (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    team_key TEXT NOT NULL UNIQUE,
+    team_name TEXT NOT NULL,
+    team_size TEXT NOT NULL DEFAULT 'Solo',
+    access_token TEXT NOT NULL,
+    members JSONB NOT NULL DEFAULT '[]'::jsonb,
+    source_team_names JSONB NOT NULL DEFAULT '[]'::jsonb,
+    submission_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+    seminar_hall TEXT,
+    sort_order INT NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_final_teams_team_name ON final_teams (team_name);
+CREATE INDEX IF NOT EXISTS idx_final_teams_sort ON final_teams (sort_order, team_name);
+
+NOTIFY pgrst, 'reload schema';

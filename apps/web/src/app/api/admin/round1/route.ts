@@ -86,6 +86,38 @@ function buildLeaderboard(evaluations: Round1RubricEvaluation[]): Round1Leaderbo
   return entries;
 }
 
+function normalizeRound1TeamKey(teamName: string): string {
+  return teamName.trim().toLowerCase();
+}
+
+async function loadStoredEvaluations(): Promise<{ evaluations: Round1RubricEvaluation[]; tableExists: boolean }> {
+  let evaluations: Round1RubricEvaluation[] = [];
+  let tableExists = true;
+
+  if (isSupabaseConfigured) {
+    const supabaseAdmin = getSupabaseAdmin();
+    const { data, error } = await supabaseAdmin
+      .from('round1')
+      .select('*')
+      .order('total_score', { ascending: false })
+      .order('created_at', { ascending: true });
+
+    if (error) {
+      if (error.code === 'PGRST205' || error.message?.includes('not find the table') || error.message?.includes('does not exist')) {
+        tableExists = false;
+      }
+      evaluations = readLocalEvaluations();
+    } else if (data) {
+      evaluations = data as Round1RubricEvaluation[];
+      writeLocalEvaluations(evaluations);
+    }
+  } else {
+    evaluations = readLocalEvaluations();
+  }
+
+  return { evaluations, tableExists };
+}
+
 export async function GET(req: NextRequest) {
   try {
     const adminSecret = req.headers.get('x-admin-secret') || req.nextUrl.searchParams.get('adminSecret');
@@ -93,31 +125,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized: Invalid Admin Secret' }, { status: 401 });
     }
 
-    let evaluations: Round1RubricEvaluation[] = [];
-    let tableExists = true;
-
-    if (isSupabaseConfigured) {
-      const supabaseAdmin = getSupabaseAdmin();
-      const { data, error } = await supabaseAdmin
-        .from('round1')
-        .select('*')
-        .order('total_score', { ascending: false })
-        .order('created_at', { ascending: true });
-
-      if (error) {
-        // Table not found code in PostgREST is PGRST205 / 42P01
-        if (error.code === 'PGRST205' || error.message?.includes('not find the table') || error.message?.includes('does not exist')) {
-          tableExists = false;
-        }
-        evaluations = readLocalEvaluations();
-      } else if (data) {
-        evaluations = data as Round1RubricEvaluation[];
-        // Sync local cache
-        writeLocalEvaluations(evaluations);
-      }
-    } else {
-      evaluations = readLocalEvaluations();
-    }
+    const { evaluations, tableExists } = await loadStoredEvaluations();
 
     const leaderboard = buildLeaderboard(evaluations);
 
@@ -187,6 +195,15 @@ export async function POST(req: NextRequest) {
     }
     if (!theme || typeof theme !== 'string' || !theme.trim()) {
       return NextResponse.json({ error: 'Theme is mandatory' }, { status: 400 });
+    }
+
+    const { evaluations: existingEvaluations } = await loadStoredEvaluations();
+    const teamKey = normalizeRound1TeamKey(team_name);
+    if (existingEvaluations.some((e) => normalizeRound1TeamKey(e.team_name) === teamKey)) {
+      return NextResponse.json(
+        { error: 'This team already has a Round 1 evaluation. Delete the existing entry to re-evaluate.' },
+        { status: 409 }
+      );
     }
 
     // Validate Mandatory Criterion Scores & Boundaries

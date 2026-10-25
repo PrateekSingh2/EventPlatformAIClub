@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { getSupabaseAdmin } from '@/lib/supabase';
 import { sortLeaderboardUsers } from '@/lib/leaderboard-sort';
+import { overlayUserRosterFromFinalTeams } from '@/lib/final-teams';
+import { isFinalTeamsTableReady, loadFinalTeams, loadFinalTeamsConfig } from '@/lib/final-teams-db';
 
 export const dynamic = 'force-dynamic';
 
@@ -19,7 +21,17 @@ export async function GET() {
       return NextResponse.json({ success: false, users: [] }, { status: 500 });
     }
 
-    const sortedUsers = sortLeaderboardUsers(users || []);
+    let sortedUsers = sortLeaderboardUsers(users || []);
+
+    if (await isFinalTeamsTableReady()) {
+      const config = await loadFinalTeamsConfig();
+      if (config.locked) {
+        const teams = await loadFinalTeams();
+        if (teams.length > 0) {
+          sortedUsers = sortLeaderboardUsers(overlayUserRosterFromFinalTeams(sortedUsers, teams));
+        }
+      }
+    }
 
     return NextResponse.json(
       {

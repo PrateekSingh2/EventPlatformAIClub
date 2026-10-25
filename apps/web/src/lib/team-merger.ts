@@ -41,8 +41,9 @@ export type MergeGroup = {
 export function formatMergedTeamName(teamNames: string[]): string {
   const unique = Array.from(new Set(teamNames.map((n) => n.trim()).filter(Boolean)));
   if (unique.length === 0) return '';
-  if (unique.length === 1) return unique[0];
-  return unique.join(' X ');
+  const sorted = unique.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+  if (sorted.length === 1) return sorted[0];
+  return sorted.join(' X ');
 }
 
 export function countFilledMembers(sub: TeamSubmission): number {
@@ -269,6 +270,18 @@ function assignBinToMap(map: Map<string, string>, submissionIds: string[]) {
   }
 }
 
+/** Restore Team Merger manual bins from DB-backed seminar hall rows (submission_ids per squad). */
+export function buildManualGroupMapFromStoredSquads(
+  squads: { submission_ids?: string[] | null }[]
+): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const squad of squads) {
+    const ids = (squad.submission_ids ?? []).filter((id) => typeof id === 'string' && id.length > 0);
+    if (ids.length > 0) assignBinToMap(map, ids);
+  }
+  return map;
+}
+
 /** Every solo registration → merged squads of 4 submissions (FIFO by signup time). */
 export function buildManualGroupMapSolosInFours(submissions: TeamSubmission[]): Map<string, string> {
   const map = new Map<string, string>();
@@ -415,6 +428,7 @@ export function manualGroupMapsEqual(a: Map<string, string>, b: Map<string, stri
 }
 
 export type MergerExportRow = {
+  seminar_hall: string;
   merged_team_name: string;
   team_size: string;
   merge_group: string;
@@ -431,6 +445,7 @@ export type MergerExportRow = {
 };
 
 export const MERGER_EXPORT_HEADERS: (keyof MergerExportRow)[] = [
+  'seminar_hall',
   'merged_team_name',
   'team_size',
   'merge_group',
@@ -456,7 +471,8 @@ export function teamSizeLabelFromMemberCount(count: number): string {
 
 function mergerRowsForGroup(
   group: MergeGroup,
-  subById: Map<string, TeamSubmission>
+  subById: Map<string, TeamSubmission>,
+  seminarHall: string
 ): MergerExportRow[] {
   const label = group.mergedTeamName;
   const sources = group.teamNames.join(', ');
@@ -466,6 +482,7 @@ function mergerRowsForGroup(
   if (group.members.length === 0) {
     return [
       {
+        seminar_hall: seminarHall,
         merged_team_name: label,
         team_size,
         merge_group: label,
@@ -485,6 +502,7 @@ function mergerRowsForGroup(
 
   const firstSub = subById.get(group.submissionIds[0]);
   return group.members.map((m) => ({
+    seminar_hall: seminarHall,
     merged_team_name: label,
     team_size,
     merge_group: label,
@@ -504,7 +522,8 @@ function mergerRowsForGroup(
 export function buildMergerExportRows(
   submissions: TeamSubmission[],
   groups: MergeGroup[],
-  mode: 'full' | 'merged'
+  mode: 'full' | 'merged',
+  hallByTeamKey?: Map<string, string>
 ): MergerExportRow[] {
   const subById = new Map(submissions.map((s) => [s.id, s]));
   const rows: MergerExportRow[] = [];
@@ -514,7 +533,9 @@ export function buildMergerExportRows(
     mode === 'merged' ? groups.filter((g) => g.submissionIds.length > 1) : groups;
 
   for (const group of exportGroups) {
-    rows.push(...mergerRowsForGroup(group, subById));
+    const teamKey = group.submissionIds.slice().sort().join('|');
+    const seminarHall = hallByTeamKey?.get(teamKey) ?? '';
+    rows.push(...mergerRowsForGroup(group, subById, seminarHall));
   }
 
   return rows;

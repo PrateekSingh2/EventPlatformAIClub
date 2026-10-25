@@ -12,9 +12,23 @@ import {
   TextReader,
   BlobReader,
 } from '../apps/web/node_modules/@zip.js/zip.js/index.js';
+import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+
+function sha256Hex(value) {
+  return crypto.createHash('sha256').update(String(value), 'utf8').digest('hex');
+}
+
+/** Evidence file: teams verify derived unlock against hash — never store plaintext keys. */
+function hashClearanceTxt(finalToken, extra = '') {
+  return `expect_sha256=${sha256Hex(finalToken)}\n# Compute the unlock string from evidence; compare SHA-256 in the arena.\n${extra ? `# ${extra}\n` : ''}`;
+}
+
+function hashClearanceJson(finalToken, note) {
+  return JSON.stringify({ expect_sha256: sha256Hex(finalToken), note }, null, 2);
+}
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -36,7 +50,7 @@ Every locked \`STAGE_XX.zip\` needs a **derived key**. Type it exactly in the co
 
 1. Open the current stage folder (e.g. \`STAGE_03/\`).
 2. Read \`README.md\` → section **Unlock \`STAGE_XX.zip\`\`**.
-3. Use the \`\`\` template \`\`\` block — not the prose label "PASSWORD:" alone.
+3. Use the \`\`\` template \`\`\` block — not a stray label line without evidence.
 
 Stage-by-stage templates for this pack are also listed in \`PASSWORD_FORMAT.md\` at the archive root.
 `;
@@ -44,11 +58,22 @@ Stage-by-stage templates for this pack are also listed in \`PASSWORD_FORMAT.md\`
 const RULES = `# Rules & scoring
 
 - Work only inside the contest arena; do not share derived keys between teams.
-- Each stage unlock password is **derived** from evidence in the **previous** stage folder.
+- Each stage unlock key is **derived** from evidence in the **previous** stage folder.
 - Keys use **UPPERCASE** letters, digits, and hyphens unless a stage README states otherwise (see \`PASSWORD_FORMAT.md\`).
 - Partial credit may be awarded for documented reasoning even if the key is wrong (organizer discretion).
 - AI tutors may explain methods; they must not paste the full unlock token for you.
 `;
+
+function sanitizeUnlockTpl(stageNum, tpl) {
+  if (!tpl?.template) return tpl;
+  if (stageNum === 11 && /-CLEAR$/i.test(tpl.template)) {
+    return {
+      template: '<FINALE-CLEAR>',
+      hints: ['Derive the pack finale token from evidence; verify stage 11 SHA-256 before STAGE_12'],
+    };
+  }
+  return tpl;
+}
 
 function unlockBlock(nextStageNum, template, hints = []) {
   const label = String(nextStageNum).padStart(2, '0');
@@ -70,7 +95,8 @@ ${hintLines}
 }
 
 function enrichStageReadme(readme, stageNum, caseStudy) {
-  const tpl = caseStudy.unlockTemplates?.[stageNum];
+  const raw = caseStudy.unlockTemplates?.[stageNum];
+  const tpl = sanitizeUnlockTpl(stageNum, raw);
   if (!tpl?.template) return readme;
   if (/## Unlock [`']?STAGE_/i.test(readme)) return readme;
   if (/Derive STAGE_\d+/i.test(readme)) return readme;
@@ -80,7 +106,7 @@ function enrichStageReadme(readme, stageNum, caseStudy) {
 function buildPasswordFormatMd(caseStudy) {
   const rows = [];
   for (let s = 1; s <= 11; s++) {
-    const tpl = caseStudy.unlockTemplates?.[s];
+    const tpl = sanitizeUnlockTpl(s, caseStudy.unlockTemplates?.[s]);
     if (!tpl?.template) continue;
     const next = String(s + 1).padStart(2, '0');
     rows.push(`| After STAGE_${String(s).padStart(2, '0')} | STAGE_${next}.zip | \`${tpl.template}\` |`);
@@ -114,7 +140,7 @@ ${meta.tagline}
 ## How this archive is structured
 
 1. Read this file, then open \`STAGE_01/\`.
-2. \`STAGE_01/README.md\` tells you how to **derive** the password for \`STAGE_02.zip\` (nothing is labeled "the password is …").
+2. \`STAGE_01/README.md\` tells you how to **derive** the unlock for \`STAGE_02.zip\` (no ready-made unlock string is printed in evidence).
 3. Each decrypted stage folder contains evidence plus the next locked \`STAGE_XX.zip\`.
 4. Continue through **Stage 12** — the finale is inside \`STAGE_12/\`.
 5. Read \`PASSWORD_FORMAT.md\` for a quick table of all unlock **format templates**.
@@ -391,7 +417,7 @@ RMS-<INTEGER>-19
 
 \`evidence/phasor.json\` lists phase angles in degrees. Find the **largest absolute jump** between consecutive entries in array order.
 
-Password:
+Unlock format:
 
 \`\`\`
 PHASE-<JUMP>
@@ -434,7 +460,7 @@ Example shape: \`HARM-3-0005\` — use your counts.
   c.stages[5] = {
     readme: `# Stage 5 — Delta energy
 
-Sum \`kwh\` for rows with \`feeder\` = A or C in \`evidence/feeder_load.csv\`. Password:
+Sum \`kwh\` for rows with \`feeder\` = A or C in \`evidence/feeder_load.csv\`. Unlock format:
 
 \`\`\`
 DELTA-<SUM>
@@ -471,7 +497,7 @@ FREQ-50-<COUNT>
   c.stages[7] = {
     readme: `# Stage 7 — Longest outage window
 
-\`evidence/outage_minutes.csv\`: pick the **maximum** \`minutes\` value. Password:
+\`evidence/outage_minutes.csv\`: pick the **maximum** \`minutes\` value. Unlock format:
 
 \`\`\`
 BUS-A-<MINUTES>
@@ -511,7 +537,7 @@ SYNC-YYYY
   c.stages[10] = {
     readme: `# Stage 10 — Breaker trip code
 
-\`evidence/trip_table.csv\`: row where \`breaker\`=TRIP-04 has \`code\`. Password:
+\`evidence/trip_table.csv\`: row where \`breaker\`=TRIP-04 has \`code\`. Unlock format:
 
 \`\`\`
 TRIP-<CODE>
@@ -523,26 +549,22 @@ CODE is zero-padded 4 digits from table.
     files: [{ name: 'trip_table.csv', content: 'breaker,code\nTRIP-01,0100\nTRIP-04,0415\nTRIP-09,0901\n' }],
   };
   c.stages[11] = {
-    readme: `# Stage 11 — Final helix token
+    readme: `# Stage 11 — Final helix clearance
 
-Read \`evidence/clearance.json\`. Field \`token\` is the STAGE_12.zip password (still derive by copying the **value** after verifying hash):
-
-\`sha256(token)\` must equal \`expect_sha256\` in file — proves you opened the right JSON.
+Derive the finale unlock from your grid timeline. Confirm SHA-256 against \`expect_sha256\` in \`evidence/clearance.json\` before opening \`STAGE_12.zip\`.
 `,
     aiPrompt: aiPrompt(c.title, 'SHA-256 verification of a clearance token'),
     files: [
       {
         name: 'clearance.json',
-        content: `{"token":"HELIX-CLEAR","expect_sha256":"b86a81ce74cf54912392f81ff7885bdc29b9e9d255d1e4c8ac4ad5b563f12eba"}`,
+        content: hashClearanceJson(c.passwords[12], 'Finale helix clearance — derive unlock from evidence chain'),
       },
     ],
   };
   c.stages[12] = {
     readme: `# Stage 12 — Case closed
 
-You restored timeline for Priya's grid segment. Submit your **short write-up** in the arena: spike count, first spike time, and RMS integer.
-
-Flag: \`HELIX-CLEAR\`
+You restored timeline for Priya's grid segment. Submit your **short write-up** in the arena: spike count, first spike time, and RMS integer. Finale unlock must match stage 11 hash clearance.
 `,
     aiPrompt: aiPrompt(c.title, 'summarizing findings for final submission'),
     files: [{ name: 'priya_note.txt', content: 'Thanks. — P.\n' }],
@@ -585,7 +607,7 @@ function fillGenericStages(c, spec) {
     };
   }
   c.stages[12] = {
-    readme: `# Stage 12 — Finale\n\nDocument your chain of derivations. Completion token matches clearance field in stage 11.\n\nFlag format: \`${c.passwords[12]}\`\n`,
+    readme: `# Stage 12 — Finale\n\nDocument your chain of derivations. Finale unlock must match the SHA-256 clearance in stage 11 evidence.\n`,
     aiPrompt: aiPrompt(c.title, 'final summary'),
     files: [{ name: 'finale.txt', content: `${c.title} — complete.\n` }],
   };
@@ -632,7 +654,7 @@ Example shape only — compute from CSV.`,
     },
     {
       focus: 'hex batch id',
-      readme: `# Stage 4\n\n\`hex.txt\` gives \`batch_id=0x7F\`. Take the two hex digits **without** 0x → \`BATCH-7F\`.`,
+      readme: `# Stage 4\n\n\`hex.txt\` has \`batch_id\` in hex. Format \`BATCH-<HEX2>\` using two uppercase hex digits **without** the \`0x\` prefix.`,
       files: [{ name: 'hex.txt', content: 'batch_id=0x7F\n' }],
     },
     {
@@ -642,7 +664,7 @@ Example shape only — compute from CSV.`,
     },
     {
       focus: 'denomination code',
-      readme: `# Stage 6\n\nMap \`denom\`=50 in \`denoms.json\` → code \`50P\`. Token \`COIN-50P\`.`,
+      readme: `# Stage 6\n\nFind \`denom\`=50 in \`denoms.json\`. Unlock shape \`COIN-<CODE>\` where CODE is the JSON value for that denomination.`,
       files: [{ name: 'denoms.json', content: '{"50":"50P","20":"20P"}' }],
     },
     {
@@ -652,23 +674,23 @@ Example shape only — compute from CSV.`,
     },
     {
       focus: 'tare adjustment',
-      readme: `# Stage 8\n\n\`tare_g\` in config: format \`TARE-<tare*1000 as int>G\` → 15g → \`TARE-015G\`.`,
+      readme: `# Stage 8\n\nRead \`tare_g\` in \`config.txt\`. Multiply by 1000, zero-pad to 3 digits, append \`G\` → \`TARE-<NNN>G\`.`,
       files: [{ name: 'config.txt', content: 'tare_g=0.015\n' }],
     },
     {
       focus: 'audit flag',
-      readme: `# Stage 9\n\nIf \`audit_pass\` is true in \`audit.json\`, token \`AUDIT-OK\`.`,
+      readme: `# Stage 9\n\nWhen \`audit_pass\` is true in \`audit.json\`, use the fixed pass-state unlock template from \`PASSWORD_FORMAT.md\` (no numeric substitution).`,
       files: [{ name: 'audit.json', content: '{"audit_pass":true}' }],
     },
     {
       focus: 'vault code',
-      readme: `# Stage 10\n\nSum digits of \`vault\` 909 → 18; use \`VAULT-909\` from ledger (literal in \`vault.txt\`).`,
+      readme: `# Stage 10\n\nRead \`vault\` id from \`vault.txt\`. Format \`VAULT-<NNN>\` with a three-digit vault id (leading zeros if needed).`,
       files: [{ name: 'vault.txt', content: 'vault=909\n' }],
     },
     {
       focus: 'clearance',
-      readme: `# Stage 11\n\n\`clearance.txt\` contains token for stage 12 after SHA1 check phrase \`mint-final\`.`,
-      files: [{ name: 'clearance.txt', content: 'phrase=mint-final\ntoken=MINT-CLEAR\n' }],
+      readme: `# Stage 11\n\nDerive the finale unlock from the mint storyline. Verify SHA-256 in \`clearance.txt\` before \`STAGE_12.zip\`.`,
+      files: [{ name: 'clearance.txt', content: '' }],
     },
   ],
 });
@@ -687,8 +709,10 @@ CASES[1].unlockTemplates = {
   8: { template: 'TARE-<NNN>G', hints: ['NNN = tare grams × 1000 as 3-digit integer'] },
   9: { template: 'AUDIT-OK', hints: ['Use when audit_pass is true'] },
   10: { template: 'VAULT-<NNN>', hints: ['NNN = vault id from ledger (3 digits)'] },
-  11: { template: 'MINT-CLEAR', hints: ['Token from clearance.txt after phrase check'] },
+  11: { template: 'MINT-CLEAR', hints: ['Finale clearance — derive string and match stage 11 SHA-256'] },
 };
+
+CASES[1].stages[11].files[0].content = hashClearanceTxt(CASES[1].passwords[12]);
 
 function fillPacketForge(c) {
   c.stages[1] = {
@@ -738,16 +762,19 @@ Header bytes 4-5 (0-based) in \`header.hex\` form big-endian uint16 → \`SEQ-<H
   c.stages[5] = {
     readme: `# Stage 5 — MAC stub
 
-If \`mac_valid\` is false in \`meta.json\`, use literal prefix \`MAC-DEAD\` (failure sentinel).`,
+If \`mac_valid\` is false in \`meta.json\`, build \`MAC-<SUFFIX>\` from \`failure_sentinel.txt\` (prefix + suffix).`,
     aiPrompt: aiPrompt(c.title, 'reading JSON flags'),
-    files: [{ name: 'meta.json', content: '{"mac_valid":false}' }],
+    files: [
+      { name: 'meta.json', content: '{"mac_valid":false}' },
+      { name: 'failure_sentinel.txt', content: 'prefix=MAC\nsuffix=DEAD\n' },
+    ],
   };
   c.stages[6] = {
-    readme: `# Stage 6 — CRC16 nibble swap
+    readme: `# Stage 6 — CRC16 constant
 
-\`crc16=0x55AA\` in \`footer.txt\` → token \`CRC-55AA\` (drop 0x).`,
+\`footer.txt\` gives \`crc16_decimal\`. Convert to uppercase hex (no \`0x\`) → \`CRC-<HEX4>\`.`,
     aiPrompt: aiPrompt(c.title, 'CRC constants'),
-    files: [{ name: 'footer.txt', content: 'crc16=0x55AA\n' }],
+    files: [{ name: 'footer.txt', content: 'crc16_decimal=21930\n' }],
   };
   c.stages[7] = {
     readme: `# Stage 7 — Port
@@ -780,18 +807,12 @@ Sum of \`ack\` values in \`acks.csv\` → zero-pad decimal 4 digits → \`ACK-<S
   c.stages[11] = {
     readme: `# Stage 11 — Forge clearance
 
-Verify \`sha256\` of string in \`clear.txt\` matches \`expect\`; use that string for STAGE_12.zip.`,
+Derive the finale unlock from the capture chain; verify SHA-256 against \`clear.txt\` before \`STAGE_12.zip\`.`,
     aiPrompt: aiPrompt(c.title, 'hash verification'),
-    files: [
-      {
-        name: 'clear.txt',
-        content:
-          'expect=9d57459aa2b0c7349e043a410a707b4c9e73fca1f963d9ab5d1822c588908505\nstring=FORGE-CLEAR\n',
-      },
-    ],
+    files: [{ name: 'clear.txt', content: hashClearanceTxt(c.passwords[12]) }],
   };
   c.stages[12] = {
-    readme: `# Stage 12 — Forge complete\n\nSubmit capture timeline. Flag \`FORGE-CLEAR\`.`,
+    readme: `# Stage 12 — Forge complete\n\nSubmit capture timeline. Finale unlock must match stage 11 hash clearance.`,
     aiPrompt: aiPrompt(c.title, 'finale'),
     files: [{ name: 'capture.done', content: '1\n' }],
   };
@@ -803,13 +824,13 @@ Verify \`sha256\` of string in \`clear.txt\` matches \`expect\`; use that string
     2: { template: 'XOR-<HEX4>', hints: ['HEX4 = uppercase hex of (a XOR b), 16-bit, 4 chars'] },
     3: { template: 'LEN-<HEX4>', hints: ['HEX4 = uppercase hex of payload byte length, 4 digits'] },
     4: { template: 'SEQ-<HEX4>', hints: ['HEX4 = big-endian uint16 at header bytes 4-5'] },
-    5: { template: 'MAC-DEAD', hints: ['Literal sentinel when mac_valid is false'] },
-    6: { template: 'CRC-55AA', hints: ['Drop 0x prefix from crc16 constant in footer'] },
+    5: { template: 'MAC-<SUFFIX>', hints: ['When mac_valid is false: prefix from failure_sentinel.txt + suffix field'] },
+    6: { template: 'CRC-<HEX4>', hints: ['HEX4 = uppercase hex of crc16_decimal from footer, width 4'] },
     7: { template: 'PORT-<HEX4>', hints: ['HEX4 = uppercase hex of port decimal, width 4'] },
     8: { template: 'ACK-<SUM4>', hints: ['SUM4 = sum of ack column, zero-padded decimal 4 digits'] },
     9: { template: 'RST-<HEX2>', hints: ['HEX2 = uppercase hex of rst decimal, 2 chars'] },
     10: { template: 'PAY-<BYTES>', hints: ['BYTES = size_bytes decimal from JSON, no padding'] },
-    11: { template: 'FORGE-CLEAR', hints: ['Verified string from clear.txt after SHA-256 check'] },
+    11: { template: 'FORGE-CLEAR', hints: ['Finale clearance — derive unlock and match stage 11 SHA-256'] },
   };
 }
 
@@ -842,18 +863,22 @@ function fillSatellite(c) {
     8: { template: 'APO-<HHMM>', file: 'apogee.txt', content: 'apogee_utc=18:20\n', hints: ['HHMM = apogee pass time UTC, 24h'] },
     9: { template: 'NORAD-<NNN>', file: 'norad.txt', content: 'catalog=999\n', hints: ['NNN = NORAD catalog id, 3 digits'] },
     10: { template: 'LOS-<HHMM>', file: 'los.txt', content: 'loss_of_signal_utc=00:44\n', hints: ['HHMM = loss-of-signal UTC, 24h'] },
-    11: { template: 'KITE-CLEAR', file: 'clearance.txt', content: 'token=KITE-CLEAR\n', hints: ['Finale token after verifying pass list'] },
+    11: { template: 'KITE-CLEAR', file: 'clearance.txt', content: '', hints: ['Finale clearance — derive unlock and match SHA-256 in clearance.txt'] },
   };
   for (let s = 2; s <= 11; s++) {
     const spec = satTpl[s];
+    const fileContent = s === 11 ? hashClearanceTxt(c.passwords[12]) : spec.content;
     c.stages[s] = {
-      readme: `# Stage ${s} — Orbital parameter\n\nRead \`evidence/${spec.file}\` and apply the format template for the next stage.`,
+      readme:
+        s === 11
+          ? `# Stage 11 — Clearance\n\nDerive finale unlock from orbital evidence; verify \`expect_sha256\` in \`clearance.txt\`.`
+          : `# Stage ${s} — Orbital parameter\n\nRead \`evidence/${spec.file}\` and apply the format template for the next stage.`,
       aiPrompt: aiPrompt(c.title, `stage ${s} orbital math`),
-      files: [{ name: spec.file, content: spec.content }],
+      files: [{ name: spec.file, content: fileContent }],
     };
   }
   c.stages[12] = {
-    readme: `# Stage 12\n\nFinale token: \`KITE-CLEAR\` after verifying your pass list matches NORAD log.`,
+    readme: `# Stage 12\n\nSubmit pass summary. Finale unlock must match stage 11 hash clearance and NORAD log.`,
     aiPrompt: aiPrompt(c.title, 'finale'),
     files: [{ name: 'norad.log', content: 'track complete\n' }],
   };
@@ -894,18 +919,22 @@ C3,90
     8: { template: 'DIL-1E5', file: 'dilution.txt', content: 'dilution=1E5\n', hints: ['Literal token when dilution matches 1E5 in file'] },
     9: { template: 'GROW-24H', file: 'grow.txt', content: 'hours=24\n', hints: ['Format GROW-<hours>H with integer hours from file'] },
     10: { template: 'STAIN-<CODE>', file: 'stain.txt', content: 'stain=GR\n', hints: ['CODE = stain abbreviation uppercase'] },
-    11: { template: 'DELTA-CLEAR', file: 'clearance.txt', content: 'token=DELTA-CLEAR\n', hints: ['Finale clearance token'] },
+    11: { template: 'DELTA-CLEAR', file: 'clearance.txt', content: '', hints: ['Finale clearance — derive unlock and match SHA-256'] },
   };
   for (let s = 2; s <= 11; s++) {
     const spec = bioTpl[s];
+    const fileContent = s === 11 ? hashClearanceTxt(c.passwords[12]) : spec.content;
     c.stages[s] = {
-      readme: `# Stage ${s}\n\nUse \`evidence/${spec.file}\` with the unlock format template.`,
+      readme:
+        s === 11
+          ? `# Stage 11\n\nDerive finale unlock from lab evidence; verify \`expect_sha256\` in \`clearance.txt\`.`
+          : `# Stage ${s}\n\nUse \`evidence/${spec.file}\` with the unlock format template.`,
       aiPrompt: aiPrompt(c.title, `bio calc ${s}`),
-      files: [{ name: spec.file, content: spec.content }],
+      files: [{ name: spec.file, content: fileContent }],
     };
   }
   c.stages[12] = {
-    readme: `# Stage 12 — Finale\n\nSubmit summary. Flag format: \`DELTA-CLEAR\`.`,
+    readme: `# Stage 12 — Finale\n\nSubmit summary. Finale unlock must match stage 11 hash clearance.`,
     aiPrompt: aiPrompt(c.title, 'finale'),
     files: [{ name: 'done.txt', content: 'ok\n' }],
   };
@@ -947,19 +976,37 @@ function fillTrade(c) {
   };
   for (let s = 2; s <= 11; s++) {
     const tpl = tradeTpl[s];
+    const files =
+      s === 11
+        ? [
+            {
+              name: `rates${s}.json`,
+              content: JSON.stringify({
+                pip: s * 17,
+                spot: 1.1025,
+                book: 777,
+                note: 'Finale unlock: derive and verify clearance.sha',
+              }),
+            },
+            { name: 'clearance.sha', content: hashClearanceTxt(c.passwords[12]) },
+          ]
+        : [
+            {
+              name: `rates${s}.json`,
+              content: JSON.stringify({ hint_format: tpl.template, pip: s * 17, spot: 1.1025, book: 777 }),
+            },
+          ];
     c.stages[s] = {
-      readme: `# Stage ${s}\n\nOpen \`evidence/rates${s}.json\`. Field \`hint_format\` shows the token shape; compute from numeric fields.`,
+      readme:
+        s === 11
+          ? `# Stage 11\n\nCompute from \`rates11.json\`; verify finale unlock against \`clearance.sha\` before STAGE_12.`
+          : `# Stage ${s}\n\nOpen \`evidence/rates${s}.json\`. Field \`hint_format\` shows the token shape; compute from numeric fields.`,
       aiPrompt: aiPrompt(c.title, 'pip math'),
-      files: [
-        {
-          name: `rates${s}.json`,
-          content: JSON.stringify({ hint_format: tpl.template, pip: s * 17, spot: 1.1025, book: 777 }),
-        },
-      ],
+      files,
     };
   }
   c.stages[12] = {
-    readme: `# Stage 12 — Finale\n\nFlag format: \`TRADE-CLEAR\`.`,
+    readme: `# Stage 12 — Finale\n\nFinale unlock must match stage 11 hash clearance.`,
     aiPrompt: aiPrompt(c.title, 'finale'),
     files: [{ name: 'book.txt', content: 'balanced\n' }],
   };
@@ -1001,17 +1048,28 @@ function fillCloud(c) {
   };
   for (let s = 2; s <= 11; s++) {
     const tpl = cloudTpl[s];
+    const files = [
+      { name: `s${s}.log`, content: `break idx=${String(s).padStart(4, '0')}\n` },
+      {
+        name: 'pattern.txt',
+        content:
+          s === 11
+            ? 'format template: <FINALE-CLEAR> (verify clearance.sha)\n'
+            : `format template: ${tpl.template}\n`,
+      },
+    ];
+    if (s === 11) files.push({ name: 'clearance.sha', content: hashClearanceTxt(c.passwords[12]) });
     c.stages[s] = {
-      readme: `# Stage ${s}\n\nParse \`evidence/s${s}.log\` and \`pattern.txt\` (shows format template).`,
+      readme:
+        s === 11
+          ? `# Stage 11\n\nParse logs; verify finale unlock against \`clearance.sha\` before STAGE_12.`
+          : `# Stage ${s}\n\nParse \`evidence/s${s}.log\` and \`pattern.txt\` (shows format template).`,
       aiPrompt: aiPrompt(c.title, 'log parsing'),
-      files: [
-        { name: `s${s}.log`, content: `break idx=${String(s).padStart(4, '0')}\n` },
-        { name: 'pattern.txt', content: `format template: ${tpl.template}\n` },
-      ],
+      files,
     };
   }
   c.stages[12] = {
-    readme: `# Stage 12 — Finale\n\nFlag format: \`CASTLE-CLEAR\`.`,
+    readme: `# Stage 12 — Finale\n\nFinale unlock must match stage 11 hash clearance.`,
     aiPrompt: aiPrompt(c.title, 'finale'),
     files: [{ name: 'root.txt', content: 'verified\n' }],
   };
@@ -1060,14 +1118,21 @@ SEND,TIMEOUT
   };
   for (let s = 2; s <= 11; s++) {
     const tpl = ridgeTpl[s];
+    const formatLine =
+      s === 11 ? 'format=<FINALE-CLEAR> (verify clearance.sha)\n' : `format=${tpl.template}\n`;
+    const files = [{ name: `transition${s}.md`, content: `# Edge ${s}\n${formatLine}msg_id=${s + 1}\n` }];
+    if (s === 11) files.push({ name: 'clearance.sha', content: hashClearanceTxt(c.passwords[12]) });
     c.stages[s] = {
-      readme: `# Stage ${s}\n\nRead \`transition${s}.md\`. Format template: \`${tpl.template}\`.`,
+      readme:
+        s === 11
+          ? `# Stage 11\n\nDerive finale unlock from protocol trace; verify \`clearance.sha\` before STAGE_12.`
+          : `# Stage ${s}\n\nRead \`transition${s}.md\`. Format template: \`${tpl.template}\`.`,
       aiPrompt: aiPrompt(c.title, 'protocol trace'),
-      files: [{ name: `transition${s}.md`, content: `# Edge ${s}\nformat=${tpl.template}\nmsg_id=${s + 1}\n` }],
+      files,
     };
   }
   c.stages[12] = {
-    readme: `# Stage 12 — Finale\n\nFlag format: \`RIDGE-CLEAR\`.`,
+    readme: `# Stage 12 — Finale\n\nFinale unlock must match stage 11 hash clearance.`,
     aiPrompt: aiPrompt(c.title, 'finale'),
     files: [{ name: 'handshake.ok', content: '1\n' }],
   };
@@ -1134,9 +1199,15 @@ async function buildCaseStudy(caseStudy) {
   return zw.close();
 }
 
+function loadChakravyuhKeyPacks() {
+  const p = path.join(ROOT, 'examples', 'case-studies', 'chakravyuh-password-key.json');
+  if (!fs.existsSync(p)) return [];
+  return JSON.parse(fs.readFileSync(p, 'utf8')).packs || [];
+}
+
 async function main() {
   fs.mkdirSync(OUT_DIR, { recursive: true });
-  const key = { generated_at: new Date().toISOString(), packs: [] };
+  const key = { generated_at: new Date().toISOString(), packs: [...loadChakravyuhKeyPacks()] };
 
   for (const cs of CASES) {
     const blob = await buildCaseStudy(cs);
@@ -1156,6 +1227,11 @@ async function main() {
   const keyPath = path.join(ROOT, 'examples', 'case-studies', 'PASSWORD_KEY.json');
   fs.writeFileSync(keyPath, JSON.stringify(key, null, 2));
   console.log(`Wrote ${keyPath}`);
+  const webDataDir = path.join(ROOT, 'apps', 'web', 'data');
+  fs.mkdirSync(webDataDir, { recursive: true });
+  const webKeyPath = path.join(webDataDir, 'PASSWORD_KEY.json');
+  fs.writeFileSync(webKeyPath, JSON.stringify(key, null, 2));
+  console.log(`Wrote ${webKeyPath}`);
 }
 
 main().catch((err) => {

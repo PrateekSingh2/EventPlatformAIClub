@@ -197,6 +197,7 @@ export function Round1RubricTab({ adminSecret }: Round1RubricTabProps) {
 
   // Form Fields
   const [teamName, setTeamName] = useState('');
+  const [finalTeamNames, setFinalTeamNames] = useState<string[]>([]);
   const [judgeName, setJudgeName] = useState('');
   const [theme, setTheme] = useState('');
 
@@ -209,6 +210,40 @@ export function Round1RubricTab({ adminSecret }: Round1RubricTabProps) {
     score_creativity: '',
     score_live_demo: '',
   });
+
+  useEffect(() => {
+    if (!adminSecret) return;
+    fetch('/api/admin/final-teams?namesOnly=1', {
+      headers: { 'x-admin-secret': adminSecret },
+    })
+      .then((r) => r.json())
+      .then((d) => {
+        if (Array.isArray(d.teamNames) && d.teamNames.length > 0) {
+          setFinalTeamNames(d.teamNames);
+        }
+      })
+      .catch(() => {});
+  }, [adminSecret]);
+
+  const evaluatedTeamKeys = useMemo(() => {
+    const keys = new Set<string>();
+    for (const ev of evaluations) {
+      const key = (ev.team_name || '').trim().toLowerCase();
+      if (key) keys.add(key);
+    }
+    return keys;
+  }, [evaluations]);
+
+  const teamsAvailableForEvaluation = useMemo(() => {
+    return finalTeamNames.filter((name) => !evaluatedTeamKeys.has(name.trim().toLowerCase()));
+  }, [finalTeamNames, evaluatedTeamKeys]);
+
+  useEffect(() => {
+    if (!teamName.trim()) return;
+    if (evaluatedTeamKeys.has(teamName.trim().toLowerCase())) {
+      setTeamName('');
+    }
+  }, [evaluatedTeamKeys, teamName]);
 
   const [comments, setComments] = useState<Record<string, string>>({
     comments_prompt_clarity: '',
@@ -306,6 +341,11 @@ export function Round1RubricTab({ adminSecret }: Round1RubricTabProps) {
     [adminSecret]
   );
 
+  useEffect(() => {
+    if (!adminSecret) return;
+    void fetchLeaderboard(true);
+  }, [adminSecret, fetchLeaderboard]);
+
   // Triggered when user clicks "Get Leaderboard"
   const handleGetLeaderboard = () => {
     setHasRequestedLeaderboard(true);
@@ -386,6 +426,10 @@ export function Round1RubricTab({ adminSecret }: Round1RubricTabProps) {
       setFormError('Team Name is mandatory.');
       return;
     }
+    if (evaluatedTeamKeys.has(teamName.trim().toLowerCase())) {
+      setFormError('This team already has an evaluation. Pick another team from the list.');
+      return;
+    }
     if (!judgeName.trim()) {
       setFormError('Judge Name is mandatory.');
       return;
@@ -446,9 +490,7 @@ export function Round1RubricTab({ adminSecret }: Round1RubricTabProps) {
 
       setFormSuccess('Evaluation saved successfully.');
 
-      if (hasRequestedLeaderboard) {
-        fetchLeaderboard(true);
-      }
+      await fetchLeaderboard(true);
 
       setTimeout(() => {
         setIsFormOpen(false);
@@ -899,14 +941,44 @@ export function Round1RubricTab({ adminSecret }: Round1RubricTabProps) {
                     <label className="block text-xs font-medium text-app-text">
                       Team Name <span className="text-rose-400">*</span>
                     </label>
-                    <input
-                      type="text"
-                      required
-                      placeholder="e.g. Neural Pioneers"
-                      value={teamName}
-                      onChange={(e) => setTeamName(e.target.value)}
-                      className="w-full px-3 py-2 text-xs bg-app-surface border border-app-border rounded-lg text-app-text placeholder:text-app-subtext/30 focus:outline-none focus:border-zinc-400 transition-colors"
-                    />
+                    {finalTeamNames.length > 0 ? (
+                      <>
+                        <select
+                          required
+                          value={teamName}
+                          onChange={(e) => setTeamName(e.target.value)}
+                          disabled={teamsAvailableForEvaluation.length === 0}
+                          className="w-full px-3 py-2 text-xs bg-app-surface border border-app-border rounded-lg text-app-text focus:outline-none focus:border-zinc-400 transition-colors disabled:opacity-50"
+                        >
+                          <option value="">
+                            {teamsAvailableForEvaluation.length === 0
+                              ? 'All teams evaluated'
+                              : 'Select official team…'}
+                          </option>
+                          {teamsAvailableForEvaluation.map((n) => (
+                            <option key={n} value={n}>
+                              {n}
+                            </option>
+                          ))}
+                        </select>
+                        <p className="text-[10px] text-app-subtext">
+                          {teamsAvailableForEvaluation.length} team
+                          {teamsAvailableForEvaluation.length === 1 ? '' : 's'} pending
+                          {evaluatedTeamKeys.size > 0
+                            ? ` · ${evaluatedTeamKeys.size} already evaluated`
+                            : ''}
+                        </p>
+                      </>
+                    ) : (
+                      <input
+                        type="text"
+                        required
+                        placeholder="e.g. Neural Pioneers"
+                        value={teamName}
+                        onChange={(e) => setTeamName(e.target.value)}
+                        className="w-full px-3 py-2 text-xs bg-app-surface border border-app-border rounded-lg text-app-text placeholder:text-app-subtext/30 focus:outline-none focus:border-zinc-400 transition-colors"
+                      />
+                    )}
                   </div>
 
                   <div className="space-y-1">
