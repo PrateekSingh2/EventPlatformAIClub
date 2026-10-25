@@ -2,7 +2,11 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
+import { readClientCache, writeClientCache } from '@/lib/client-cache';
 import { Announcement } from '@/lib/types';
+
+const ANNOUNCEMENTS_CACHE_KEY = 'arena_announcements';
+const ANNOUNCEMENTS_CACHE_TTL_MS = 30_000;
 
 type BroadcastListener = (ann: Announcement) => void;
 const broadcastListeners = new Set<BroadcastListener>();
@@ -109,14 +113,29 @@ export function useAdminBroadcasts() {
     }
   }, []);
 
-  const fetchRecent = useCallback(async () => {
-    try {
-      const res = await fetch('/api/announcements', {
-        headers: { 'Cache-Control': 'no-store, no-cache' },
+  const fetchRecent = useCallback(async (preferNetwork = true) => {
+    const cached = readClientCache<{ announcements: Announcement[] }>(
+      ANNOUNCEMENTS_CACHE_KEY,
+      ANNOUNCEMENTS_CACHE_TTL_MS
+    );
+    if (cached?.announcements?.length && mountedRef.current) {
+      setHistory((prev) => {
+        const map = new Map<string, Announcement>();
+        cached.announcements.forEach((item) => map.set(item.id, item));
+        prev.forEach((item) => map.set(item.id, item));
+        return Array.from(map.values()).sort(
+          (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+        );
       });
+      if (!preferNetwork) return;
+    }
+
+    try {
+      const res = await fetch('/api/announcements', { cache: 'default' });
       const data = await res.json();
       if (res.ok && data.announcements && mountedRef.current) {
         const list: Announcement[] = data.announcements;
+        writeClientCache(ANNOUNCEMENTS_CACHE_KEY, { announcements: list });
         setHistory((prev) => {
           // Merge while preserving unique items
           const map = new Map<string, Announcement>();
@@ -156,10 +175,10 @@ export function useAdminBroadcasts() {
 
     subscribeSharedBroadcastChannel();
 
-    // Background poll every 5 seconds for late-login participants or realtime offline
+    // Fallback poll when realtime is offline (primary path is Supabase broadcast)
     const interval = setInterval(() => {
-      fetchRecent();
-    }, 5000);
+      fetchRecent(true);
+    }, 25_000);
 
     return () => {
       mountedRef.current = false;

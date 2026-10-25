@@ -2,7 +2,11 @@
 
 import { useState, useEffect, useCallback, useRef, useSyncExternalStore } from 'react';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
+import { readClientCache, writeClientCache } from '@/lib/client-cache';
 import { ContestSettings } from '@/lib/types';
+
+const CONTEST_CACHE_KEY = 'contest_lifecycle';
+const CONTEST_CACHE_TTL_MS = 20_000;
 
 type StateListener = (state: ContestSettings) => void;
 type RefreshListener = () => void;
@@ -39,6 +43,7 @@ function emitSnapshot() {
 }
 
 function applyContestState(next: ContestSettings) {
+  writeClientCache(CONTEST_CACHE_KEY, { contest: next });
   lifecycleSnapshot = {
     contestState: next,
     loading: false,
@@ -54,12 +59,12 @@ async function fetchContestStateShared(): Promise<void> {
 
   fetchInFlight = (async () => {
     try {
-      const res = await fetch('/api/contest', {
-        headers: {
-          'Cache-Control': 'no-store, no-cache, must-revalidate',
-          Pragma: 'no-cache',
-        },
-      });
+      const cached = readClientCache<{ contest: ContestSettings }>(CONTEST_CACHE_KEY, CONTEST_CACHE_TTL_MS);
+      if (cached?.contest && lifecycleSnapshot.loading) {
+        applyContestState(cached.contest);
+      }
+
+      const res = await fetch('/api/contest', { cache: 'default' });
 
       let data: { success?: boolean; contest?: ContestSettings; error?: string } = {};
       try {
@@ -69,6 +74,7 @@ async function fetchContestStateShared(): Promise<void> {
       }
 
       if (res.ok && data.success && data.contest) {
+        writeClientCache(CONTEST_CACHE_KEY, { contest: data.contest });
         applyContestState(data.contest);
         return;
       }
@@ -101,7 +107,7 @@ function startSharedPolling() {
   if (pollInterval) return;
   pollInterval = setInterval(() => {
     fetchContestStateShared();
-  }, 5000);
+  }, 15_000);
 }
 
 function stopSharedPolling() {

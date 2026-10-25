@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useState, useCallback, useRef, Suspense } from 'react';
+import dynamic from 'next/dynamic';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { ParsedFile, StageManifest, User } from '@/lib/types';
 import {
@@ -12,14 +13,11 @@ import {
 import { AntiCheatWrapper } from '@/components/arena/AntiCheatWrapper';
 import { InBrowserIDE } from '@/components/arena/InBrowserIDE';
 import { UnlockNextStageModal } from '@/components/arena/UnlockNextStageModal';
-import { LiveLeaderboard } from '@/components/arena/LiveLeaderboard';
 import { ZipPasswordModal } from '@/components/arena/ZipPasswordModal';
 import { DraftArenaLock } from '@/components/arena/DraftArenaLock';
 import { DisqualifiedScreen } from '@/components/arena/DisqualifiedScreen';
 import { ContestCompletedScreen } from '@/components/arena/ContestCompletedScreen';
-import { ContestCompletionModal } from '@/components/arena/ContestCompletionModal';
 import { BroadcastAnnouncementModal } from '@/components/arena/BroadcastAnnouncementModal';
-import { BroadcastHistoryDrawer } from '@/components/arena/BroadcastHistoryDrawer';
 import { useContestLifecycle } from '@/hooks/useContestLifecycle';
 import { useAdminBroadcasts } from '@/hooks/useAdminBroadcasts';
 import { initializeProgressQueueListeners } from '@/lib/offline-progress-queue';
@@ -38,6 +36,23 @@ import {
   LogOut,
   ArrowLeft,
 } from 'lucide-react';
+
+const LiveLeaderboard = dynamic(
+  () => import('@/components/arena/LiveLeaderboard').then((m) => m.LiveLeaderboard),
+  { ssr: false }
+);
+
+const BroadcastHistoryDrawer = dynamic(
+  () => import('@/components/arena/BroadcastHistoryDrawer').then((m) => m.BroadcastHistoryDrawer),
+  { ssr: false }
+);
+
+const ContestCompletionModal = dynamic(
+  () => import('@/components/arena/ContestCompletionModal').then((m) => m.ContestCompletionModal),
+  { ssr: false }
+);
+
+const STAGE_LIST_CACHE_KEY = 'arena_stage_list_v1';
 
 const DEFAULT_STAGES: StageManifest[] = [
   {
@@ -289,8 +304,21 @@ function ArenaContent() {
         setUser(data.user);
         setSelectedStageNumber(data.user.current_stage || 1);
 
-        // Fetch all stages manifest for VS Code explorer sidebar
+        // Stage manifest (session cache + network)
         try {
+          const cacheKey = `${STAGE_LIST_CACHE_KEY}:${activeToken}`;
+          const cachedRaw = sessionStorage.getItem(cacheKey);
+          if (cachedRaw) {
+            try {
+              const cachedStages = JSON.parse(cachedRaw) as StageManifest[];
+              if (Array.isArray(cachedStages) && cachedStages.length > 0) {
+                setStages(cachedStages);
+              }
+            } catch {
+              /* ignore */
+            }
+          }
+
           const listRes = await fetch('/api/stage/list', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -300,6 +328,7 @@ function ArenaContent() {
             const listData = await listRes.json();
             if (listData.stages && listData.stages.length > 0) {
               setStages(listData.stages);
+              sessionStorage.setItem(cacheKey, JSON.stringify(listData.stages));
             }
           }
         } catch {

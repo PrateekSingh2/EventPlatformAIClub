@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { parseTeamRegistrationBody } from '@/lib/team-registration-form';
+import { isDuplicateTeamRegistration } from '@/lib/roster-dedupe';
 import { getSupabaseAdmin } from '@/lib/supabase';
 
 export const dynamic = 'force-dynamic';
@@ -19,6 +20,29 @@ export async function POST(req: NextRequest) {
     }
 
     const supabase = getSupabaseAdmin();
+
+    const { data: existingRows, error: listErr } = await supabase
+      .from('team_registration_submissions')
+      .select('team_name, members');
+    if (listErr) {
+      console.error('[POST /api/public/team-registration] list', listErr.message);
+      return NextResponse.json({ error: 'Could not validate team registration' }, { status: 500 });
+    }
+    if (
+      isDuplicateTeamRegistration(existingRows ?? [], {
+        team_name: parsed.data.team_name,
+        members: parsed.data.members,
+      })
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            'This team name and member roster is already registered. Use a different team name or update members.',
+        },
+        { status: 409 }
+      );
+    }
+
     const { data, error } = await supabase
       .from('team_registration_submissions')
       .insert({

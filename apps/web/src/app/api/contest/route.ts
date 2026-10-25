@@ -10,7 +10,11 @@ export async function GET() {
     const contest = await getContestSettings();
     return NextResponse.json(
       { success: true, contest },
-      { headers: { 'Cache-Control': 'no-store, max-age=0' } }
+      {
+        headers: {
+          'Cache-Control': 'public, s-maxage=10, stale-while-revalidate=30',
+        },
+      }
     );
   } catch (error: any) {
     return NextResponse.json(

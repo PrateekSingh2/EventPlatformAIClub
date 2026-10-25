@@ -13,6 +13,7 @@ import { TeamMergerTab } from '@/components/admin/TeamMergerTab';
 import { FinalTeamsTab } from '@/components/admin/FinalTeamsTab';
 import { AdminLeaderboardTab } from '@/components/admin/AdminLeaderboardTab';
 import { Round1RubricTab } from '@/components/admin/Round1RubricTab';
+import { Round2SelectionTab } from '@/components/admin/Round2SelectionTab';
 import {
   Layers,
   Users,
@@ -38,6 +39,7 @@ import {
   Award,
   GitMerge,
   BadgeCheck,
+  Target,
 } from 'lucide-react';
 
 type AdminTab =
@@ -47,6 +49,7 @@ type AdminTab =
   | 'telemetry'
   | 'brevo'
   | 'round1'
+  | 'round2'
   | 'formdata'
   | 'teammerger'
   | 'finalteams'
@@ -74,6 +77,13 @@ const ADMIN_NAV_ITEMS: NavItem[] = [
     subtitle: 'Official roster · lock & export',
     shortLabel: 'Final',
     icon: BadgeCheck,
+  },
+  {
+    id: 'round2',
+    title: 'Round 2 Selection',
+    subtitle: 'Pick teams · email · ingest · pool',
+    shortLabel: 'Round 2',
+    icon: Target,
   },
   {
     id: 'lifecycle',
@@ -563,6 +573,7 @@ export default function AdminPage() {
             {activeTab === 'formdata' && <FormDataTab adminSecret={adminSecret} />}
             {activeTab === 'teammerger' && <TeamMergerTab adminSecret={adminSecret} />}
             {activeTab === 'finalteams' && <FinalTeamsTab adminSecret={adminSecret} />}
+            {activeTab === 'round2' && <Round2SelectionTab adminSecret={adminSecret} />}
             {activeTab === 'leaderboard' && <AdminLeaderboardTab adminSecret={adminSecret} />}
           </main>
         </div>

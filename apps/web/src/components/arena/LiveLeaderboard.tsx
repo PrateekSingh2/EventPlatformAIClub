@@ -80,7 +80,7 @@ export function LiveLeaderboard({
     if (!cached?.users?.length) setUsers([]);
   }, []);
 
-  // Hot-reload: Auto-poll every 3 seconds + Supabase Realtime channel
+  // Poll + Supabase Realtime while drawer is open
   useEffect(() => {
     if (!isOpen) return;
 
@@ -88,7 +88,7 @@ export function LiveLeaderboard({
 
     const interval = setInterval(() => {
       fetchLeaderboard(true);
-    }, 20_000);
+    }, 30_000);
 
     let debounceTimer: ReturnType<typeof setTimeout> | null = null;
     let channel: ReturnType<typeof supabase.channel> | null = null;

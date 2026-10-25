@@ -3,259 +3,259 @@ import { isMemberComplete, type TeamMemberPayload } from '@/lib/team-registratio
 const MAX_SQUAD_MEMBERS = 4;
 
 export type TeamSubmission = {
-  id: string;
-  team_name: string;
-  members: TeamMemberPayload[];
-  squad_merge_opt_in?: boolean | null;
-  created_at: string;
+    id: string;
+    team_name: string;
+    members: TeamMemberPayload[];
+    squad_merge_opt_in?: boolean | null;
+    created_at: string;
 };
 
 /** Eligible: explicit Yes, or legacy null with room for merger (<4 complete members). Excludes No and full squads. */
 export function filterMergerEligibleSubmissions(submissions: TeamSubmission[]): TeamSubmission[] {
-  return submissions.filter((s) => {
-    if (s.squad_merge_opt_in === false) return false;
-    if (s.squad_merge_opt_in === true) return countFilledMembers(s) < MAX_SQUAD_MEMBERS;
-    const filled = countFilledMembers(s);
-    return filled > 0 && filled < MAX_SQUAD_MEMBERS;
-  });
+    return submissions.filter((s) => {
+        if (s.squad_merge_opt_in === false) return false;
+        if (s.squad_merge_opt_in === true) return countFilledMembers(s) < MAX_SQUAD_MEMBERS;
+        const filled = countFilledMembers(s);
+        return filled > 0 && filled < MAX_SQUAD_MEMBERS;
+    });
 }
 
 export type MergeGroupSourceTeam = {
-  submissionId: string;
-  teamName: string;
-  members: TeamMemberPayload[];
+    submissionId: string;
+    teamName: string;
+    members: TeamMemberPayload[];
 };
 
 export type MergeGroup = {
-  id: string;
-  submissionIds: string[];
-  teamNames: string[];
-  /** Display / export name: single team keeps name; merged teams use "A X B". */
-  mergedTeamName: string;
-  members: TeamMemberPayload[];
-  /** Every original submission in this group with its own roster (for merged UI). */
-  sourceTeams: MergeGroupSourceTeam[];
-  matchReason: string;
+    id: string;
+    submissionIds: string[];
+    teamNames: string[];
+    /** Display / export name: single team keeps name; merged teams use "A X B". */
+    mergedTeamName: string;
+    members: TeamMemberPayload[];
+    /** Every original submission in this group with its own roster (for merged UI). */
+    sourceTeams: MergeGroupSourceTeam[];
+    matchReason: string;
 };
 
 export function formatMergedTeamName(teamNames: string[]): string {
-  const seen = new Set<string>();
-  const unique: string[] = [];
-  for (const raw of teamNames) {
-    const trimmed = raw.trim();
-    if (!trimmed) continue;
-    const key = trimmed.toLocaleLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    unique.push(trimmed);
-  }
-  if (unique.length === 0) return '';
-  const sorted = unique.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
-  if (sorted.length === 1) return sorted[0];
-  return sorted.join(' X ');
+    const seen = new Set<string>();
+    const unique: string[] = [];
+    for (const raw of teamNames) {
+        const trimmed = raw.trim();
+        if (!trimmed) continue;
+        const key = trimmed.toLocaleLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        unique.push(trimmed);
+    }
+    if (unique.length === 0) return '';
+    const sorted = unique.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+    if (sorted.length === 1) return sorted[0];
+    return sorted.join(' X ');
 }
 
 export function countFilledMembers(sub: TeamSubmission): number {
-  return (sub.members || []).filter((m) => isMemberComplete(m)).length;
+    return (sub.members || []).filter((m) => isMemberComplete(m)).length;
 }
 
 /** One row per person with slots 1…n for merged squad display and export. */
 export function normalizeMergedMemberSlots(members: TeamMemberPayload[]): TeamMemberPayload[] {
-  const sorted = [...members].sort((a, b) => {
-    const slot = a.slot - b.slot;
-    if (slot !== 0) return slot;
-    return (a.name || '').localeCompare(b.name || '');
-  });
-  return sorted.map((m, i) => ({ ...m, slot: i + 1 }));
+    const sorted = [...members].sort((a, b) => {
+        const slot = a.slot - b.slot;
+        if (slot !== 0) return slot;
+        return (a.name || '').localeCompare(b.name || '');
+    });
+    return sorted.map((m, i) => ({ ...m, slot: i + 1 }));
 }
 
 const SLOT_MAX_FOR_MATCH = 3;
 const MIN_SHARED_MEMBERS = 2;
 
 export function memberIdentityKey(member: TeamMemberPayload): string | null {
-  const enrollment = (member.enrollment_number || '').trim().toLowerCase();
-  if (enrollment) return `enroll:${enrollment}`;
-  const email = (member.email || '').trim().toLowerCase();
-  if (email) return `email:${email}`;
-  return null;
+    const enrollment = (member.enrollment_number || '').trim().toLowerCase();
+    if (enrollment) return `enroll:${enrollment}`;
+    const email = (member.email || '').trim().toLowerCase();
+    if (email) return `email:${email}`;
+    return null;
 }
 
 export function membersInSlotsOneToThree(members: TeamMemberPayload[]): TeamMemberPayload[] {
-  return members.filter((m) => m.slot >= 1 && m.slot <= SLOT_MAX_FOR_MATCH);
+    return members.filter((m) => m.slot >= 1 && m.slot <= SLOT_MAX_FOR_MATCH);
 }
 
 export function identityKeysForSubmission(sub: TeamSubmission): Set<string> {
-  const keys = new Set<string>();
-  for (const m of membersInSlotsOneToThree(sub.members || [])) {
-    const key = memberIdentityKey(m);
-    if (key) keys.add(key);
-  }
-  return keys;
+    const keys = new Set<string>();
+    for (const m of membersInSlotsOneToThree(sub.members || [])) {
+        const key = memberIdentityKey(m);
+        if (key) keys.add(key);
+    }
+    return keys;
 }
 
 function sharedKeyCount(a: Set<string>, b: Set<string>): number {
-  let count = 0;
-  for (const key of a) {
-    if (b.has(key)) count += 1;
-  }
-  return count;
+    let count = 0;
+    for (const key of a) {
+        if (b.has(key)) count += 1;
+    }
+    return count;
 }
 
 class UnionFind {
-  private parent = new Map<string, string>();
+    private parent = new Map<string, string>();
 
-  add(id: string) {
-    if (!this.parent.has(id)) this.parent.set(id, id);
-  }
-
-  find(id: string): string {
-    const p = this.parent.get(id) ?? id;
-    if (p !== id) {
-      const root = this.find(p);
-      this.parent.set(id, root);
-      return root;
+    add(id: string) {
+        if (!this.parent.has(id)) this.parent.set(id, id);
     }
-    return id;
-  }
 
-  union(a: string, b: string) {
-    this.add(a);
-    this.add(b);
-    const ra = this.find(a);
-    const rb = this.find(b);
-    if (ra !== rb) this.parent.set(rb, ra);
-  }
-
-  groups(): Map<string, string[]> {
-    const map = new Map<string, string[]>();
-    for (const id of this.parent.keys()) {
-      const root = this.find(id);
-      const list = map.get(root) ?? [];
-      list.push(id);
-      map.set(root, list);
+    find(id: string): string {
+        const p = this.parent.get(id) ?? id;
+        if (p !== id) {
+            const root = this.find(p);
+            this.parent.set(id, root);
+            return root;
+        }
+        return id;
     }
-    return map;
-  }
+
+    union(a: string, b: string) {
+        this.add(a);
+        this.add(b);
+        const ra = this.find(a);
+        const rb = this.find(b);
+        if (ra !== rb) this.parent.set(rb, ra);
+    }
+
+    groups(): Map<string, string[]> {
+        const map = new Map<string, string[]>();
+        for (const id of this.parent.keys()) {
+            const root = this.find(id);
+            const list = map.get(root) ?? [];
+            list.push(id);
+            map.set(root, list);
+        }
+        return map;
+    }
 }
 
 export function computeAutoMergeGroups(submissions: TeamSubmission[]): MergeGroup[] {
-  const uf = new UnionFind();
-  const keysById = new Map<string, Set<string>>();
+    const uf = new UnionFind();
+    const keysById = new Map<string, Set<string>>();
 
-  for (const sub of submissions) {
-    uf.add(sub.id);
-    keysById.set(sub.id, identityKeysForSubmission(sub));
-  }
-
-  for (let i = 0; i < submissions.length; i++) {
-    for (let j = i + 1; j < submissions.length; j++) {
-      const a = submissions[i];
-      const b = submissions[j];
-      const shared = sharedKeyCount(keysById.get(a.id)!, keysById.get(b.id)!);
-      if (shared >= MIN_SHARED_MEMBERS) {
-        uf.union(a.id, b.id);
-      }
+    for (const sub of submissions) {
+        uf.add(sub.id);
+        keysById.set(sub.id, identityKeysForSubmission(sub));
     }
-  }
 
-  const byId = new Map(submissions.map((s) => [s.id, s]));
-  const rawGroups = uf.groups();
+    for (let i = 0; i < submissions.length; i++) {
+        for (let j = i + 1; j < submissions.length; j++) {
+            const a = submissions[i];
+            const b = submissions[j];
+            const shared = sharedKeyCount(keysById.get(a.id)!, keysById.get(b.id)!);
+            if (shared >= MIN_SHARED_MEMBERS) {
+                uf.union(a.id, b.id);
+            }
+        }
+    }
 
-  const built = Array.from(rawGroups.values()).map((ids) =>
-    buildMergeGroup(
-      ids,
-      byId,
-      ids.length > 1
-        ? `≥${MIN_SHARED_MEMBERS} matching members (slots 1–3)`
-        : 'Single team (not merged)'
-    )
-  );
+    const byId = new Map(submissions.map((s) => [s.id, s]));
+    const rawGroups = uf.groups();
 
-  return consolidateIdenticalMergeGroups(pairTwoMemberSquads(built, byId), byId);
+    const built = Array.from(rawGroups.values()).map((ids) =>
+        buildMergeGroup(
+            ids,
+            byId,
+            ids.length > 1
+                ? `≥${MIN_SHARED_MEMBERS} matching members (slots 1–3)`
+                : 'Single team (not merged)'
+        )
+    );
+
+    return consolidateIdenticalMergeGroups(pairTwoMemberSquads(built, byId), byId);
 }
 
 /** Pair remaining 2-member teams two-by-two when auto merge is on. */
 function pairTwoMemberSquads(groups: MergeGroup[], byId: Map<string, TeamSubmission>): MergeGroup[] {
-  const merged = groups.filter((g) => g.submissionIds.length > 1);
-  const singles = groups.filter((g) => g.submissionIds.length === 1);
+    const merged = groups.filter((g) => g.submissionIds.length > 1);
+    const singles = groups.filter((g) => g.submissionIds.length === 1);
 
-  const pairable = singles
-    .filter((g) => {
-      const sub = byId.get(g.submissionIds[0]);
-      return sub ? countFilledMembers(sub) === 2 : false;
-    })
-    .sort((a, b) => {
-      const ta = byId.get(a.submissionIds[0])?.created_at ?? '';
-      const tb = byId.get(b.submissionIds[0])?.created_at ?? '';
-      return ta.localeCompare(tb);
-    });
+    const pairable = singles
+        .filter((g) => {
+            const sub = byId.get(g.submissionIds[0]);
+            return sub ? countFilledMembers(sub) === 2 : false;
+        })
+        .sort((a, b) => {
+            const ta = byId.get(a.submissionIds[0])?.created_at ?? '';
+            const tb = byId.get(b.submissionIds[0])?.created_at ?? '';
+            return ta.localeCompare(tb);
+        });
 
-  const notPairable = singles.filter((g) => !pairable.some((p) => p.id === g.id));
-  const paired: MergeGroup[] = [];
+    const notPairable = singles.filter((g) => !pairable.some((p) => p.id === g.id));
+    const paired: MergeGroup[] = [];
 
-  for (let i = 0; i < pairable.length; i += 2) {
-    if (i + 1 >= pairable.length) {
-      paired.push(pairable[i]);
-      continue;
+    for (let i = 0; i < pairable.length; i += 2) {
+        if (i + 1 >= pairable.length) {
+            paired.push(pairable[i]);
+            continue;
+        }
+        const ids = [pairable[i].submissionIds[0], pairable[i + 1].submissionIds[0]];
+        paired.push(buildMergeGroup(ids, byId, 'Paired 2-member squads (auto)'));
     }
-    const ids = [pairable[i].submissionIds[0], pairable[i + 1].submissionIds[0]];
-    paired.push(buildMergeGroup(ids, byId, 'Paired 2-member squads (auto)'));
-  }
 
-  return [...merged, ...paired, ...notPairable];
+    return [...merged, ...paired, ...notPairable];
 }
 
 export function buildMergeGroup(
-  submissionIds: string[],
-  byId: Map<string, TeamSubmission>,
-  matchReason: string
+    submissionIds: string[],
+    byId: Map<string, TeamSubmission>,
+    matchReason: string
 ): MergeGroup {
-  const teamNames: string[] = [];
-  const sourceTeams: MergeGroupSourceTeam[] = [];
-  const memberByKey = new Map<string, TeamMemberPayload>();
+    const teamNames: string[] = [];
+    const sourceTeams: MergeGroupSourceTeam[] = [];
+    const memberByKey = new Map<string, TeamMemberPayload>();
 
-  for (const id of submissionIds) {
-    const sub = byId.get(id);
-    if (!sub) continue;
-    teamNames.push(sub.team_name);
-    sourceTeams.push({
-      submissionId: id,
-      teamName: sub.team_name,
-      members: [...(sub.members || [])].sort((a, b) => a.slot - b.slot),
-    });
-    for (const m of sub.members || []) {
-      const key = memberIdentityKey(m) ?? `slot:${m.slot}:${m.name}`;
-      if (!memberByKey.has(key)) {
-        memberByKey.set(key, m);
-      }
+    for (const id of submissionIds) {
+        const sub = byId.get(id);
+        if (!sub) continue;
+        teamNames.push(sub.team_name);
+        sourceTeams.push({
+            submissionId: id,
+            teamName: sub.team_name,
+            members: [...(sub.members || [])].sort((a, b) => a.slot - b.slot),
+        });
+        for (const m of sub.members || []) {
+            const key = memberIdentityKey(m) ?? `slot:${m.slot}:${m.name}`;
+            if (!memberByKey.has(key)) {
+                memberByKey.set(key, m);
+            }
+        }
     }
-  }
 
-  let members = normalizeMergedMemberSlots(Array.from(memberByKey.values()));
-  let reason = matchReason;
-  if (members.length > MAX_SQUAD_MEMBERS) {
-    reason = `${matchReason} (showing first ${MAX_SQUAD_MEMBERS} of ${members.length} members)`;
-    members = members.slice(0, MAX_SQUAD_MEMBERS);
-  }
+    let members = normalizeMergedMemberSlots(Array.from(memberByKey.values()));
+    let reason = matchReason;
+    if (members.length > MAX_SQUAD_MEMBERS) {
+        reason = `${matchReason} (showing first ${MAX_SQUAD_MEMBERS} of ${members.length} members)`;
+        members = members.slice(0, MAX_SQUAD_MEMBERS);
+    }
 
-  return {
-    id: submissionIds.slice().sort().join('_'),
-    submissionIds: submissionIds.slice(),
-    teamNames,
-    mergedTeamName: formatMergedTeamName(teamNames),
-    members,
-    sourceTeams,
-    matchReason: reason,
-  };
+    return {
+        id: submissionIds.slice().sort().join('_'),
+        submissionIds: submissionIds.slice(),
+        teamNames,
+        mergedTeamName: formatMergedTeamName(teamNames),
+        members,
+        sourceTeams,
+        matchReason: reason,
+    };
 }
 
 /** Stable roster signature (emails / enrollment numbers) for duplicate squad detection. */
 export function memberRosterFingerprint(members: TeamMemberPayload[]): string {
-  const keys = members
-    .map((m) => memberIdentityKey(m))
-    .filter((k): k is string => Boolean(k))
-    .sort();
-  return keys.join('|');
+    const keys = members
+        .map((m) => memberIdentityKey(m))
+        .filter((k): k is string => Boolean(k))
+        .sort();
+    return keys.join('|');
 }
 
 /**
@@ -263,97 +263,97 @@ export function memberRosterFingerprint(members: TeamMemberPayload[]): string {
  * (duplicate form rows or "Dual bytes X dual bytes" with the same people).
  */
 export function consolidateIdenticalMergeGroups(
-  groups: MergeGroup[],
-  byId: Map<string, TeamSubmission>
+    groups: MergeGroup[],
+    byId: Map<string, TeamSubmission>
 ): MergeGroup[] {
-  type Bucket = { submissionIds: Set<string>; reasons: Set<string> };
-  const buckets = new Map<string, Bucket>();
-  const passthrough: MergeGroup[] = [];
+    type Bucket = { submissionIds: Set<string>; reasons: Set<string> };
+    const buckets = new Map<string, Bucket>();
+    const passthrough: MergeGroup[] = [];
 
-  for (const g of groups) {
-    const fp = memberRosterFingerprint(g.members);
-    if (!fp) {
-      passthrough.push(g);
-      continue;
+    for (const g of groups) {
+        const fp = memberRosterFingerprint(g.members);
+        if (!fp) {
+            passthrough.push(g);
+            continue;
+        }
+        const label = formatMergedTeamName(g.teamNames).toLocaleLowerCase();
+        const key = `${label}::${fp}`;
+        const bucket = buckets.get(key) ?? { submissionIds: new Set<string>(), reasons: new Set<string>() };
+        for (const id of g.submissionIds) bucket.submissionIds.add(id);
+        bucket.reasons.add(g.matchReason);
+        buckets.set(key, bucket);
     }
-    const label = formatMergedTeamName(g.teamNames).toLocaleLowerCase();
-    const key = `${label}::${fp}`;
-    const bucket = buckets.get(key) ?? { submissionIds: new Set<string>(), reasons: new Set<string>() };
-    for (const id of g.submissionIds) bucket.submissionIds.add(id);
-    bucket.reasons.add(g.matchReason);
-    buckets.set(key, bucket);
-  }
 
-  const merged: MergeGroup[] = [];
-  for (const bucket of buckets.values()) {
-    const ids = Array.from(bucket.submissionIds);
-    const reason =
-      ids.length > 1
-        ? 'Same team name & roster (deduplicated)'
-        : Array.from(bucket.reasons)[0] ?? 'Single team (not merged)';
-    merged.push(buildMergeGroup(ids, byId, reason));
-  }
+    const merged: MergeGroup[] = [];
+    for (const bucket of buckets.values()) {
+        const ids = Array.from(bucket.submissionIds);
+        const reason =
+            ids.length > 1
+                ? 'Same team name & roster (deduplicated)'
+                : Array.from(bucket.reasons)[0] ?? 'Single team (not merged)';
+        merged.push(buildMergeGroup(ids, byId, reason));
+    }
 
-  return [...merged, ...passthrough];
+    return [...merged, ...passthrough];
 }
 
 export function buildManualMergeGroups(
-  submissions: TeamSubmission[],
-  groupMap: Map<string, string>
+    submissions: TeamSubmission[],
+    groupMap: Map<string, string>
 ): MergeGroup[] {
-  const byId = new Map(submissions.map((s) => [s.id, s]));
-  const buckets = new Map<string, string[]>();
+    const byId = new Map(submissions.map((s) => [s.id, s]));
+    const buckets = new Map<string, string[]>();
 
-  for (const sub of submissions) {
-    const leader = groupMap.get(sub.id) ?? sub.id;
-    const list = buckets.get(leader) ?? [];
-    list.push(sub.id);
-    buckets.set(leader, list);
-  }
+    for (const sub of submissions) {
+        const leader = groupMap.get(sub.id) ?? sub.id;
+        const list = buckets.get(leader) ?? [];
+        list.push(sub.id);
+        buckets.set(leader, list);
+    }
 
-  const built = Array.from(buckets.entries()).map(([leader, ids]) => {
-    const uniqueIds = Array.from(new Set(ids));
-    const reason =
-      uniqueIds.length > 1 ? 'Manual merge' : 'Single team (not merged)';
-    return buildMergeGroup(uniqueIds, byId, reason);
-  });
-  return consolidateIdenticalMergeGroups(built, byId);
+    const built = Array.from(buckets.entries()).map(([leader, ids]) => {
+        const uniqueIds = Array.from(new Set(ids));
+        const reason =
+            uniqueIds.length > 1 ? 'Manual merge' : 'Single team (not merged)';
+        return buildMergeGroup(uniqueIds, byId, reason);
+    });
+    return consolidateIdenticalMergeGroups(built, byId);
 }
 
 function assignBinToMap(map: Map<string, string>, submissionIds: string[]) {
-  if (submissionIds.length === 0) return;
-  const leader = submissionIds.slice().sort()[0];
-  for (const id of submissionIds) {
-    map.set(id, leader);
-  }
+    if (submissionIds.length === 0) return;
+    const leader = submissionIds.slice().sort()[0];
+    for (const id of submissionIds) {
+        map.set(id, leader);
+    }
 }
 
 /** Restore Team Merger manual bins from DB-backed seminar hall rows (submission_ids per squad). */
 export function buildManualGroupMapFromStoredSquads(
-  squads: { submission_ids?: string[] | null }[]
+    squads: { submission_ids?: string[] | null }[]
 ): Map<string, string> {
-  const map = new Map<string, string>();
-  for (const squad of squads) {
-    const ids = (squad.submission_ids ?? []).filter((id) => typeof id === 'string' && id.length > 0);
-    if (ids.length > 0) assignBinToMap(map, ids);
-  }
-  return map;
+    const map = new Map<string, string>();
+    for (const squad of squads) {
+        const ids = (squad.submission_ids ?? []).filter((id) => typeof id === 'string' && id.length > 0);
+        if (ids.length > 0) assignBinToMap(map, ids);
+    }
+    return map;
 }
 
 /** Every solo registration → merged squads of 4 submissions (FIFO by signup time). */
 export function buildManualGroupMapSolosInFours(submissions: TeamSubmission[]): Map<string, string> {
-  const map = new Map<string, string>();
-  const solos = submissions
-    .filter((s) => s.squad_merge_opt_in !== false && countFilledMembers(s) === 1)
-    .sort((a, b) => a.created_at.localeCompare(b.created_at));
+    const map = new Map<string, string>();
+    const solos = submissions
+        .filter((s) => s.squad_merge_opt_in !== false && countFilledMembers(s) === 1)
+        .sort((a, b) => a.created_at.localeCompare(b.created_at));
 
-  for (let i = 0; i < solos.length; i += MAX_SQUAD_MEMBERS) {
-    const chunk = solos.slice(i, i + MAX_SQUAD_MEMBERS).map((s) => s.id);
-    if (chunk.length >= 2) {
-      assignBinToMap(map, chunk);
+    for (let i = 0; i < solos.length; i += MAX_SQUAD_MEMBERS) {
+        const chunk = solos.slice(i, i + MAX_SQUAD_MEMBERS).map((s) => s.id);
+        if (chunk.length >= 2) {
+            assignBinToMap(map, chunk);
+        }
     }
-  }
-  return map;
+    return map;
 }
 
 /**
@@ -361,240 +361,240 @@ export function buildManualGroupMapSolosInFours(submissions: TeamSubmission[]): 
  * Full 4-member form squads are left untouched.
  */
 export function buildManualGroupMapPackToFourMembers(submissions: TeamSubmission[]): Map<string, string> {
-  const map = new Map<string, string>();
-  const pool = submissions
-    .filter((s) => {
-      if (s.squad_merge_opt_in === false) return false;
-      const n = countFilledMembers(s);
-      return n > 0 && n < MAX_SQUAD_MEMBERS;
-    })
-    .sort((a, b) => a.created_at.localeCompare(b.created_at));
+    const map = new Map<string, string>();
+    const pool = submissions
+        .filter((s) => {
+            if (s.squad_merge_opt_in === false) return false;
+            const n = countFilledMembers(s);
+            return n > 0 && n < MAX_SQUAD_MEMBERS;
+        })
+        .sort((a, b) => a.created_at.localeCompare(b.created_at));
 
-  type Bin = { ids: string[]; memberCount: number };
-  const openBins: Bin[] = [];
+    type Bin = { ids: string[]; memberCount: number };
+    const openBins: Bin[] = [];
 
-  for (const sub of pool) {
-    const n = countFilledMembers(sub);
-    let placed = false;
+    for (const sub of pool) {
+        const n = countFilledMembers(sub);
+        let placed = false;
+
+        for (const bin of openBins) {
+            if (bin.memberCount + n <= MAX_SQUAD_MEMBERS) {
+                bin.ids.push(sub.id);
+                bin.memberCount += n;
+                placed = true;
+                break;
+            }
+        }
+
+        if (!placed) {
+            openBins.push({ ids: [sub.id], memberCount: n });
+        }
+    }
 
     for (const bin of openBins) {
-      if (bin.memberCount + n <= MAX_SQUAD_MEMBERS) {
-        bin.ids.push(sub.id);
-        bin.memberCount += n;
-        placed = true;
-        break;
-      }
+        if (bin.ids.length > 1) {
+            assignBinToMap(map, bin.ids);
+        }
     }
 
-    if (!placed) {
-      openBins.push({ ids: [sub.id], memberCount: n });
-    }
-  }
-
-  for (const bin of openBins) {
-    if (bin.ids.length > 1) {
-      assignBinToMap(map, bin.ids);
-    }
-  }
-
-  return map;
+    return map;
 }
 
 /** Solos in fours, then bin-pack remaining incomplete teams to 4 members. */
 export function buildManualGroupMapAllSquadsOfFour(submissions: TeamSubmission[]): Map<string, string> {
-  const map = buildManualGroupMapSolosInFours(submissions);
-  const alreadyGrouped = new Set(map.keys());
-  const rest = submissions.filter((s) => !alreadyGrouped.has(s.id));
-  const packed = buildManualGroupMapPackToFourMembers(rest);
-  for (const [id, leader] of packed) {
-    map.set(id, leader);
-  }
-  return map;
+    const map = buildManualGroupMapSolosInFours(submissions);
+    const alreadyGrouped = new Set(map.keys());
+    const rest = submissions.filter((s) => !alreadyGrouped.has(s.id));
+    const packed = buildManualGroupMapPackToFourMembers(rest);
+    for (const [id, leader] of packed) {
+        map.set(id, leader);
+    }
+    return map;
 }
 
 export function applyManualMerge(
-  groupMap: Map<string, string>,
-  selectedIds: string[],
-  submissions: TeamSubmission[]
+    groupMap: Map<string, string>,
+    selectedIds: string[],
+    submissions: TeamSubmission[]
 ): Map<string, string> {
-  if (selectedIds.length < 2) return groupMap;
+    if (selectedIds.length < 2) return groupMap;
 
-  const next = new Map(groupMap);
-  const leaders = selectedIds.map((id) => next.get(id) ?? id);
-  const targetLeader = leaders.sort()[0];
+    const next = new Map(groupMap);
+    const leaders = selectedIds.map((id) => next.get(id) ?? id);
+    const targetLeader = leaders.sort()[0];
 
-  for (const id of selectedIds) {
-    next.set(id, targetLeader);
-  }
-
-  for (const sub of submissions) {
-    const leader = next.get(sub.id);
-    if (leader && selectedIds.includes(leader)) {
-      next.set(sub.id, targetLeader);
+    for (const id of selectedIds) {
+        next.set(id, targetLeader);
     }
-  }
 
-  return next;
+    for (const sub of submissions) {
+        const leader = next.get(sub.id);
+        if (leader && selectedIds.includes(leader)) {
+            next.set(sub.id, targetLeader);
+        }
+    }
+
+    return next;
 }
 
 /** Remove merged grouping so each submission displays as its own team again. */
 export function applyManualUnmerge(
-  groupMap: Map<string, string>,
-  submissionIds: string[]
+    groupMap: Map<string, string>,
+    submissionIds: string[]
 ): Map<string, string> {
-  const next = new Map(groupMap);
-  for (const id of submissionIds) {
-    next.delete(id);
-  }
-  return next;
+    const next = new Map(groupMap);
+    for (const id of submissionIds) {
+        next.delete(id);
+    }
+    return next;
 }
 
 export function pruneManualGroupMap(
-  map: Map<string, string>,
-  validSubmissionIds: Iterable<string>
+    map: Map<string, string>,
+    validSubmissionIds: Iterable<string>
 ): Map<string, string> {
-  const valid = new Set(validSubmissionIds);
-  const next = new Map<string, string>();
-  for (const [id, leader] of map) {
-    if (!valid.has(id)) continue;
-    next.set(id, valid.has(leader) ? leader : id);
-  }
-  return next;
+    const valid = new Set(validSubmissionIds);
+    const next = new Map<string, string>();
+    for (const [id, leader] of map) {
+        if (!valid.has(id)) continue;
+        next.set(id, valid.has(leader) ? leader : id);
+    }
+    return next;
 }
 
 export function manualGroupMapToJson(map: Map<string, string>): string {
-  return JSON.stringify(Object.fromEntries(map));
+    return JSON.stringify(Object.fromEntries(map));
 }
 
 export function manualGroupMapFromJson(raw: string | null): Map<string, string> {
-  if (!raw) return new Map();
-  try {
-    const parsed = JSON.parse(raw) as Record<string, string>;
-    if (!parsed || typeof parsed !== 'object') return new Map();
-    return new Map(Object.entries(parsed).filter(([k, v]) => typeof k === 'string' && typeof v === 'string'));
-  } catch {
-    return new Map();
-  }
+    if (!raw) return new Map();
+    try {
+        const parsed = JSON.parse(raw) as Record<string, string>;
+        if (!parsed || typeof parsed !== 'object') return new Map();
+        return new Map(Object.entries(parsed).filter(([k, v]) => typeof k === 'string' && typeof v === 'string'));
+    } catch {
+        return new Map();
+    }
 }
 
 export function manualGroupMapsEqual(a: Map<string, string>, b: Map<string, string>): boolean {
-  if (a.size !== b.size) return false;
-  for (const [key, value] of a) {
-    if (b.get(key) !== value) return false;
-  }
-  return true;
+    if (a.size !== b.size) return false;
+    for (const [key, value] of a) {
+        if (b.get(key) !== value) return false;
+    }
+    return true;
 }
 
 export type MergerExportRow = {
-  seminar_hall: string;
-  merged_team_name: string;
-  team_size: string;
-  merge_group: string;
-  team_names: string;
-  merge_reason: string;
-  member_slot: string;
-  name: string;
-  enrollment_number: string;
-  email: string;
-  branch: string;
-  year: string;
-  submission_id: string;
-  submitted_at: string;
+    seminar_hall: string;
+    merged_team_name: string;
+    team_size: string;
+    merge_group: string;
+    team_names: string;
+    merge_reason: string;
+    member_slot: string;
+    name: string;
+    enrollment_number: string;
+    email: string;
+    branch: string;
+    year: string;
+    submission_id: string;
+    submitted_at: string;
 };
 
 export const MERGER_EXPORT_HEADERS: (keyof MergerExportRow)[] = [
-  'seminar_hall',
-  'merged_team_name',
-  'team_size',
-  'merge_group',
-  'team_names',
-  'merge_reason',
-  'member_slot',
-  'name',
-  'enrollment_number',
-  'email',
-  'branch',
-  'year',
-  'submission_id',
-  'submitted_at',
+    'seminar_hall',
+    'merged_team_name',
+    'team_size',
+    'merge_group',
+    'team_names',
+    'merge_reason',
+    'member_slot',
+    'name',
+    'enrollment_number',
+    'email',
+    'branch',
+    'year',
+    'submission_id',
+    'submitted_at',
 ];
 
 /** Label used in participant import (Solo / Duo / Trio / Squad). */
 export function teamSizeLabelFromMemberCount(count: number): string {
-  if (count <= 1) return 'Solo';
-  if (count === 2) return 'Duo';
-  if (count === 3) return 'Trio';
-  return 'Squad';
+    if (count <= 1) return 'Solo';
+    if (count === 2) return 'Duo';
+    if (count === 3) return 'Trio';
+    return 'Squad';
 }
 
 function mergerRowsForGroup(
-  group: MergeGroup,
-  subById: Map<string, TeamSubmission>,
-  seminarHall: string
+    group: MergeGroup,
+    subById: Map<string, TeamSubmission>,
+    seminarHall: string
 ): MergerExportRow[] {
-  const label = group.mergedTeamName;
-  const sources = group.teamNames.join(', ');
-  const activeMembers = group.members.filter((m) => (m.email || '').trim() || (m.name || '').trim());
-  const team_size = teamSizeLabelFromMemberCount(activeMembers.length || group.members.length);
+    const label = group.mergedTeamName;
+    const sources = group.teamNames.join(', ');
+    const activeMembers = group.members.filter((m) => (m.email || '').trim() || (m.name || '').trim());
+    const team_size = teamSizeLabelFromMemberCount(activeMembers.length || group.members.length);
 
-  if (group.members.length === 0) {
-    return [
-      {
+    if (group.members.length === 0) {
+        return [
+            {
+                seminar_hall: seminarHall,
+                merged_team_name: label,
+                team_size,
+                merge_group: label,
+                team_names: sources,
+                merge_reason: group.matchReason,
+                member_slot: '',
+                name: '',
+                enrollment_number: '',
+                email: '',
+                branch: '',
+                year: '',
+                submission_id: group.submissionIds.join('|'),
+                submitted_at: '',
+            },
+        ];
+    }
+
+    const firstSub = subById.get(group.submissionIds[0]);
+    return group.members.map((m) => ({
         seminar_hall: seminarHall,
         merged_team_name: label,
         team_size,
         merge_group: label,
         team_names: sources,
         merge_reason: group.matchReason,
-        member_slot: '',
-        name: '',
-        enrollment_number: '',
-        email: '',
-        branch: '',
-        year: '',
+        member_slot: String(m.slot ?? ''),
+        name: m.name ?? '',
+        enrollment_number: m.enrollment_number ?? '',
+        email: m.email ?? '',
+        branch: m.branch ?? '',
+        year: m.year ?? '',
         submission_id: group.submissionIds.join('|'),
-        submitted_at: '',
-      },
-    ];
-  }
-
-  const firstSub = subById.get(group.submissionIds[0]);
-  return group.members.map((m) => ({
-    seminar_hall: seminarHall,
-    merged_team_name: label,
-    team_size,
-    merge_group: label,
-    team_names: sources,
-    merge_reason: group.matchReason,
-    member_slot: String(m.slot ?? ''),
-    name: m.name ?? '',
-    enrollment_number: m.enrollment_number ?? '',
-    email: m.email ?? '',
-    branch: m.branch ?? '',
-    year: m.year ?? '',
-    submission_id: group.submissionIds.join('|'),
-    submitted_at: firstSub?.created_at ?? '',
-  }));
+        submitted_at: firstSub?.created_at ?? '',
+    }));
 }
 
 export function buildMergerExportRows(
-  submissions: TeamSubmission[],
-  groups: MergeGroup[],
-  mode: 'full' | 'merged',
-  hallByTeamKey?: Map<string, string>
+    submissions: TeamSubmission[],
+    groups: MergeGroup[],
+    mode: 'full' | 'merged',
+    hallByTeamKey?: Map<string, string>
 ): MergerExportRow[] {
-  const subById = new Map(submissions.map((s) => [s.id, s]));
-  const rows: MergerExportRow[] = [];
+    const subById = new Map(submissions.map((s) => [s.id, s]));
+    const rows: MergerExportRow[] = [];
 
-  /** Full export = every roster row with current merge-group team names (paste into participant import). */
-  const exportGroups =
-    mode === 'merged' ? groups.filter((g) => g.submissionIds.length > 1) : groups;
+    /** Full export = every roster row with current merge-group team names (paste into participant import). */
+    const exportGroups =
+        mode === 'merged' ? groups.filter((g) => g.submissionIds.length > 1) : groups;
 
-  for (const group of exportGroups) {
-    const teamKey = group.submissionIds.slice().sort().join('|');
-    const seminarHall = hallByTeamKey?.get(teamKey) ?? '';
-    rows.push(...mergerRowsForGroup(group, subById, seminarHall));
-  }
+    for (const group of exportGroups) {
+        const teamKey = group.submissionIds.slice().sort().join('|');
+        const seminarHall = hallByTeamKey?.get(teamKey) ?? '';
+        rows.push(...mergerRowsForGroup(group, subById, seminarHall));
+    }
 
-  return rows;
+    return rows;
 }

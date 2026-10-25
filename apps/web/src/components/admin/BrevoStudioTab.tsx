@@ -696,10 +696,10 @@ export function BrevoStudioTab({ adminSecret }: BrevoStudioTabProps) {
                             (roster.length === 1
                                 ? 'Solo'
                                 : roster.length === 2
-                                  ? 'Duo'
-                                  : roster.length === 3
-                                    ? 'Trio'
-                                    : 'Squad'),
+                                    ? 'Duo'
+                                    : roster.length === 3
+                                        ? 'Trio'
+                                        : 'Squad'),
                         team_members: roster,
                     };
                 });
@@ -857,8 +857,8 @@ export function BrevoStudioTab({ adminSecret }: BrevoStudioTabProps) {
                 {testResult && (
                     <div
                         className={`p-2.5 rounded-lg text-xs font-sans flex items-center gap-2 animate-in fade-in duration-200 ${testResult.success
-                                ? 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400'
-                                : 'bg-rose-500/10 border border-rose-500/20 text-rose-400'
+                            ? 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400'
+                            : 'bg-rose-500/10 border border-rose-500/20 text-rose-400'
                             }`}
                     >
                         {testResult.success ? <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" /> : <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />}
@@ -990,8 +990,8 @@ export function BrevoStudioTab({ adminSecret }: BrevoStudioTabProps) {
                         <button
                             onClick={() => setPreviewTab('preview')}
                             className={`px-3 py-1.5 text-xs font-semibold rounded-xl transition-colors cursor-pointer flex items-center gap-1.5 ${previewTab === 'preview'
-                                    ? 'bg-app-text text-app-bg'
-                                    : 'text-app-subtext hover:text-app-text'
+                                ? 'bg-app-text text-app-bg'
+                                : 'text-app-subtext hover:text-app-text'
                                 }`}
                         >
                             <Eye className="w-3.5 h-3.5" />
@@ -1000,8 +1000,8 @@ export function BrevoStudioTab({ adminSecret }: BrevoStudioTabProps) {
                         <button
                             onClick={() => setPreviewTab('editor')}
                             className={`px-3 py-1.5 text-xs font-semibold rounded-xl transition-colors cursor-pointer flex items-center gap-1.5 ${previewTab === 'editor'
-                                    ? 'bg-app-text text-app-bg'
-                                    : 'text-app-subtext hover:text-app-text'
+                                ? 'bg-app-text text-app-bg'
+                                : 'text-app-subtext hover:text-app-text'
                                 }`}
                         >
                             <Sparkles className="w-3.5 h-3.5" />

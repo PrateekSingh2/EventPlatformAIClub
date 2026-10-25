@@ -8,7 +8,11 @@ export async function GET() {
     const announcements = await getRecentAnnouncements(5);
     return NextResponse.json(
       { success: true, announcements },
-      { headers: { 'Cache-Control': 'no-store, max-age=0' } }
+      {
+        headers: {
+          'Cache-Control': 'public, s-maxage=15, stale-while-revalidate=60',
+        },
+      }
     );
   } catch (error: any) {
     return NextResponse.json(
